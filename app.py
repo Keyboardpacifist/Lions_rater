@@ -1,10 +1,8 @@
 """
 Lions Rater — landing page
 ==========================
-This is the entry point of the multi-page Streamlit app. The actual
-position raters live in pages/1_Receivers.py and pages/2_Running_backs.py;
-Streamlit auto-discovers them from the pages/ folder and renders them in
-the sidebar.
+Entry point for the multi-page app. Streamlit auto-discovers pages
+from the pages/ folder and shows them in the sidebar nav.
 """
 
 import streamlit as st
@@ -37,7 +35,7 @@ st.markdown("""
 watch the Lions re-rank in real time. No "best player" — just **your**
 best player.
 
-Pick a position to start.
+👈 **Pick a position from the sidebar to start.**
 """)
 
 col1, col2 = st.columns(2)
@@ -49,20 +47,20 @@ with col1:
     <p>Rate Lions WRs and TEs on reliability, explosive plays, field
     stretching, volume, and yards after catch. 11 underlying stats from
     nflverse and Next Gen Stats.</p>
+    <p><em>Click "Receivers" in the sidebar →</em></p>
     </div>
     """, unsafe_allow_html=True)
-    st.page_link("pages/1_Receivers.py", label="Open Receiver Rater →", icon="🎯")
 
 with col2:
     st.markdown("""
     <div class='position-card'>
     <h3>🏃 Running backs</h3>
-    <p>Rate Lions RBs on efficiency, tackle breaking, explosive plays,
-    workload, receiving, and short yardage. Includes RYOE from NGS and
-    broken-tackle / contact data from FTN charting.</p>
+    <p>Rate Lions RBs on efficiency, RB skill above scheme, explosive
+    plays, workload, receiving, and short yardage. Includes RYOE from
+    Next Gen Stats.</p>
+    <p><em>Click "Running backs" in the sidebar →</em></p>
     </div>
     """, unsafe_allow_html=True)
-    st.page_link("pages/2_Running_backs.py", label="Open Running Back Rater →", icon="🏃")
 
 st.markdown("---")
 
@@ -87,6 +85,5 @@ A score of **0** is exactly league average. **+1** is roughly top 16%.
 
 st.caption(
     "Data via [nflverse](https://github.com/nflverse) • "
-    "FTN charting via FTN Data via nflverse (CC-BY-SA 4.0) • "
     "Built as a fan project, not affiliated with the NFL or the Detroit Lions."
 )
