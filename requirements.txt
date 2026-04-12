@@ -1,5 +1,11 @@
-streamlit>=1.30.0
-polars>=1.0.0
-pandas>=2.0.0
-pyarrow>=14.0.0
-supabase>=2.0.0
+# Install locally only — these are needed by scripts/build_data.py to
+# (re)generate the parquets. Streamlit Cloud doesn't need them because
+# it just reads the committed parquets.
+#
+#     pip install -r requirements-dev.txt
+#     python scripts/build_data.py
+
+-r requirements.txt
+
+nfl_data_py>=0.3.2
+numpy>=1.26.0
