@@ -1,0 +1,50 @@
+{
+  "stat_tiers": {
+    "z_snaps_played": 1,
+    "z_penalties_total": 1,
+    "z_penalty_rate": 2,
+    "z_gap_success_rate": 2,
+    "z_gap_epa_per_play": 2,
+    "z_availability_index": 2,
+    "z_garsr": 3,
+    "z_rb_adjusted_gap_epa": 3,
+    "z_penalty_leverage_cost": 3,
+    "z_explosive_enablement": 3,
+    "z_on_off_sack_rate_diff": 3,
+    "z_mobility_index": 4,
+    "z_leverage_rating": 4,
+    "z_pass_run_balance": 4
+  },
+  "stat_labels": {
+    "z_snaps_played": "Snaps Played",
+    "z_penalties_total": "Penalties Committed",
+    "z_penalty_rate": "Penalty Rate",
+    "z_gap_success_rate": "Gap Run Success Rate",
+    "z_gap_epa_per_play": "Gap Run EPA",
+    "z_availability_index": "Availability Index",
+    "z_garsr": "Gap-Adjusted Run Success Rate",
+    "z_rb_adjusted_gap_epa": "RB-Adjusted Gap EPA",
+    "z_penalty_leverage_cost": "Penalty Leverage Cost",
+    "z_explosive_enablement": "Explosive Run Enablement",
+    "z_on_off_sack_rate_diff": "Pass Pro On/Off Split",
+    "z_mobility_index": "Mobility Index (experimental)",
+    "z_leverage_rating": "Situational Leverage (experimental)",
+    "z_pass_run_balance": "Pass/Run Block Balance (experimental)"
+  },
+  "invert_stats": [
+    "penalties_total",
+    "penalty_rate",
+    "penalty_leverage_cost"
+  ],
+  "season": 2024,
+  "team": "DET",
+  "n_players": 5,
+  "team_context": {
+    "lions_ybc_per_att": 2.65,
+    "lions_yac_per_att": 2.29,
+    "league_ybc_per_att": 2.26,
+    "league_yac_per_att": 2.1,
+    "lions_sack_rate": 0.056,
+    "league_sack_rate": 0.07
+  }
+}
