@@ -225,6 +225,57 @@ def score_players(df, weights, mode, stat_columns, bundles):
     return out
 
 
+def score_label(score):
+    """Convert a numeric score into a plain-English description.
+
+    Scores are weighted averages of z-scores, so they're already in
+    standard-deviation units. 0 = group average. +1 = one std dev above. Etc.
+    """
+    if pd.isna(score):
+        return "—"
+    if score >= 1.0:
+        return "well above group"
+    if score >= 0.4:
+        return "above group"
+    if score >= -0.4:
+        return "about average"
+    if score >= -1.0:
+        return "below group"
+    return "well below group"
+
+
+def format_score_with_label(score):
+    if pd.isna(score):
+        return "—"
+    sign = "+" if score >= 0 else ""
+    return f"{sign}{score:.2f} ({score_label(score)})"
+
+
+SCORE_EXPLAINER_MD = """
+**What this number actually means.** The score is a weighted average of
+z-scores — standardized stats where 0 is the group average, +1 is one
+standard deviation above the group, and −1 is one standard deviation below.
+Your slider weights control how much each bundle (or each stat, in Advanced
+mode) contributes.
+
+**How to read a score:**
+- `+1.0` or higher → well above the group average on the stats you weighted
+- `+0.4` to `+1.0` → above average
+- `−0.4` to `+0.4` → roughly average
+- `−1.0` or lower → well below average
+
+**What this is not.** It's not a PFF-style 0-to-100 grade. It's not an
+absolute rating of how good a player is in some universal sense. It's a
+**comparative** number that tells you how each player stacks up against the
+others in the group, given the methodology *you* chose. Change the weights
+and the scores change. That's the point — this is your rating, not ours.
+
+For details on any individual stat, switch to Advanced mode and click the ℹ️
+methodology button next to it. Every stat has its formula and known
+limitations documented.
+"""
+
+
 # ─── Community algorithms (namespaced by position) ───────────────────────────
 
 def slugify(name):
@@ -437,12 +488,20 @@ def page_receivers(df):
         scored.columns[0],
     )
     extra = [c for c in ["season", "team", "position"] if c in scored.columns]
-    display_cols = [name_col] + extra + ["score"]
-    leaderboard = scored[display_cols].sort_values("score", ascending=False).reset_index(drop=True).head(25)
+    scored["Score"] = scored["score"].apply(format_score_with_label)
+    display_cols = [name_col] + extra + ["Score"]
+    leaderboard = (
+        scored.sort_values("score", ascending=False)
+        .reset_index(drop=True)
+        .head(25)[display_cols]
+    )
     leaderboard.index = leaderboard.index + 1
 
     st.subheader("Leaderboard")
     st.dataframe(leaderboard, width="stretch")
+
+    with st.expander("ℹ️ How is this score calculated?"):
+        st.markdown(SCORE_EXPLAINER_MD)
 
     st.divider()
     with st.expander("💾 Save this algorithm", expanded=False):
@@ -605,13 +664,27 @@ def page_offensive_line(df, meta):
 
     scored = score_players(df, weights, mode, enabled_stats, filtered_bundles)
 
-    display_cols = ["player", "slot", "games_played", "score"]
+    scored["Score"] = scored["score"].apply(format_score_with_label)
+    display_cols = ["player", "slot", "games_played", "Score"]
     display_cols = [c for c in display_cols if c in scored.columns]
-    leaderboard = scored[display_cols].sort_values("score", ascending=False).reset_index(drop=True)
+    leaderboard = (
+        scored.sort_values("score", ascending=False)
+        .reset_index(drop=True)[display_cols]
+    )
     leaderboard.index = leaderboard.index + 1
 
     st.subheader("Leaderboard")
     st.dataframe(leaderboard, width="stretch")
+
+    with st.expander("ℹ️ How is this score calculated?"):
+        st.markdown(SCORE_EXPLAINER_MD)
+        st.markdown(
+            "**One more thing for the OL page specifically:** scores here "
+            "are computed within the Lions starting five (n=5), so z-scores "
+            "are noisier than they'd be with a league-wide sample. A single "
+            "player can shift the distribution meaningfully. Treat directional "
+            "differences seriously, but don't over-read small gaps between players."
+        )
 
     st.divider()
     with st.expander("💾 Save this algorithm", expanded=False):
