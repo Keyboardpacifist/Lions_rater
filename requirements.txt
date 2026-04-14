@@ -3,3 +3,4 @@ pandas>=2.2
 numpy>=2.0
 pyarrow>=18
 supabase>=2.9
+polars>=1.0
