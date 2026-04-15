@@ -4,11 +4,8 @@ Lions Offensive Line Rater
 Tier-based slider UI for OL rankings, with save/load/browse community
 algorithms scoped to position_group='ol'.
 
-What's different from the Receivers/RB pages:
-- Tier filter at the top — users pick how speculative they want to get
-- Methodology popover on every stat in Advanced mode
-- Team context banner at the top showing Lions-as-unit run/pass block numbers
-- Score explainer below the leaderboard
+Layout matches the Receivers and Running Backs pages: ranking table at the
+top, then team context banner, then player detail, then community section.
 """
 
 from pathlib import Path
@@ -38,18 +35,17 @@ inject_css()
 POSITION_GROUP = "ol"
 PAGE_URL = "https://lions-rater.streamlit.app/Offensive_Line"
 
-DATA_PATH = Path("data/master_lions_ol_with_z.parquet")
-METADATA_PATH = Path("data/ol_stat_metadata.json")
+DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_ol_with_z.parquet"
+METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "ol_stat_metadata.json"
 
 
 # ============================================================
 # Bundle definitions
 # ============================================================
-# Shape matches lib_shared: each bundle has a label and a stats dict
-# mapping z-score columns to their internal weights within the bundle.
 OL_BUNDLES = {
     "run_blocking": {
         "label": "Run blocking",
+        "description": "Creates space on running plays.",
         "stats": {
             "z_gap_success_rate": 1.0,
             "z_gap_epa_per_play": 1.0,
@@ -60,12 +56,14 @@ OL_BUNDLES = {
     },
     "pass_protection": {
         "label": "Pass protection",
+        "description": "Keeps the QB upright.",
         "stats": {
             "z_on_off_sack_rate_diff": 1.0,
         },
     },
     "discipline": {
         "label": "Discipline",
+        "description": "Avoids costly penalties.",
         "stats": {
             "z_penalties_total": 1.0,
             "z_penalty_rate": 1.0,
@@ -74,6 +72,7 @@ OL_BUNDLES = {
     },
     "availability": {
         "label": "Availability",
+        "description": "On the field when it matters.",
         "stats": {
             "z_snaps_played": 1.0,
             "z_availability_index": 1.0,
@@ -81,6 +80,7 @@ OL_BUNDLES = {
     },
     "experimental": {
         "label": "Experimental",
+        "description": "Speculative stats — use with skepticism.",
         "stats": {
             "z_mobility_index": 1.0,
             "z_leverage_rating": 1.0,
@@ -89,15 +89,15 @@ OL_BUNDLES = {
     },
 }
 
-BUNDLE_DESCRIPTIONS = {
-    "run_blocking": "Creates space on running plays.",
-    "pass_protection": "Keeps the QB upright.",
-    "discipline": "Avoids costly penalties.",
-    "availability": "On the field when it matters.",
-    "experimental": "Speculative stats — use with skepticism.",
+DEFAULT_BUNDLE_WEIGHTS = {
+    "run_blocking": 60,
+    "pass_protection": 50,
+    "discipline": 30,
+    "availability": 20,
+    "experimental": 0,
 }
 
-# Methodology for the popovers in Advanced mode
+# Methodology — per-stat What/How/Limits used in Advanced mode tooltips
 OL_METHODOLOGY = {
     "z_snaps_played": {
         "what": "Total offensive snaps played in the season.",
@@ -188,7 +188,7 @@ def load_data():
 
 
 # ============================================================
-# Tier helpers
+# Tier helpers (matching WR/RB)
 # ============================================================
 TIER_LABELS = {
     1: "Tier 1 — Counted",
@@ -217,12 +217,24 @@ def filter_bundles_by_tier(bundles: dict, stat_tiers: dict, enabled_tiers: list)
             if stat_tiers.get(z, 1) in enabled_tiers
         }
         if kept_stats:
-            filtered[bk] = {"label": bdef["label"], "stats": kept_stats}
+            filtered[bk] = {
+                "label": bdef["label"],
+                "description": bdef["description"],
+                "stats": kept_stats,
+            }
     return filtered
 
 
+def bundle_tier_summary(bundle_stats: dict, stat_tiers: dict) -> str:
+    counts = {}
+    for z in bundle_stats:
+        t = stat_tiers.get(z, 1)
+        counts[t] = counts.get(t, 0) + 1
+    return " ".join(f"{tier_badge(t)}×{c}" for t, c in sorted(counts.items()))
+
+
 # ============================================================
-# Score meaning labels
+# Score labels (matching WR/RB)
 # ============================================================
 def score_label(score):
     if pd.isna(score):
@@ -246,228 +258,397 @@ def format_score(score):
 
 
 SCORE_EXPLAINER = """
-**What this number actually means.** The score is a weighted average of
-z-scores — standardized stats where 0 is the group average, +1 is one
-standard deviation above, and −1 is one standard deviation below. Your
-slider weights control how much each bundle contributes.
+**What this number means.** The score is a weighted average of z-scores —
+standardized stats where 0 is the group average, +1 is one standard
+deviation above, and −1 is one standard deviation below. Your slider
+weights control how much each bundle contributes.
 
 **How to read it:**
-- `+1.0` or higher → well above the group average on the stats you weighted
+- `+1.0` or higher → well above the group average on what you weighted
 - `+0.4` to `+1.0` → above average
 - `−0.4` to `+0.4` → roughly average
 - `−1.0` or lower → well below average
 
 **What this is not.** It's not a PFF-style 0-100 grade. It's a
-**comparative** number telling you how each player stacks up against the
-others in the group, given the methodology *you* chose.
+**comparative** number telling you how the Lions starters stack up
+against each other under the methodology *you* chose.
 
-**Small-sample warning:** scores here are computed within the Lions starting
-five (n=5), so distributions are noisy. Treat directional differences
-seriously, but don't over-read small gaps between players.
+**Pass protection limitation.** Pass protection is genuinely harder to
+measure from free data than run blocking. The pass-protection bundle
+relies on a single game-level on/off split, while the run-blocking
+bundle has five complementary stats. Treat the pass-protection
+contribution accordingly.
+
+**Small-sample warning.** Scores here are computed within the Lions
+starting five (n=5), so distributions are noisy and a player's "+1.0"
+means one SD above the other Lions starters, not one SD above NFL
+starting OL. Treat directional differences seriously, but don't over-read
+small gaps. (League-wide z-scores for OL are on the project's roadmap.)
 """
 
 
 # ============================================================
-# Main page
+# Session state
 # ============================================================
-def main():
-    st.title("🦁 Lions Offensive Line Rater")
+if "loaded_algo" not in st.session_state:
+    st.session_state.loaded_algo = None
+if "upvoted_ids" not in st.session_state:
+    st.session_state.upvoted_ids = set()
+if "ol_tiers_enabled" not in st.session_state:
+    st.session_state.ol_tiers_enabled = [1, 2, 3]  # Tier 4 off by default
+
+
+# ============================================================
+# Header
+# ============================================================
+st.title("🦁 Lions Offensive Line Rater")
+st.markdown(
+    "**Build your own algorithm.** Drag the sliders to weight what you "
+    "value, and watch the Lions starting five re-rank in real time. "
+    "_No 'best lineman' — just **your** best lineman._"
+)
+st.caption(
+    "2024 regular season • Compared within the Lions starting five • "
+    "Transparency-first: every stat has a methodology popover"
+)
+
+
+# ============================================================
+# Load data
+# ============================================================
+df, meta = load_data()
+if df is None:
+    st.error(f"OL data not found at {DATA_PATH}")
     st.caption(
-        "Build your own OL rating. Transparency-first: every stat has a "
-        "methodology popover, and you choose how speculative you want to get."
+        "Run the data-pull notebook and upload the parquet + metadata "
+        "files to `data/` in the repo."
+    )
+    st.stop()
+
+stat_tiers = meta.get("stat_tiers", {}) if meta else {}
+stat_labels = meta.get("stat_labels", {}) if meta else {}
+ctx = meta.get("team_context", {}) if meta else {}
+
+
+# ============================================================
+# Loaded algorithm indicator (sidebar to match WR/RB)
+# ============================================================
+if st.session_state.loaded_algo:
+    la = st.session_state.loaded_algo
+    st.sidebar.info(
+        f"Loaded: **{la['name']}** by {la['author']}\n\n"
+        f"_{la.get('description', '')}_"
+    )
+    if st.sidebar.button("Clear loaded algorithm"):
+        st.session_state.loaded_algo = None
+
+
+# ============================================================
+# Sidebar — Advanced mode toggle (matching WR/RB)
+# ============================================================
+st.sidebar.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+advanced_mode = st.sidebar.toggle(
+    "🔬 Advanced mode", value=False,
+    key="ol_advanced_mode",
+    help="Show individual stat sliders with methodology tooltips instead of plain-English bundles.",
+)
+
+st.sidebar.header("What do you value?")
+
+
+# ============================================================
+# Tier filter (main content area)
+# ============================================================
+st.markdown("### How speculative do you want to get?")
+st.caption(
+    "Each stat is labeled by how much trust it asks from you. "
+    "Uncheck tiers you don't want to include. Philosophy in a checkbox."
+)
+tier_cols = st.columns(4)
+new_enabled = []
+for i, tier in enumerate([1, 2, 3, 4]):
+    with tier_cols[i]:
+        checked = st.checkbox(
+            f"{tier_badge(tier)} {TIER_LABELS[tier]}",
+            value=(tier in st.session_state.ol_tiers_enabled),
+            help=TIER_DESCRIPTIONS[tier],
+            key=f"ol_tier_checkbox_{tier}",
+        )
+        if checked:
+            new_enabled.append(tier)
+st.session_state.ol_tiers_enabled = new_enabled
+
+if not new_enabled:
+    st.warning("Enable at least one tier to see ratings.")
+    st.stop()
+
+active_bundles = filter_bundles_by_tier(OL_BUNDLES, stat_tiers, new_enabled)
+
+st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+
+# ============================================================
+# Sliders (in sidebar to match WR/RB)
+# ============================================================
+bundle_weights = {}
+effective_weights = {}
+
+if not advanced_mode:
+    if not active_bundles:
+        st.info("No bundles have stats in the enabled tiers. Try enabling more tiers.")
+        st.stop()
+
+    st.sidebar.caption("Drag to weight what matters to you. 0 = ignore, 100 = max.")
+    for bk, bundle in active_bundles.items():
+        tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
+        st.sidebar.markdown(f"**{bundle['label']}**")
+        st.sidebar.markdown(
+            f"<div class='bundle-desc'>{bundle['description']}<br>"
+            f"<small>{tier_summary}</small></div>",
+            unsafe_allow_html=True,
+        )
+        if f"bundle_{bk}" not in st.session_state:
+            st.session_state[f"bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
+        bundle_weights[bk] = st.sidebar.slider(
+            bundle["label"], 0, 100,
+            step=5,
+            key=f"bundle_{bk}",
+            label_visibility="collapsed",
+        )
+    # Bundles not currently active still need a zero entry for save
+    for bk in OL_BUNDLES:
+        if bk not in bundle_weights:
+            bundle_weights[bk] = 0
+    effective_weights = compute_effective_weights(active_bundles, bundle_weights)
+else:
+    st.sidebar.caption(
+        "Direct control over every underlying stat. Hover the ⓘ icon next to "
+        "each slider for methodology."
+    )
+    # Collect all active stats across bundles
+    all_active_stats = set()
+    for bdef in active_bundles.values():
+        all_active_stats.update(bdef["stats"].keys())
+
+    # Sort by tier then by label
+    sorted_stats = sorted(
+        all_active_stats,
+        key=lambda s: (stat_tiers.get(s, 1), stat_labels.get(s, s)),
     )
 
-    df, meta = load_data()
-    if df is None:
-        st.error(f"OL data not found at {DATA_PATH}")
-        st.caption(
-            "Run the data-pull notebook and upload the parquet + metadata "
-            "files to `data/` in the repo."
+    for stat in sorted_stats:
+        tier = stat_tiers.get(stat, 1)
+        label = stat_labels.get(stat, stat)
+        meth = OL_METHODOLOGY.get(stat, {})
+
+        # Build a rich help tooltip
+        help_parts = []
+        if meth.get("what"):
+            help_parts.append(f"What: {meth['what']}")
+        if meth.get("how"):
+            help_parts.append(f"How: {meth['how']}")
+        if meth.get("limits"):
+            help_parts.append(f"Limits: {meth['limits']}")
+        help_text = "\n\n".join(help_parts) if help_parts else None
+
+        w = st.sidebar.slider(
+            f"{tier_badge(tier)} {label}",
+            min_value=0, max_value=100, value=50, step=5,
+            key=f"ol_stat_{stat}",
+            help=help_text,
         )
-        return
+        if w > 0:
+            effective_weights[stat] = w
 
-    # ---- Team context banner ----
-    ctx = meta.get("team_context", {}) if meta else {}
-    if ctx:
-        st.markdown("### How did the line perform as a unit?")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if ctx.get("lions_ybc_per_att") is not None:
-                delta = ctx['lions_ybc_per_att'] - ctx.get('league_ybc_per_att', 0)
-                st.metric(
-                    "Yards before contact / att",
-                    f"{ctx['lions_ybc_per_att']:.2f}",
-                    delta=f"{delta:+.2f} vs league",
-                )
-        with col2:
-            if ctx.get("lions_yac_per_att") is not None:
-                delta = ctx['lions_yac_per_att'] - ctx.get('league_yac_per_att', 0)
-                st.metric(
-                    "Yards after contact / att",
-                    f"{ctx['lions_yac_per_att']:.2f}",
-                    delta=f"{delta:+.2f} vs league",
-                )
-        with col3:
-            if ctx.get("lions_sack_rate") is not None:
-                delta = ctx['lions_sack_rate'] - ctx.get('league_sack_rate', 0)
-                st.metric(
-                    "Sack rate",
-                    f"{ctx['lions_sack_rate']:.1%}",
-                    delta=f"{delta:+.1%} vs league",
-                    delta_color="inverse",
-                )
-        st.caption(
-            "Team-level numbers for the whole OL. Individual ratings below "
-            "attribute play-by-play results to specific linemen by position."
-        )
-        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    # For save compatibility — advanced mode doesn't save, but community_section
+    # expects bundle_weights to exist
+    bundle_weights = {bk: 0 for bk in OL_BUNDLES}
 
-    # ---- Loaded algorithm indicator ----
-    if st.session_state.get("loaded_algo"):
-        algo = st.session_state.loaded_algo
-        st.info(f"Loaded algorithm: **{algo['name']}** — adjust sliders to fork it")
 
-    # ---- Tier filter ----
-    stat_tiers = meta.get("stat_tiers", {}) if meta else {}
-    stat_labels = meta.get("stat_labels", {}) if meta else {}
+# ============================================================
+# Score and ranking
+# ============================================================
+scored = score_players(df, effective_weights)
+scored_sorted = scored.sort_values("score", ascending=False).reset_index(drop=True)
+scored_sorted.index = scored_sorted.index + 1
 
-    if "ol_tiers_enabled" not in st.session_state:
-        st.session_state.ol_tiers_enabled = [1, 2, 3]  # Tier 4 off by default
+st.subheader("Ranking")
+st.caption(
+    "⚠️ Scores here compare the five Lions starters to each other, not to "
+    "league-wide OL. With a sample of five, small differences are noisy — "
+    "treat directional results seriously, but don't over-read close gaps."
+)
 
-    st.markdown("### How speculative do you want to get?")
-    st.caption(
-        "Each stat is labeled by how much trust it asks from you. "
-        "Uncheck tiers you don't want to include. Philosophy in a checkbox."
-    )
-    tier_cols = st.columns(4)
-    new_enabled = []
-    for i, tier in enumerate([1, 2, 3, 4]):
-        with tier_cols[i]:
-            checked = st.checkbox(
-                f"{tier_badge(tier)} {TIER_LABELS[tier]}",
-                value=(tier in st.session_state.ol_tiers_enabled),
-                help=TIER_DESCRIPTIONS[tier],
-                key=f"ol_tier_checkbox_{tier}",
-            )
-            if checked:
-                new_enabled.append(tier)
-    st.session_state.ol_tiers_enabled = new_enabled
+display_cols = []
+if "player" in scored_sorted.columns:
+    display_cols.append("player")
+if "slot" in scored_sorted.columns:
+    display_cols.append("slot")
+if "games_played" in scored_sorted.columns:
+    display_cols.append("games_played")
 
-    if not new_enabled:
-        st.warning("Enable at least one tier to see ratings.")
-        return
+display_df = scored_sorted[display_cols].copy()
+display_df["Score"] = scored_sorted["score"].apply(format_score)
 
-    # Filter bundles to only include stats from enabled tiers
-    active_bundles = filter_bundles_by_tier(OL_BUNDLES, stat_tiers, new_enabled)
+# Friendlier column names
+rename_map = {
+    "player": "Player",
+    "slot": "Position",
+    "games_played": "Games",
+}
+display_df = display_df.rename(columns=rename_map)
 
+st.dataframe(display_df, use_container_width=True)
+
+with st.expander("ℹ️ How is this score calculated?"):
+    st.markdown(SCORE_EXPLAINER)
+
+
+# ============================================================
+# Team context banner (now BELOW the ranking)
+# ============================================================
+if ctx:
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.markdown("### How did the line perform as a unit?")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if ctx.get("lions_ybc_per_att") is not None:
+            delta = ctx['lions_ybc_per_att'] - ctx.get('league_ybc_per_att', 0)
+            st.metric(
+                "Yards before contact / att",
+                f"{ctx['lions_ybc_per_att']:.2f}",
+                delta=f"{delta:+.2f} vs league",
+            )
+    with col2:
+        if ctx.get("lions_yac_per_att") is not None:
+            delta = ctx['lions_yac_per_att'] - ctx.get('league_yac_per_att', 0)
+            st.metric(
+                "Yards after contact / att",
+                f"{ctx['lions_yac_per_att']:.2f}",
+                delta=f"{delta:+.2f} vs league",
+            )
+    with col3:
+        if ctx.get("lions_sack_rate") is not None:
+            delta = ctx['lions_sack_rate'] - ctx.get('league_sack_rate', 0)
+            st.metric(
+                "Sack rate",
+                f"{ctx['lions_sack_rate']:.1%}",
+                delta=f"{delta:+.1%} vs league",
+                delta_color="inverse",
+            )
+    st.caption(
+        "Team-level numbers for the whole OL. Individual ratings above "
+        "attribute play-by-play results to specific linemen by position."
+    )
 
-    # ---- Advanced mode toggle (in sidebar, matching other pages' convention) ----
-    with st.sidebar:
-        st.markdown("### Controls")
-        advanced_mode = st.toggle(
-            "Advanced mode (individual stats)",
-            value=False,
-            key="ol_advanced_mode",
-            help="Show per-stat sliders with methodology popovers."
-        )
 
-    # ---- Sliders ----
-    bundle_weights = {}
+# ============================================================
+# Player detail (matching WR/RB)
+# ============================================================
+st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+st.subheader("Player detail")
+
+selected = st.selectbox(
+    "Pick a lineman to see how their score breaks down",
+    options=scored_sorted["player"].tolist(),
+    index=0,
+)
+player = scored_sorted[scored_sorted["player"] == selected].iloc[0]
+
+c1, c2 = st.columns([1, 2])
+
+with c1:
+    if "slot" in player.index and pd.notna(player.get("slot")):
+        st.metric("Position", player["slot"])
+    if "snaps_played" in player.index and pd.notna(player.get("snaps_played")):
+        st.metric("Snaps played", int(player["snaps_played"]))
+    if "games_played" in player.index and pd.notna(player.get("games_played")):
+        st.metric("Games played", int(player["games_played"]))
+    if "penalties_total" in player.index and pd.notna(player.get("penalties_total")):
+        st.metric("Penalties", int(player["penalties_total"]))
+    st.metric("Your score", format_score(player["score"]))
+
+with c2:
+    total_weight = sum(effective_weights.values())
 
     if not advanced_mode:
-        st.subheader("What matters to you?")
-        for bk, bdef in active_bundles.items():
-            tier_counts = {}
-            for z in bdef["stats"]:
-                t = stat_tiers.get(z, 1)
-                tier_counts[t] = tier_counts.get(t, 0) + 1
-            tier_summary = " ".join(
-                f"{tier_badge(t)}×{c}" for t, c in sorted(tier_counts.items())
-            )
+        st.markdown("**How your score breaks down**")
+        bundle_rows = []
+        for bk, bundle in active_bundles.items():
+            bw = bundle_weights.get(bk, 0)
+            if bw == 0:
+                continue
+            contribution = 0.0
+            for z_col, internal in bundle["stats"].items():
+                z = player.get(z_col)
+                if pd.notna(z) and total_weight > 0:
+                    contribution += z * (bw * internal / total_weight)
+            bundle_rows.append({
+                "Bundle": bundle["label"],
+                "Your weight": f"{bw}",
+                "Contribution": f"{contribution:+.2f}",
+            })
+        if bundle_rows:
+            st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
+        else:
+            st.caption("No bundles weighted — drag some sliders.")
 
-            default = 50
-            if f"bundle_{bk}" not in st.session_state:
-                st.session_state[f"bundle_{bk}"] = default
-
-            bundle_weights[bk] = st.slider(
-                f"**{bdef['label']}** — {BUNDLE_DESCRIPTIONS[bk]}  \n*{tier_summary}*",
-                min_value=0,
-                max_value=100,
-                key=f"bundle_{bk}",
-            )
-
-        # Compute effective weights using lib_shared
-        effective_weights = compute_effective_weights(active_bundles, bundle_weights)
-
+        with st.expander("🔬 See the underlying stats"):
+            stat_rows = []
+            shown_stats = set()
+            for bundle in active_bundles.values():
+                shown_stats.update(bundle["stats"].keys())
+            for z_col in sorted(shown_stats, key=lambda z: (stat_tiers.get(z, 1), stat_labels.get(z, z))):
+                tier = stat_tiers.get(z_col, 1)
+                label = stat_labels.get(z_col, z_col)
+                z = player.get(z_col)
+                stat_rows.append({
+                    "Tier": tier_badge(tier),
+                    "Stat": label,
+                    "Z-score": f"{z:+.2f}" if pd.notna(z) else "—",
+                })
+            if stat_rows:
+                st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
     else:
-        st.subheader("Stat weights")
-        st.caption("Tier badge next to each stat. Click ℹ️ for methodology.")
-        # Collect all active stats across bundles
-        all_active_stats = set()
-        for bdef in active_bundles.values():
-            all_active_stats.update(bdef["stats"].keys())
-
-        effective_weights = {}
-        for stat in sorted(all_active_stats, key=lambda s: stat_tiers.get(s, 1)):
-            tier = stat_tiers.get(stat, 1)
-            label = stat_labels.get(stat, stat)
-            meth = OL_METHODOLOGY.get(stat, {})
-
-            row = st.columns([3, 1])
-            with row[0]:
-                w = st.slider(
-                    f"{tier_badge(tier)} {label}",
-                    min_value=-100,
-                    max_value=100,
-                    value=0,
-                    key=f"ol_stat_{stat}",
-                )
-            with row[1]:
-                with st.popover("ℹ️ methodology"):
-                    st.markdown(f"**{label}** — {TIER_LABELS[tier]}")
-                    if meth:
-                        st.markdown(f"**What:** {meth.get('what', '')}")
-                        st.markdown(f"**How:** {meth.get('how', '')}")
-                        st.markdown(f"**Limits:** {meth.get('limits', '')}")
-
-            if w != 0:
-                effective_weights[stat] = w
-
-        # For advanced mode, fill bundle_weights with zeros so save still works
-        # (lib_shared expects bundle-shaped data for saves, but advanced mode
-        # doesn't save — the Save UI in community_section gracefully refuses)
-        bundle_weights = {bk: 0 for bk in OL_BUNDLES}
-
-    # ---- Score and leaderboard ----
-    scored = score_players(df, effective_weights)
-    scored["Score"] = scored["score"].apply(format_score)
-
-    display_cols = ["player", "slot", "games_played", "Score"]
-    display_cols = [c for c in display_cols if c in scored.columns]
-    leaderboard = (
-        scored.sort_values("score", ascending=False)
-        .reset_index(drop=True)[display_cols]
-    )
-    leaderboard.index = leaderboard.index + 1
-
-    st.subheader("Leaderboard")
-    st.dataframe(leaderboard, width="stretch")
-
-    with st.expander("ℹ️ How is this score calculated?"):
-        st.markdown(SCORE_EXPLAINER)
-
-    # ---- Community section (save/browse/fork/upvote) ----
-    # Only render in bundle mode — community_section handles the
-    # advanced-mode case with an info message.
-    community_section(
-        position_group=POSITION_GROUP,
-        bundles=OL_BUNDLES,
-        bundle_weights=bundle_weights,
-        advanced_mode=advanced_mode,
-        page_url=PAGE_URL,
-    )
+        st.markdown("**Stat-by-stat breakdown** (z-score within Lions starters)")
+        rows = []
+        for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 1), stat_labels.get(z, z))):
+            tier = stat_tiers.get(z_col, 1)
+            label = stat_labels.get(z_col, z_col)
+            z = player.get(z_col)
+            w = effective_weights.get(z_col, 0)
+            contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
+            rows.append({
+                "Tier": tier_badge(tier),
+                "Stat": label,
+                "Z-score": f"{z:+.2f}" if pd.notna(z) else "—",
+                "Weight": f"{w}",
+                "Contribution": f"{contrib:+.2f}",
+            })
+        if rows:
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        else:
+            st.caption("No stats weighted — drag some sliders.")
 
 
-if __name__ == "__main__":
-    main()
+# ============================================================
+# Community algorithms
+# ============================================================
+community_section(
+    position_group=POSITION_GROUP,
+    bundles=OL_BUNDLES,
+    bundle_weights=bundle_weights,
+    advanced_mode=advanced_mode,
+    page_url=PAGE_URL,
+)
+
+
+# ============================================================
+# Footer
+# ============================================================
+st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+st.caption(
+    "Data via [nflverse](https://github.com/nflverse) • "
+    "FTN charting via FTN Data via nflverse (CC-BY-SA 4.0) • "
+    "Built as a fan project, not affiliated with the NFL or the Detroit Lions."
+)
