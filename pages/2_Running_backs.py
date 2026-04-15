@@ -1,10 +1,28 @@
 """
-Lions Running Back Rater
-========================
-Two-layer slider UI for RB rankings, with save/load/browse community
-algorithms scoped to position_group='rb'.
+Lions Running Back Rater — RB page (tier migration)
+===================================================
+Tier-based slider UI for RB rankings, matching the Receivers and OL pages.
+
+What the tier system does:
+- Loads stat tiers and methodology from data/rb_stat_metadata.json.
+- Tier checkboxes at the top of the page let users filter which stats
+  participate in scoring. Tier 4 off by default; there are no Tier 4
+  stats for RBs, so that checkbox is a no-op for now but we keep
+  it for consistency with WR and OL.
+- When a tier is disabled, any stat in that tier is removed from every
+  bundle. Bundles that end up empty disappear from the sidebar.
+- Advanced mode shows per-stat sliders with methodology in help tooltips.
+- Leaderboard scores carry a label like "+0.47 (above group)".
+- "How is this score calculated?" expander below the leaderboard.
+
+Design note: Tier 1 raw counts (rush_yards_z, rush_tds_z, carries_z,
+receptions_z, rec_yards_z, rec_tds_z) are NOT added to any existing
+bundle. Adding raw volume to "Efficiency" or "Tackle breaking" would
+break the bundle's meaning. Tier 1 stats are still accessible — they
+show up in Advanced mode. Bundle mode keeps its clean original design.
 """
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -34,64 +52,63 @@ inject_css()
 POSITION_GROUP = "rb"
 PAGE_URL = "https://lions-rater.streamlit.app/Running_backs"
 
+DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_rbs_with_z.parquet"
+METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "rb_stat_metadata.json"
+
+
 # ============================================================
-# Data
+# Data loading
 # ============================================================
 @st.cache_data
 def load_data():
-    data_path = (
-        Path(__file__).resolve().parent.parent
-        / "data" / "master_lions_rbs_with_z.parquet"
-    )
-    return pl.read_parquet(data_path).to_pandas()
+    return pl.read_parquet(DATA_PATH).to_pandas()
+
+
+@st.cache_data
+def load_metadata():
+    if not METADATA_PATH.exists():
+        return {}
+    with open(METADATA_PATH) as f:
+        return json.load(f)
 
 
 # ============================================================
-# Stat catalog (RB-specific)
+# Stat catalog — raw column names for Player Detail display
 # ============================================================
-INDIVIDUAL_STATS = {
-    "yards_per_carry_z": ("Yards per carry", "yards_per_carry",
-        "Plain old yards per carry. Volume-adjusted across the league."),
-    "epa_per_rush_z": ("EPA per rush", "epa_per_rush",
-        "Expected points added per rush attempt. Best single efficiency stat."),
-    "rush_success_rate_z": ("Rush success rate", "rush_success_rate",
-        "% of carries that produced a 'successful' play by EPA standards."),
-    "ryoe_per_att_z": ("RYOE per attempt", "ryoe_per_att",
-        "Rush yards over expected. NGS measures what an average back would "
-        "have gained on the same carry, given blocking and box count."),
-    "broken_tackles_per_att_z": ("Broken tackles per att", "broken_tackles_per_att",
-        "How often he makes the first defender miss. FTN charting."),
-    "yards_before_contact_per_att_z": ("Yards before contact", "yards_before_contact_per_att",
-        "How much room the offensive line gives him before he gets touched."),
-    "yards_after_contact_per_att_z": ("Yards after contact", "yards_after_contact_per_att",
-        "How much he gains AFTER first contact. Pure RB ability."),
-    "explosive_run_rate_z": ("Explosive run rate", "explosive_run_rate",
-        "% of carries that go for 10+ yards."),
-    "explosive_15_rate_z": ("15+ yard run rate", "explosive_15_rate",
-        "% of carries that go for 15+ yards. The big-play threshold."),
-    "carries_per_game_z": ("Carries per game", "carries_per_game",
-        "Workhorse score. How much he carries the rock."),
-    "snap_share_z": ("Snap share", "snap_share",
-        "% of offensive snaps he was on the field."),
-    "touches_per_game_z": ("Touches per game", "touches_per_game",
-        "Carries plus receptions. Total involvement in the offense."),
-    "rz_carry_share_z": ("Red zone carry share", "rz_carry_share",
-        "% of his carries that came inside the 20. Trusted near the goal line."),
-    "rec_yards_per_target_z": ("Rec yards per target", "rec_yards_per_target",
-        "Receiving production efficiency for backs."),
-    "yac_per_reception_z": ("YAC per reception", "yac_per_reception",
-        "Run-after-catch ability on outlet passes and screens."),
-    "targets_per_game_z": ("Targets per game", "targets_per_game",
-        "How often the offense looks his way as a receiver."),
-    "rec_epa_per_target_z": ("Receiving EPA per target", "rec_epa_per_target",
-        "Expected points added per target. Receiving efficiency."),
-    "short_yardage_conv_rate_z": ("Short yardage conv rate", "short_yardage_conv_rate",
-        "% of 3rd/4th & 1-2 carries he converted into a first down."),
-    "goal_line_td_rate_z": ("Goal line TD rate", "goal_line_td_rate",
-        "% of his inside-the-5 carries that scored."),
+RAW_COL_MAP = {
+    "rush_yards_z": "rush_yards",
+    "rush_tds_z": "rush_tds",
+    "carries_z": "carries",
+    "receptions_z": "receptions",
+    "rec_yards_z": "rec_yards",
+    "rec_tds_z": "rec_tds",
+    "yards_per_carry_z": "yards_per_carry",
+    "rush_success_rate_z": "rush_success_rate",
+    "carries_per_game_z": "carries_per_game",
+    "snap_share_z": "snap_share",
+    "touches_per_game_z": "touches_per_game",
+    "targets_per_game_z": "targets_per_game",
+    "explosive_run_rate_z": "explosive_run_rate",
+    "explosive_15_rate_z": "explosive_15_rate",
+    "rz_carry_share_z": "rz_carry_share",
+    "goal_line_td_rate_z": "goal_line_td_rate",
+    "short_yardage_conv_rate_z": "short_yardage_conv_rate",
+    "rec_yards_per_target_z": "rec_yards_per_target",
+    "yac_per_reception_z": "yac_per_reception",
+    "broken_tackles_per_att_z": "broken_tackles_per_att",
+    "yards_before_contact_per_att_z": "yards_before_contact_per_att",
+    "yards_after_contact_per_att_z": "yards_after_contact_per_att",
+    "epa_per_rush_z": "epa_per_rush",
+    "rec_epa_per_target_z": "rec_epa_per_target",
+    "ryoe_per_att_z": "ryoe_per_att",
 }
 
-# 6 bundles
+
+# ============================================================
+# Bundles — Tier 2/3 organized, unchanged from previous version
+# ============================================================
+# Tier 1 raw counts are deliberately excluded from bundles (see module
+# docstring). They're still accessible via Advanced mode.
 BUNDLES = {
     "efficiency": {
         "label": "⚡ Efficiency",
@@ -159,6 +176,101 @@ DEFAULT_BUNDLE_WEIGHTS = {
     "short_yardage": 30,
 }
 
+
+# ============================================================
+# Tier helpers
+# ============================================================
+TIER_LABELS = {
+    1: "Tier 1 — Counted",
+    2: "Tier 2 — Contextualized",
+    3: "Tier 3 — Adjusted",
+    4: "Tier 4 — Inferred",
+}
+TIER_DESCRIPTIONS = {
+    1: "Pure recorded facts. No modeling.",
+    2: "Counts divided by opportunity. Still no modeling.",
+    3: "Compared against a modeled baseline. Model is simple and visible.",
+    4: "Inferred from patterns the data can't directly see. Use with skepticism.",
+}
+
+
+def tier_badge(tier: int) -> str:
+    return {1: "🟢", 2: "🔵", 3: "🟡", 4: "🟠"}.get(tier, "⚪")
+
+
+def filter_bundles_by_tier(bundles: dict, stat_tiers: dict, enabled_tiers: list) -> dict:
+    """Strip disabled-tier stats out of each bundle. Empty bundles drop out."""
+    filtered = {}
+    for bk, bdef in bundles.items():
+        kept_stats = {
+            z: w for z, w in bdef["stats"].items()
+            if stat_tiers.get(z, 2) in enabled_tiers
+        }
+        if kept_stats:
+            filtered[bk] = {
+                "label": bdef["label"],
+                "description": bdef["description"],
+                "stats": kept_stats,
+            }
+    return filtered
+
+
+def bundle_tier_summary(bundle_stats: dict, stat_tiers: dict) -> str:
+    counts = {}
+    for z in bundle_stats:
+        t = stat_tiers.get(z, 2)
+        counts[t] = counts.get(t, 0) + 1
+    return " ".join(f"{tier_badge(t)}×{c}" for t, c in sorted(counts.items()))
+
+
+# ============================================================
+# Score labels
+# ============================================================
+def score_label(score: float) -> str:
+    if pd.isna(score):
+        return "—"
+    if score >= 1.0:
+        return "well above group"
+    if score >= 0.4:
+        return "above group"
+    if score >= -0.4:
+        return "about average"
+    if score >= -1.0:
+        return "below group"
+    return "well below group"
+
+
+def format_score(score: float) -> str:
+    if pd.isna(score):
+        return "—"
+    sign = "+" if score >= 0 else ""
+    return f"{sign}{score:.2f} ({score_label(score)})"
+
+
+SCORE_EXPLAINER = """
+**What this number means.** The score is a weighted average of z-scores —
+standardized stats where 0 is the league average, +1 is one standard
+deviation above, and −1 is one standard deviation below. Your slider
+weights control how much each bundle contributes.
+
+**How to read it:**
+- `+1.0` or higher → well above the league average on what you weighted
+- `+0.4` to `+1.0` → above average
+- `−0.4` to `+0.4` → roughly average
+- `−1.0` or lower → well below average
+
+**What this is not.** It's not a PFF-style 0-100 grade. It's a
+**comparative** number telling you how Lions running backs stack up
+against the top 32 RBs in the league, under the methodology *you* chose.
+
+**League population:** z-scores are computed against the top 32 RBs by
+offensive snaps (min 6 games played). Every Lions RB with at least one
+offensive snap is visible, but players with very few carries will have
+noisy scores — read extreme values on low-volume players as "small
+sample, not skill."
+"""
+
+
 # ============================================================
 # Session state
 # ============================================================
@@ -166,6 +278,9 @@ if "loaded_algo" not in st.session_state:
     st.session_state.loaded_algo = None
 if "upvoted_ids" not in st.session_state:
     st.session_state.upvoted_ids = set()
+if "rb_tiers_enabled" not in st.session_state:
+    st.session_state.rb_tiers_enabled = [1, 2, 3]  # Tier 4 off by default
+
 
 # ============================================================
 # Header
@@ -177,9 +292,10 @@ st.markdown(
     "_No 'best back' — just **your** best back._"
 )
 st.caption(
-    "2024 regular season • Compared against all NFL RBs • "
-    "Small samples adjusted toward league average"
+    "2024 regular season • Compared against top 32 RBs by snaps • "
+    "Every Lions RB visible"
 )
+
 
 # ============================================================
 # Load data
@@ -187,11 +303,14 @@ st.caption(
 try:
     df = load_data()
 except FileNotFoundError:
-    st.error(
-        "Couldn't find the running backs data file. "
-        "Run `python scripts/build_data.py` to build it."
-    )
+    st.error("Couldn't find the running backs data file.")
     st.stop()
+
+meta = load_metadata()
+stat_tiers = meta.get("stat_tiers", {})
+stat_labels = meta.get("stat_labels", {})
+stat_methodology = meta.get("stat_methodology", {})
+
 
 # ============================================================
 # ?algo= deep link
@@ -201,6 +320,7 @@ if "algo" in st.query_params and st.session_state.loaded_algo is None:
     if linked and linked.get("position_group") == POSITION_GROUP:
         apply_algo_weights(linked, BUNDLES)
         st.rerun()
+
 
 # ============================================================
 # Sidebar — filters
@@ -214,7 +334,7 @@ min_carries = st.sidebar.slider(
 st.sidebar.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 advanced_mode = st.sidebar.toggle(
     "🔬 Advanced mode", value=False,
-    help="Show individual stat sliders instead of plain-English bundles.",
+    help="Show individual stat sliders with methodology tooltips instead of plain-English bundles.",
 )
 
 st.sidebar.header("What do you value?")
@@ -228,6 +348,38 @@ if st.session_state.loaded_algo:
     if st.sidebar.button("Clear loaded algorithm"):
         st.session_state.loaded_algo = None
 
+
+# ============================================================
+# Tier filter (main content area)
+# ============================================================
+st.markdown("### How speculative do you want to get?")
+st.caption(
+    "Each stat is labeled by how much trust it asks from you. "
+    "Uncheck tiers you don't want to include. Philosophy in a checkbox."
+)
+tier_cols = st.columns(4)
+new_enabled = []
+for i, tier in enumerate([1, 2, 3, 4]):
+    with tier_cols[i]:
+        checked = st.checkbox(
+            f"{tier_badge(tier)} {TIER_LABELS[tier]}",
+            value=(tier in st.session_state.rb_tiers_enabled),
+            help=TIER_DESCRIPTIONS[tier],
+            key=f"rb_tier_checkbox_{tier}",
+        )
+        if checked:
+            new_enabled.append(tier)
+st.session_state.rb_tiers_enabled = new_enabled
+
+if not new_enabled:
+    st.warning("Enable at least one tier to see ratings.")
+    st.stop()
+
+active_bundles = filter_bundles_by_tier(BUNDLES, stat_tiers, new_enabled)
+
+st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+
 # ============================================================
 # Sliders
 # ============================================================
@@ -235,28 +387,71 @@ bundle_weights = {}
 effective_weights = {}
 
 if not advanced_mode:
+    if not active_bundles:
+        st.info("No bundles have stats in the enabled tiers. Try enabling more tiers.")
+        st.stop()
+
     st.sidebar.caption("Drag to weight what matters to you. 0 = ignore, 100 = max.")
-    for bk, bundle in BUNDLES.items():
+    for bk, bundle in active_bundles.items():
+        tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
         st.sidebar.markdown(f"**{bundle['label']}**")
         st.sidebar.markdown(
-            f"<div class='bundle-desc'>{bundle['description']}</div>",
+            f"<div class='bundle-desc'>{bundle['description']}<br>"
+            f"<small>{tier_summary}</small></div>",
             unsafe_allow_html=True,
         )
+        if f"bundle_{bk}" not in st.session_state:
+            st.session_state[f"bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
         bundle_weights[bk] = st.sidebar.slider(
             bundle["label"], 0, 100,
-            value=DEFAULT_BUNDLE_WEIGHTS.get(bk, 50),
             step=5,
             key=f"bundle_{bk}",
             label_visibility="collapsed",
         )
-    effective_weights = compute_effective_weights(BUNDLES, bundle_weights)
+    # Bundles not in active_bundles still need a zero entry for save
+    for bk in BUNDLES:
+        if bk not in bundle_weights:
+            bundle_weights[bk] = 0
+    effective_weights = compute_effective_weights(active_bundles, bundle_weights)
 else:
-    st.sidebar.caption("Direct control over every underlying stat.")
-    for z_col, (display_name, raw_col, desc) in INDIVIDUAL_STATS.items():
-        effective_weights[z_col] = st.sidebar.slider(
-            display_name, 0, 100, 50, step=5,
-            help=desc, key=f"adv_rb_{z_col}",
+    st.sidebar.caption(
+        "Direct control over every underlying stat. Hover the ⓘ icon next to "
+        "each slider for methodology."
+    )
+    # Build list of all stats in enabled tiers, sorted by tier then by label
+    all_enabled_stats = [
+        z for z, t in stat_tiers.items() if t in new_enabled
+    ]
+    all_enabled_stats.sort(key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z)))
+
+    for z_col in all_enabled_stats:
+        tier = stat_tiers.get(z_col, 2)
+        label = stat_labels.get(z_col, z_col)
+        meth = stat_methodology.get(z_col, {})
+
+        # Build a rich help tooltip with What/How/Limits
+        help_parts = []
+        if meth.get("what"):
+            help_parts.append(f"What: {meth['what']}")
+        if meth.get("how"):
+            help_parts.append(f"How: {meth['how']}")
+        if meth.get("limits"):
+            help_parts.append(f"Limits: {meth['limits']}")
+        help_text = "\n\n".join(help_parts) if help_parts else None
+
+        w = st.sidebar.slider(
+            f"{tier_badge(tier)} {label}",
+            min_value=0, max_value=100, value=50, step=5,
+            key=f"adv_rb_{z_col}",
+            help=help_text,
         )
+        if w > 0:
+            effective_weights[z_col] = w
+
+    # For save compatibility — advanced mode doesn't save, but community_section
+    # expects bundle_weights to exist
+    bundle_weights = {bk: 0 for bk in BUNDLES}
+
 
 # ============================================================
 # Filter & score
@@ -275,6 +470,7 @@ if total_weight == 0:
 filtered = filtered.sort_values("score", ascending=False).reset_index(drop=True)
 filtered.index = filtered.index + 1
 
+
 # ============================================================
 # Ranking table
 # ============================================================
@@ -292,21 +488,17 @@ display_df = pd.DataFrame({
     "Rush TDs": filtered["rush_tds"].fillna(0).astype(int),
     "Rec": filtered["receptions"].fillna(0).astype(int),
     "Rec yds": filtered["rec_yards"].fillna(0).astype(int),
-    "Score": filtered["score"].round(2),
+    "Score": filtered["score"].apply(format_score),
 })
 st.dataframe(
     display_df,
     use_container_width=True,
     hide_index=True,
-    column_config={
-        "Score": st.column_config.NumberColumn(
-            "Your Score",
-            help="Higher = better. Roughly: 0 = league average, "
-                 "+1 = top ~16%, +2 = top ~2.5%.",
-            format="%.2f",
-        ),
-    },
 )
+
+with st.expander("ℹ️ How is this score calculated?"):
+    st.markdown(SCORE_EXPLAINER)
+
 
 # ============================================================
 # Player detail
@@ -328,17 +520,17 @@ with c1:
     st.metric("Rush yards", int(player["rush_yards"]) if pd.notna(player["rush_yards"]) else 0)
     st.metric("Rush TDs", int(player["rush_tds"]) if pd.notna(player["rush_tds"]) else 0)
     st.metric("Receptions", int(player["receptions"]) if pd.notna(player["receptions"]) else 0)
-    st.metric("Your score", f"{player['score']:.2f}")
+    st.metric("Your score", format_score(player["score"]))
 
 with c2:
     if not advanced_mode:
         st.markdown("**How your score breaks down**")
         bundle_rows = []
-        for bk, bundle in BUNDLES.items():
+        for bk, bundle in active_bundles.items():
             bw = bundle_weights.get(bk, 0)
             if bw == 0:
                 continue
-            contribution = 0
+            contribution = 0.0
             for z_col, internal in bundle["stats"].items():
                 z = player.get(z_col)
                 if pd.notna(z) and total_weight > 0:
@@ -355,11 +547,23 @@ with c2:
 
         with st.expander("🔬 See the underlying stats"):
             stat_rows = []
-            for z_col, (display_name, raw_col, desc) in INDIVIDUAL_STATS.items():
+            shown_stats = set()
+            for bundle in active_bundles.values():
+                shown_stats.update(bundle["stats"].keys())
+            if 1 in new_enabled:
+                for z_col, t in stat_tiers.items():
+                    if t == 1:
+                        shown_stats.add(z_col)
+
+            for z_col in sorted(shown_stats, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+                tier = stat_tiers.get(z_col, 2)
+                label = stat_labels.get(z_col, z_col)
+                raw_col = RAW_COL_MAP.get(z_col)
                 z = player.get(z_col)
-                raw = player.get(raw_col)
+                raw = player.get(raw_col) if raw_col else None
                 stat_rows.append({
-                    "Stat": display_name,
+                    "Tier": tier_badge(tier),
+                    "Stat": label,
                     "Raw": f"{raw:.2f}" if pd.notna(raw) else "—",
                     "Z-score": f"{z:+.2f}" if pd.notna(z) else "—",
                 })
@@ -367,19 +571,27 @@ with c2:
     else:
         st.markdown("**Stat-by-stat breakdown** (z-score vs league)")
         rows = []
-        for z_col, (display_name, raw_col, desc) in INDIVIDUAL_STATS.items():
+        for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+            tier = stat_tiers.get(z_col, 2)
+            label = stat_labels.get(z_col, z_col)
+            raw_col = RAW_COL_MAP.get(z_col)
             z = player.get(z_col)
-            raw = player.get(raw_col)
+            raw = player.get(raw_col) if raw_col else None
             w = effective_weights.get(z_col, 0)
             contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
             rows.append({
-                "Stat": display_name,
+                "Tier": tier_badge(tier),
+                "Stat": label,
                 "Raw": f"{raw:.2f}" if pd.notna(raw) else "—",
                 "Z-score": f"{z:+.2f}" if pd.notna(z) else "—",
                 "Weight": f"{w}",
                 "Contribution": f"{contrib:+.2f}",
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        if rows:
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        else:
+            st.caption("No stats weighted — drag some sliders.")
+
 
 # ============================================================
 # Community algorithms
@@ -391,6 +603,7 @@ community_section(
     advanced_mode=advanced_mode,
     page_url=PAGE_URL,
 )
+
 
 # ============================================================
 # Footer
