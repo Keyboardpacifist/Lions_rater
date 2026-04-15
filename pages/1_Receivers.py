@@ -421,12 +421,7 @@ else:
     ]
     all_enabled_stats.sort(key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z)))
 
-    # DEBUG — advanced mode slider diagnosis
-    st.sidebar.write(f"🐛 advanced_mode={advanced_mode}")
-    st.sidebar.write(f"🐛 new_enabled={new_enabled}")
-    st.sidebar.write(f"🐛 len(stat_tiers)={len(stat_tiers)}")
-    st.sidebar.write(f"🐛 len(all_enabled_stats)={len(all_enabled_stats)}")
-    st.sidebar.write(f"🐛 first 3 stats: {all_enabled_stats[:3]}")
+    
 
     for z_col in all_enabled_stats:
         tier = stat_tiers.get(z_col, 2)
