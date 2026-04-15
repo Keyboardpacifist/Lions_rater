@@ -317,7 +317,7 @@ stat_labels = meta.get("stat_labels", {})
 stat_methodology = meta.get("stat_methodology", {})
 
 # DEBUG — remove after diagnosis
-with st.expander("🐛 metadata debug (remove after)", expanded=False):
+with st.expander("🐛 metadata debug (remove after)", expanded=True):
     st.write(f"METADATA_PATH: `{METADATA_PATH}`")
     st.write(f"METADATA_PATH.exists(): `{METADATA_PATH.exists()}`")
     st.write(f"cwd: `{Path.cwd()}`")
@@ -326,6 +326,15 @@ with st.expander("🐛 metadata debug (remove after)", expanded=False):
     st.write(f"stat_tiers count: `{len(stat_tiers)}`")
     if stat_tiers:
         st.write(f"sample tier: `{list(stat_tiers.items())[:3]}`")
+
+    # List the data folder so we can see what Streamlit actually sees
+    data_dir = Path(__file__).resolve().parent.parent / "data"
+    st.write(f"data_dir: `{data_dir}`")
+    st.write(f"data_dir.exists(): `{data_dir.exists()}`")
+    if data_dir.exists():
+        st.write("**Files in data/:**")
+        for f in sorted(data_dir.iterdir()):
+            st.write(f"  - `{f.name}` ({f.stat().st_size} bytes)")
 
 
 # ============================================================
