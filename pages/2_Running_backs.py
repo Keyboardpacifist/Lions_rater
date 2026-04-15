@@ -305,7 +305,8 @@ try:
 except FileNotFoundError:
     st.error("Couldn't find the running backs data file.")
     st.stop()
-
+st.write(f"🐛 columns: {list(df.columns)}")
+st.stop()
 meta = load_metadata()
 stat_tiers = meta.get("stat_tiers", {})
 stat_labels = meta.get("stat_labels", {})
