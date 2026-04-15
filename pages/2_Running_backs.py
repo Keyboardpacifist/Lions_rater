@@ -279,6 +279,11 @@ filtered.index = filtered.index + 1
 # Ranking table
 # ============================================================
 st.subheader("Ranking")
+st.caption(
+    "⚠️ Backs with very few carries have noisy scores — extreme values "
+    "reflect small sample sizes, not skill. Use the 'Minimum carries' "
+    "filter in the sidebar to hide low-volume backs if desired."
+)
 display_df = pd.DataFrame({
     "Rank": filtered.index,
     "Player": filtered["player_display_name"],
