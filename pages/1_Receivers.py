@@ -77,12 +77,24 @@ def load_data():
     return pl.read_parquet(DATA_PATH).to_pandas()
 
 
-@st.cache_data
 def load_metadata():
-    if not METADATA_PATH.exists():
-        return {}
-    with open(METADATA_PATH) as f:
-        return json.load(f)
+    """Load metadata. NOT cached so we can debug fresh each run."""
+    # Try several path strategies in case one fails on Streamlit Cloud
+    candidates = [
+        METADATA_PATH,
+        Path("data/wr_stat_metadata.json"),
+        Path(__file__).resolve().parent.parent / "data" / "wr_stat_metadata.json",
+    ]
+    for path in candidates:
+        try:
+            if path.exists():
+                with open(path) as f:
+                    data = json.load(f)
+                    if data:  # non-empty dict
+                        return data
+        except Exception:
+            continue
+    return {}
 
 
 # ============================================================
@@ -303,6 +315,17 @@ meta = load_metadata()
 stat_tiers = meta.get("stat_tiers", {})
 stat_labels = meta.get("stat_labels", {})
 stat_methodology = meta.get("stat_methodology", {})
+
+# DEBUG — remove after diagnosis
+with st.expander("🐛 metadata debug (remove after)", expanded=False):
+    st.write(f"METADATA_PATH: `{METADATA_PATH}`")
+    st.write(f"METADATA_PATH.exists(): `{METADATA_PATH.exists()}`")
+    st.write(f"cwd: `{Path.cwd()}`")
+    st.write(f"__file__: `{__file__}`")
+    st.write(f"meta keys loaded: `{list(meta.keys())}`")
+    st.write(f"stat_tiers count: `{len(stat_tiers)}`")
+    if stat_tiers:
+        st.write(f"sample tier: `{list(stat_tiers.items())[:3]}`")
 
 
 # ============================================================
