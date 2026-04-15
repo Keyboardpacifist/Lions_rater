@@ -411,7 +411,10 @@ if not advanced_mode:
             bundle_weights[bk] = 0
     effective_weights = compute_effective_weights(active_bundles, bundle_weights)
 else:
-    st.sidebar.caption("Direct control over every underlying stat. Click ℹ️ for methodology.")
+    st.sidebar.caption(
+        "Direct control over every underlying stat. Hover the ⓘ icon next to "
+        "each slider for methodology."
+    )
     # Build list of all stats in enabled tiers, sorted by tier then by label
     all_enabled_stats = [
         z for z, t in stat_tiers.items() if t in new_enabled
@@ -423,22 +426,22 @@ else:
         label = stat_labels.get(z_col, z_col)
         meth = stat_methodology.get(z_col, {})
 
-        # Slider row with an info popover
-        row = st.sidebar.columns([4, 1])
-        with row[0]:
-            w = st.slider(
-                f"{tier_badge(tier)} {label}",
-                min_value=0, max_value=100, value=50, step=5,
-                key=f"adv_rec_{z_col}",
-                help=meth.get("what", ""),
-            )
-        with row[1]:
-            with st.popover("ℹ️"):
-                st.markdown(f"**{label}** — {TIER_LABELS[tier]}")
-                if meth:
-                    st.markdown(f"**What:** {meth.get('what', '')}")
-                    st.markdown(f"**How:** {meth.get('how', '')}")
-                    st.markdown(f"**Limits:** {meth.get('limits', '')}")
+        # Build a rich help tooltip with What/How/Limits
+        help_parts = []
+        if meth.get("what"):
+            help_parts.append(f"What: {meth['what']}")
+        if meth.get("how"):
+            help_parts.append(f"How: {meth['how']}")
+        if meth.get("limits"):
+            help_parts.append(f"Limits: {meth['limits']}")
+        help_text = "\n\n".join(help_parts) if help_parts else None
+
+        w = st.sidebar.slider(
+            f"{tier_badge(tier)} {label}",
+            min_value=0, max_value=100, value=50, step=5,
+            key=f"adv_rec_{z_col}",
+            help=help_text,
+        )
         if w > 0:
             effective_weights[z_col] = w
 
