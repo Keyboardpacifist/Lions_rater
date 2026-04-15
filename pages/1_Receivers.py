@@ -41,6 +41,8 @@ from pathlib import Path
 import pandas as pd
 import polars as pl
 import streamlit as st
+import plotly.graph_objects as go
+from scipy.stats import norm
 
 from lib_shared import (
     apply_algo_weights,
@@ -168,6 +170,89 @@ DEFAULT_BUNDLE_WEIGHTS = {
     "volume": 60,
     "after_catch": 30,
 }
+
+
+# ============================================================
+# Radar chart config — 8 headline stats, fixed across users
+# ============================================================
+# These are the stats the radar shows for every player. Fixed (not
+# user-configurable) so the visual is comparable across players. Mix of
+# Tier 2 rates and Tier 3 modeled stats. Excludes Tier 1 raw counts —
+# those skew the polygon based on snap count, not skill profile.
+RADAR_STATS = [
+    "yards_per_target_z",   # efficiency
+    "catch_rate_z",         # reliability
+    "first_down_rate_z",    # chain mover
+    "yac_per_reception_z",  # after catch
+    "yards_per_snap_z",     # volume × efficiency
+    "epa_per_target_z",     # modeled efficiency
+    "avg_cpoe_z",           # catches vs expected
+    "avg_separation_z",     # NGS separation
+]
+
+
+def zscore_to_percentile(z):
+    """Convert a z-score to a 0-100 percentile via the normal CDF."""
+    if pd.isna(z):
+        return None
+    return float(norm.cdf(z) * 100)
+
+
+def build_radar_figure(player, stat_labels):
+    """Return a Plotly polar figure showing this player's percentiles
+    on the 8 RADAR_STATS axes. Missing values are skipped."""
+    axes = []
+    values = []
+    for z_col in RADAR_STATS:
+        if z_col not in player.index:
+            continue
+        z = player.get(z_col)
+        if pd.isna(z):
+            continue
+        pct = zscore_to_percentile(z)
+        label = stat_labels.get(z_col, z_col).replace(" (raw)", "")
+        axes.append(label)
+        values.append(pct)
+
+    if not axes:
+        return None
+
+    # Close the polygon by repeating the first point at the end
+    axes_closed = axes + [axes[0]]
+    values_closed = values + [values[0]]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=values_closed,
+        theta=axes_closed,
+        fill="toself",
+        fillcolor="rgba(31, 119, 180, 0.25)",
+        line=dict(color="rgba(31, 119, 180, 0.9)", width=2),
+        marker=dict(size=6, color="rgba(31, 119, 180, 1)"),
+        hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<extra></extra>",
+    ))
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 100],
+                tickvals=[25, 50, 75, 100],
+                ticktext=["25", "50", "75", "100"],
+                tickfont=dict(size=9, color="#888"),
+                gridcolor="#ddd",
+            ),
+            angularaxis=dict(
+                tickfont=dict(size=11),
+                gridcolor="#ddd",
+            ),
+            bgcolor="rgba(0,0,0,0)",
+        ),
+        showlegend=False,
+        margin=dict(l=60, r=60, t=20, b=20),
+        height=380,
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig
 
 
 # ============================================================
@@ -421,8 +506,6 @@ else:
     ]
     all_enabled_stats.sort(key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z)))
 
-    
-
     for z_col in all_enabled_stats:
         tier = stat_tiers.get(z_col, 2)
         label = stat_labels.get(z_col, z_col)
@@ -513,18 +596,24 @@ selected = st.selectbox(
 )
 player = filtered[filtered["player_display_name"] == selected].iloc[0]
 
-c1, c2 = st.columns([1, 2])
+c1, c2 = st.columns([1, 1])
 
 with c1:
-    st.metric("Position", player["position"])
-    st.metric("Snaps", int(player["off_snaps"]) if pd.notna(player["off_snaps"]) else 0)
-    st.metric("Targets", int(player["targets"]) if pd.notna(player["targets"]) else 0)
-    st.metric("Receiving yards", int(player["rec_yards"]) if pd.notna(player["rec_yards"]) else 0)
-    st.metric("Your score", format_score(player["score"]))
+    # Player heading
+    pos = player.get("position", "")
+    st.markdown(f"### {selected}")
+    st.caption(f"**{pos}** · {int(player.get('off_snaps') or 0)} snaps · "
+               f"{int(player.get('targets') or 0)} targets · "
+               f"{int(player.get('rec_yards') or 0)} yards · "
+               f"{int(player.get('rec_tds') or 0)} TDs")
 
-with c2:
+    st.markdown(f"**Your score:** {format_score(player['score'])}")
+
+    st.markdown("---")
+    st.markdown("**How your score breaks down**")
+
     if not advanced_mode:
-        st.markdown("**How your score breaks down**")
+        # Bundle contributions as compact bars
         bundle_rows = []
         for bk, bundle in active_bundles.items():
             bw = bundle_weights.get(bk, 0)
@@ -547,7 +636,6 @@ with c2:
 
         with st.expander("🔬 See the underlying stats"):
             stat_rows = []
-            # Show stats from active bundles + Tier 1 stats if Tier 1 enabled
             shown_stats = set()
             for bundle in active_bundles.values():
                 shown_stats.update(bundle["stats"].keys())
@@ -570,7 +658,7 @@ with c2:
                 })
             st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
     else:
-        st.markdown("**Stat-by-stat breakdown** (z-score vs league)")
+        st.caption("Stat-by-stat breakdown (z-score vs league)")
         rows = []
         for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
             tier = stat_tiers.get(z_col, 2)
@@ -592,6 +680,19 @@ with c2:
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         else:
             st.caption("No stats weighted — drag some sliders.")
+
+with c2:
+    st.markdown("**Stat profile** (percentiles vs. league reference)")
+    fig = build_radar_figure(player, stat_labels)
+    if fig is not None:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.caption("No radar data available for this player.")
+    st.caption(
+        "Each axis shows where this player ranks among the league reference "
+        "population (top 64 WR + top 32 TE). 50 = league median, 84 = +1 SD, "
+        "97 = +2 SD."
+    )
 
 
 # ============================================================
