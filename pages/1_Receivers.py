@@ -570,6 +570,25 @@ filtered.index = filtered.index + 1
 # Ranking table
 # ============================================================
 st.subheader("Ranking")
+
+# Top-ranked highlight banner
+if len(filtered) > 0:
+    top = filtered.iloc[0]
+    top_name = top["player_display_name"]
+    top_pos = top.get("position", "")
+    top_score = top["score"]
+    sign = "+" if top_score >= 0 else ""
+    st.markdown(
+        f"<div style='background:#0076B6;color:white;padding:14px 20px;"
+        f"border-radius:8px;margin-bottom:12px;font-size:1.1rem;'>"
+        f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(filtered)}</span>"
+        f" &nbsp;·&nbsp; <strong>{top_name}</strong> ({top_pos})"
+        f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span>"
+        f" <span style='opacity:0.85;'>({score_label(top_score)})</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
 st.caption(
     "⚠️ Players with very few targets have noisy scores — extreme values "
     "reflect small sample sizes, not skill. Use the 'Minimum offensive snaps' "
