@@ -66,7 +66,6 @@ inject_css()
 
 POSITION_GROUP = "receiver"
 PAGE_URL = "https://lions-rater.streamlit.app/Receivers"
-
 DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_with_z.parquet"
 METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "wr_stat_metadata.json"
 
@@ -75,12 +74,12 @@ METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "wr_stat_metad
 # Data loading
 # ============================================================
 @st.cache_data
-def load_data():
+def load_receivers_data():
     return pl.read_parquet(DATA_PATH).to_pandas()
 
 
 @st.cache_data
-def load_metadata():
+def load_receivers_metadata():
     if not METADATA_PATH.exists():
         return {}
     with open(METADATA_PATH) as f:
@@ -180,14 +179,14 @@ DEFAULT_BUNDLE_WEIGHTS = {
 # Tier 2 rates and Tier 3 modeled stats. Excludes Tier 1 raw counts —
 # those skew the polygon based on snap count, not skill profile.
 RADAR_STATS = [
-    "yards_per_target_z",   # efficiency
-    "catch_rate_z",         # reliability
-    "first_down_rate_z",    # chain mover
-    "yac_per_reception_z",  # after catch
-    "yards_per_snap_z",     # volume × efficiency
-    "epa_per_target_z",     # modeled efficiency
-    "avg_cpoe_z",           # catches vs expected
-    "avg_separation_z",     # NGS separation
+    "yards_per_target_z",      # efficiency
+    "catch_rate_z",            # reliability
+    "first_down_rate_z",       # chain mover
+    "yac_per_reception_z",     # after catch
+    "yards_per_snap_z",        # volume × efficiency
+    "epa_per_target_z",        # modeled efficiency
+    "avg_cpoe_z",              # catches vs expected
+    "avg_separation_z",        # NGS separation
 ]
 
 
@@ -352,8 +351,8 @@ as "small sample, not skill."
 # ============================================================
 # Session state
 # ============================================================
-if "loaded_algo" not in st.session_state:
-    st.session_state.loaded_algo = None
+if "rec_loaded_algo" not in st.session_state:
+    st.session_state.rec_loaded_algo = None
 if "upvoted_ids" not in st.session_state:
     st.session_state.upvoted_ids = set()
 if "rec_tiers_enabled" not in st.session_state:
@@ -379,12 +378,12 @@ st.caption(
 # Load data
 # ============================================================
 try:
-    df = load_data()
+    df = load_receivers_data()
 except FileNotFoundError:
     st.error("Couldn't find the receivers data file.")
     st.stop()
 
-meta = load_metadata()
+meta = load_receivers_metadata()
 stat_tiers = meta.get("stat_tiers", {})
 stat_labels = meta.get("stat_labels", {})
 stat_methodology = meta.get("stat_methodology", {})
@@ -393,7 +392,7 @@ stat_methodology = meta.get("stat_methodology", {})
 # ============================================================
 # ?algo= deep link
 # ============================================================
-if "algo" in st.query_params and st.session_state.loaded_algo is None:
+if "algo" in st.query_params and st.session_state.rec_loaded_algo is None:
     linked = get_algorithm_by_slug(st.query_params["algo"])
     if linked and linked.get("position_group", "receiver") == POSITION_GROUP:
         apply_algo_weights(linked, BUNDLES)
@@ -404,6 +403,7 @@ if "algo" in st.query_params and st.session_state.loaded_algo is None:
 # Sidebar — filters
 # ============================================================
 st.sidebar.header("Filters")
+
 positions = st.sidebar.multiselect(
     "Positions", options=["WR", "TE"], default=["WR", "TE"]
 )
@@ -420,14 +420,14 @@ advanced_mode = st.sidebar.toggle(
 
 st.sidebar.header("What do you value?")
 
-if st.session_state.loaded_algo:
-    la = st.session_state.loaded_algo
+if st.session_state.rec_loaded_algo:
+    la = st.session_state.rec_loaded_algo
     st.sidebar.info(
         f"Loaded: **{la['name']}** by {la['author']}\n\n"
         f"_{la.get('description', '')}_"
     )
     if st.sidebar.button("Clear loaded algorithm"):
-        st.session_state.loaded_algo = None
+        st.session_state.rec_loaded_algo = None
 
 
 # ============================================================
@@ -438,6 +438,7 @@ st.caption(
     "Each stat is labeled by how much trust it asks from you. "
     "Uncheck tiers you don't want to include. Philosophy in a checkbox."
 )
+
 tier_cols = st.columns(4)
 new_enabled = []
 for i, tier in enumerate([1, 2, 3, 4]):
@@ -450,6 +451,7 @@ for i, tier in enumerate([1, 2, 3, 4]):
         )
         if checked:
             new_enabled.append(tier)
+
 st.session_state.rec_tiers_enabled = new_enabled
 
 if not new_enabled:
@@ -474,6 +476,7 @@ if not advanced_mode:
         st.stop()
 
     st.sidebar.caption("Drag to weight what matters to you. 0 = ignore, 100 = max.")
+
     for bk, bundle in active_bundles.items():
         tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
         st.sidebar.markdown(f"**{bundle['label']}**")
@@ -482,24 +485,28 @@ if not advanced_mode:
             f"<small>{tier_summary}</small></div>",
             unsafe_allow_html=True,
         )
-        if f"bundle_{bk}" not in st.session_state:
-            st.session_state[f"bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
+        if f"rec_bundle_{bk}" not in st.session_state:
+            st.session_state[f"rec_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
         bundle_weights[bk] = st.sidebar.slider(
             bundle["label"], 0, 100,
             step=5,
-            key=f"bundle_{bk}",
+            key=f"rec_bundle_{bk}",
             label_visibility="collapsed",
         )
+
     # Bundles not in active_bundles still need a zero entry for save
     for bk in BUNDLES:
         if bk not in bundle_weights:
             bundle_weights[bk] = 0
+
     effective_weights = compute_effective_weights(active_bundles, bundle_weights)
+
 else:
     st.sidebar.caption(
         "Direct control over every underlying stat. Hover the ⓘ icon next to "
         "each slider for methodology."
     )
+
     # Build list of all stats in enabled tiers, sorted by tier then by label
     all_enabled_stats = [
         z for z, t in stat_tiers.items() if t in new_enabled
@@ -546,6 +553,7 @@ if len(filtered) == 0:
     st.stop()
 
 filtered = score_players(filtered, effective_weights)
+
 total_weight = sum(effective_weights.values())
 if total_weight == 0:
     st.info("All weights are zero — drag some sliders to start ranking.")
@@ -563,6 +571,7 @@ st.caption(
     "reflect small sample sizes, not skill. Use the 'Minimum offensive snaps' "
     "filter in the sidebar to hide low-volume players if desired."
 )
+
 display_df = pd.DataFrame({
     "Rank": filtered.index,
     "Player": filtered["player_display_name"],
@@ -594,10 +603,10 @@ selected = st.selectbox(
     options=filtered["player_display_name"].tolist(),
     index=0,
 )
+
 player = filtered[filtered["player_display_name"] == selected].iloc[0]
 
 c1, c2 = st.columns([1, 1])
-
 with c1:
     # Player heading
     pos = player.get("position", "")
@@ -606,9 +615,7 @@ with c1:
                f"{int(player.get('targets') or 0)} targets · "
                f"{int(player.get('rec_yards') or 0)} yards · "
                f"{int(player.get('rec_tds') or 0)} TDs")
-
     st.markdown(f"**Your score:** {format_score(player['score'])}")
-
     st.markdown("---")
     st.markdown("**How your score breaks down**")
 
@@ -643,7 +650,6 @@ with c1:
                 for z_col, t in stat_tiers.items():
                     if t == 1:
                         shown_stats.add(z_col)
-
             for z_col in sorted(shown_stats, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
                 tier = stat_tiers.get(z_col, 2)
                 label = stat_labels.get(z_col, z_col)
@@ -657,6 +663,7 @@ with c1:
                     "Z-score": f"{z:+.2f}" if pd.notna(z) else "—",
                 })
             st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
+
     else:
         st.caption("Stat-by-stat breakdown (z-score vs league)")
         rows = []
