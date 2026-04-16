@@ -588,6 +588,27 @@ scored_sorted = scored.sort_values("score", ascending=False).reset_index(drop=Tr
 scored_sorted.index = scored_sorted.index + 1
 
 st.subheader("Ranking")
+
+# Top-ranked highlight banner
+if len(scored_sorted) > 0:
+    top = scored_sorted.iloc[0]
+    top_name = top.get("player", "—")
+    top_slot = top.get("slot", "") if pd.notna(top.get("slot")) else ""
+    top_score = top["score"]
+    if pd.notna(top_score):
+        sign = "+" if top_score >= 0 else ""
+        slot_part = f" ({top_slot})" if top_slot else ""
+        st.markdown(
+            f"<div style='background:#0076B6;color:white;padding:14px 20px;"
+            f"border-radius:8px;margin-bottom:12px;font-size:1.1rem;'>"
+            f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(scored_sorted)}</span>"
+            f" &nbsp;·&nbsp; <strong>{top_name}</strong>{slot_part}"
+            f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span>"
+            f" <span style='opacity:0.85;'>({score_label(top_score)})</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
 st.caption(
     "⚠️ Scores here compare the five Lions starters to each other, not to "
     "league-wide OL. With a sample of five, small differences are noisy — "
