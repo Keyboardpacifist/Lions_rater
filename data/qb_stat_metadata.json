@@ -1,0 +1,99 @@
+{
+  "stat_tiers": {
+    "epa_per_play_z": 3,
+    "cpoe_z": 3,
+    "yards_per_attempt_z": 2,
+    "deep_ball_accuracy_z": 3,
+    "int_rate_z": 2,
+    "sack_rate_z": 2,
+    "pressure_to_sack_rate_z": 3,
+    "twp_rate_z": 3,
+    "fourth_q_epa_z": 3,
+    "third_down_conv_rate_z": 2,
+    "red_zone_td_rate_z": 2,
+    "rush_epa_per_play_z": 3,
+    "rush_yards_per_game_z": 1
+  },
+  "stat_labels": {
+    "epa_per_play_z": "EPA per play",
+    "cpoe_z": "CPOE",
+    "yards_per_attempt_z": "Yards per attempt",
+    "deep_ball_accuracy_z": "Deep ball accuracy",
+    "int_rate_z": "Interception avoidance",
+    "sack_rate_z": "Sack avoidance",
+    "pressure_to_sack_rate_z": "Pressure escape rate",
+    "twp_rate_z": "Turnover avoidance",
+    "fourth_q_epa_z": "4th quarter EPA",
+    "third_down_conv_rate_z": "3rd-down conversion",
+    "red_zone_td_rate_z": "Red zone TD rate",
+    "rush_epa_per_play_z": "Rushing EPA",
+    "rush_yards_per_game_z": "Rushing yards/game"
+  },
+  "stat_methodology": {
+    "epa_per_play_z": {
+      "what": "Expected Points Added per dropback",
+      "how": "Average EPA on all dropbacks (passes, sacks, scrambles).",
+      "limits": "Influenced by supporting cast (OL, receivers, scheme)."
+    },
+    "cpoe_z": {
+      "what": "Completion % Over Expected \u2014 accuracy controlling for throw difficulty",
+      "how": "Actual completion % minus expected completion % based on throw distance and context.",
+      "limits": "The expected model has its own biases."
+    },
+    "yards_per_attempt_z": {
+      "what": "Yards gained per pass attempt",
+      "how": "Total passing yards / pass attempts.",
+      "limits": "Doesn't account for sacks. Can be inflated by a few big plays."
+    },
+    "deep_ball_accuracy_z": {
+      "what": "Completion % on throws with 20+ air yards",
+      "how": "Completions / attempts on deep passes. Requires 10+ deep attempts per season.",
+      "limits": "Scheme-dependent. Doesn't capture ball placement quality."
+    },
+    "int_rate_z": {
+      "what": "Interception avoidance \u2014 fewer INTs per attempt = better",
+      "how": "INTs / pass attempts. Inverted so positive z = fewer INTs.",
+      "limits": "Some INTs aren't the QB's fault. Doesn't capture dropped INTs."
+    },
+    "sack_rate_z": {
+      "what": "Sack avoidance \u2014 fewer sacks per dropback = better",
+      "how": "Sacks / dropbacks. Inverted so positive z = fewer sacks.",
+      "limits": "Heavily influenced by OL quality."
+    },
+    "pressure_to_sack_rate_z": {
+      "what": "When pressured, how often does the QB avoid the sack?",
+      "how": "Sacks / (sacks + QB hits). Inverted so positive z = better escape rate.",
+      "limits": "QB hit tracking isn't perfectly consistent."
+    },
+    "twp_rate_z": {
+      "what": "Turnover-worthy play rate \u2014 INTs + fumbles lost per dropback",
+      "how": "Proxy for PFF's TWP. Inverted so positive z = fewer turnovers.",
+      "limits": "Doesn't capture lucky incompletions. Fumbles include strip sacks."
+    },
+    "fourth_q_epa_z": {
+      "what": "EPA per play in 4th quarter and overtime",
+      "how": "Same as EPA/play filtered to Q4+OT. Requires 20+ clutch dropbacks.",
+      "limits": "Smaller sample. Influenced by game script."
+    },
+    "third_down_conv_rate_z": {
+      "what": "3rd-down conversion rate",
+      "how": "% of 3rd-down dropbacks resulting in first down or TD.",
+      "limits": "Depends on down-and-distance distribution."
+    },
+    "red_zone_td_rate_z": {
+      "what": "TD rate on plays inside the opponent's 20",
+      "how": "TDs / dropbacks inside the 20. Requires 10+ red zone dropbacks.",
+      "limits": "Scheme-dependent. Teams that run in red zone lower this."
+    },
+    "rush_epa_per_play_z": {
+      "what": "EPA per rushing play (designed runs + scrambles)",
+      "how": "Average EPA on QB carries. Requires 10+ rush attempts.",
+      "limits": "Scramble EPA can be inflated on broken plays."
+    },
+    "rush_yards_per_game_z": {
+      "what": "Rushing yards per game",
+      "how": "Total rush yards / games played.",
+      "limits": "Pure volume. Doesn't measure efficiency."
+    }
+  }
+}
