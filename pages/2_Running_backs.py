@@ -424,6 +424,11 @@ else:
         "Direct control over every underlying stat. Hover the ⓘ icon next to "
         "each slider for methodology."
     )
+    st.sidebar.markdown(
+        "<div style='display:flex;justify-content:space-between;font-size:0.75rem;color:#888;margin-bottom:-0.5rem'>"
+        "<span>← Low priority</span><span>High priority →</span></div>",
+        unsafe_allow_html=True,
+    )
 
     # Build list of all stats in enabled tiers, sorted by tier then by label
     all_enabled_stats = [
