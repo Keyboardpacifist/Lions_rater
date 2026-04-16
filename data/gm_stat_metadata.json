@@ -1,8 +1,9 @@
 {
   "stat_tiers": {
     "draft_hit_rate_z": 2,
+    "draft_quality_score_z": 2,
     "day3_gem_rate_z": 2,
-    "first_round_success_z": 2,
+    "first_round_success_z": 3,
     "fa_hit_rate_z": 2,
     "fa_value_efficiency_z": 3,
     "trade_surplus_z": 3,
@@ -12,8 +13,9 @@
   },
   "stat_labels": {
     "draft_hit_rate_z": "Draft hit rate",
-    "day3_gem_rate_z": "Day 3 gem rate",
-    "first_round_success_z": "First-round success",
+    "draft_quality_score_z": "Draft quality",
+    "day3_gem_rate_z": "Day 3 gems",
+    "first_round_success_z": "1st-round value",
     "fa_hit_rate_z": "FA hit rate",
     "fa_value_efficiency_z": "FA value efficiency",
     "trade_surplus_z": "Trade surplus",
@@ -24,47 +26,52 @@
   "stat_methodology": {
     "draft_hit_rate_z": {
       "what": "Percentage of draft picks who started 2+ NFL seasons",
-      "how": "Hits / total picks, excluding picks from last 2 years (not enough dev time)",
-      "limits": "Doesn't distinguish starter quality. Plug-and-play OL counts same as All-Pro."
+      "how": "Binary hit (2+ seasons started) / total picks. Excludes last 2 years (development time).",
+      "limits": "Treats all starters equally \u2014 a replacement-level starter counts the same as a Pro Bowler. See Draft Quality for a richer signal."
+    },
+    "draft_quality_score_z": {
+      "what": "Average quality tier per draft pick \u2014 rewards Pro Bowlers and All-Pros, not just starters",
+      "how": "Each pick scored: Bust=0, Contributor (2-3 seasons started)=1, Solid starter (4+)=2, Pro Bowler=3, All-Pro=5. Average across all mature picks.",
+      "limits": "Pro Bowls and All-Pros take years to accumulate. Recent GMs are disadvantaged \u2014 their picks haven't had time to earn accolades yet."
     },
     "day3_gem_rate_z": {
-      "what": "Day 3 picks (rounds 4-7) who started 2+ seasons",
-      "how": "Same threshold as draft hit rate, restricted to rounds 4-7.",
-      "limits": "Specialists like kickers/punters count alongside starters."
+      "what": "Average quality tier for Day 3 picks (rounds 4-7) \u2014 finding Amon-Ra St. Brown in the 4th is worth more than finding a camp body",
+      "how": "Same tiered scoring as Draft Quality but restricted to rounds 4-7. An All-Pro Day 3 pick scores 5; a bust scores 0.",
+      "limits": "Small sample per GM (typically 3-5 Day 3 picks per year). A single All-Pro find can dominate."
     },
     "first_round_success_z": {
-      "what": "Career AV of first-round picks vs historical expectation for their slot",
-      "how": "Actual weighted approximate value minus historical average AV for that pick number.",
-      "limits": "Career AV understated for recent picks. Penalizes GMs whose R1 picks are in year 1-3."
+      "what": "How much value each first-round pick produces per season vs what's expected at that draft slot",
+      "how": "Actual weighted AV per season played minus the historical expected AV/season for that pick number. Reduces recency bias by measuring rate rather than volume.",
+      "limits": "AV isn't a perfect value metric. Players in their first 1-2 seasons may not yet reflect their true production rate."
     },
     "fa_hit_rate_z": {
-      "what": "Percentage of FA signings who played 12+ games in year 1",
-      "how": "FA signings = contracts where player was on a different team in year Y-1. Hit = games played >= 12 in signing year.",
-      "limits": "Games played is a blunt proxy for quality. Replacement-level healthy beats injured star."
+      "what": "Percentage of all FA signings who played 12+ games in year 1",
+      "how": "Includes every signing where the player came from a different team \u2014 camp bodies, waiver claims, and splashy deals. Hit = 12+ games in signing season.",
+      "limits": "Counts all signings equally. A $15M/yr starter counts the same as a vet-min depth piece."
     },
     "fa_value_efficiency_z": {
       "what": "FA hits per $10M of APY spent",
-      "how": "Total hits / (total APY in $M / 10). A GM with 3 hits on $30M APY scores 1.0.",
-      "limits": "Treats all hits equally. Pro Bowler for $20M/yr = backup for $2M/yr."
+      "how": "Total FA hits / (total APY in $M / 10). Rewards getting production without overspending.",
+      "limits": "Treats all hits equally regardless of contract size. Doesn't capture surplus value on individual signings."
     },
     "trade_surplus_z": {
-      "what": "Draft pick value received minus given via trade, Jimmy Johnson chart",
-      "how": "Sum of pick values received minus sum of pick values given across all trades in tenure.",
-      "limits": "JJ chart overvalues top picks. Ignores players-for-picks trades."
+      "what": "Draft pick value received minus given via trade (Jimmy Johnson chart)",
+      "how": "Sum of pick values on pieces received minus sum of pick values given across all trades in tenure.",
+      "limits": "JJ chart overvalues top picks. Player-for-picks trades (where a team gives up a player for draft capital) aren't captured by pick value alone."
     },
     "trade_activity_z": {
       "what": "Distinct trades per season as GM",
-      "how": "Unique trade_ids where this GM was on either side, divided by seasons.",
-      "limits": "Pure count. High activity != skill. Pair with trade_surplus to interpret."
+      "how": "Count of unique trades divided by seasons as GM.",
+      "limits": "Pure volume. High activity can reflect skill or chaos. Pair with trade surplus."
     },
     "core_retention_z": {
       "what": "Percentage of own draft picks re-signed to second contract",
-      "how": "Of picks made 2013-2020 (enough time for rookie deal to expire), % re-signed by same GM.",
-      "limits": "Penalizes GMs who drafted busts. Doesn't account for picks who left because team chose not to pay."
+      "how": "Of picks made in GM's tenure through 2020 (enough time for rookie deals to expire), what % got re-signed by this same GM.",
+      "limits": "Requires 4-5 years of tenure to be meaningful. NaN for newer GMs. Penalizes GMs who correctly let busts walk."
     },
     "udfa_hit_rate_z": {
       "what": "UDFAs who stuck on the roster 2+ years",
-      "how": "UDFAs = rookie contract holders NOT in draft picks table. Hit = played 1+ games in signing year AND year+1.",
+      "how": "UDFAs = contract holders NOT in draft picks table. Hit = played in signing year AND year+1.",
       "limits": "Small sample for most GMs. One or two hits swing the rate dramatically."
     }
   }
