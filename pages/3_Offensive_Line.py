@@ -367,6 +367,29 @@ def format_score(score):
     return f"{sign}{score:.2f} ({score_label(score)})"
 
 
+def sample_size_badge(pct: float) -> str:
+    """Return an emoji badge for sample size as a % of group leader.
+    🔴 severe (<20%), 🟡 caution (20–50%), '' otherwise."""
+    if pd.isna(pct):
+        return ""
+    if pct < 20:
+        return "🔴"
+    if pct < 50:
+        return "🟡"
+    return ""
+
+
+def sample_size_caption(pct: float) -> str:
+    """Plain-English caption for sample size warning, or empty string."""
+    if pd.isna(pct):
+        return ""
+    if pct < 20:
+        return f"⚠️ Severe small sample: {pct:.0f}% of group leader's snaps. Treat as directional only."
+    if pct < 50:
+        return f"⚠️ Small sample: {pct:.0f}% of group leader's snaps. Score may be noisy."
+    return ""
+
+
 SCORE_EXPLAINER = """
 **What this number means.** The score is a weighted average of z-scores —
 standardized stats where 0 is the group average, +1 is one standard
@@ -587,44 +610,78 @@ scored = score_players(df, effective_weights)
 scored_sorted = scored.sort_values("score", ascending=False).reset_index(drop=True)
 scored_sorted.index = scored_sorted.index + 1
 
+# Compute sample size as % of group leader's snaps
+if "snaps_played" in scored_sorted.columns:
+    max_snaps_ol = scored_sorted["snaps_played"].fillna(0).max()
+    if max_snaps_ol > 0:
+        scored_sorted["sample_pct"] = (scored_sorted["snaps_played"].fillna(0) / max_snaps_ol) * 100
+    else:
+        scored_sorted["sample_pct"] = 0
+else:
+    scored_sorted["sample_pct"] = 100  # No snap data — assume fine
+
 st.subheader("Ranking")
 
+# Hide-small-samples checkbox
+hide_small = st.checkbox(
+    "Hide players with severe small samples (<20% of group leader's snaps)",
+    value=False,
+    key="ol_hide_small",
+    help="Hides red-flagged players. Yellow-flagged players still show with a caution.",
+)
+
+ranked = scored_sorted.copy()
+if hide_small:
+    ranked = ranked[ranked["sample_pct"] >= 20].copy()
+    if len(ranked) == 0:
+        st.warning("All linemen are below 20% sample size. Uncheck the filter to see them.")
+        st.stop()
+    ranked = ranked.sort_values("score", ascending=False).reset_index(drop=True)
+    ranked.index = ranked.index + 1
+
 # Top-ranked highlight banner
-if len(scored_sorted) > 0:
-    top = scored_sorted.iloc[0]
+if len(ranked) > 0:
+    top = ranked.iloc[0]
     top_name = top.get("player", "—")
     top_slot = top.get("slot", "") if pd.notna(top.get("slot")) else ""
     top_score = top["score"]
+    top_pct = top.get("sample_pct", 100)
+    badge = sample_size_badge(top_pct)
     if pd.notna(top_score):
         sign = "+" if top_score >= 0 else ""
         slot_part = f" ({top_slot})" if top_slot else ""
         st.markdown(
             f"<div style='background:#0076B6;color:white;padding:14px 20px;"
-            f"border-radius:8px;margin-bottom:12px;font-size:1.1rem;'>"
-            f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(scored_sorted)}</span>"
-            f" &nbsp;·&nbsp; <strong>{top_name}</strong>{slot_part}"
+            f"border-radius:8px;margin-bottom:8px;font-size:1.1rem;'>"
+            f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span>"
+            f" &nbsp;·&nbsp; <strong>{top_name}</strong>{slot_part} {badge}"
             f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span>"
             f" <span style='opacity:0.85;'>({score_label(top_score)})</span>"
             f"</div>",
             unsafe_allow_html=True,
         )
+        warn = sample_size_caption(top_pct)
+        if warn:
+            st.warning(warn)
 
 st.caption(
     "⚠️ Scores here compare the five Lions starters to each other, not to "
     "league-wide OL. With a sample of five, small differences are noisy — "
-    "treat directional results seriously, but don't over-read close gaps."
+    "treat directional results seriously, but don't over-read close gaps. "
+    "🔴 = severe small sample (<20% of group leader's snaps), 🟡 = caution (20–50%)."
 )
 
 display_cols = []
-if "player" in scored_sorted.columns:
+if "player" in ranked.columns:
     display_cols.append("player")
-if "slot" in scored_sorted.columns:
+if "slot" in ranked.columns:
     display_cols.append("slot")
-if "games_played" in scored_sorted.columns:
+if "games_played" in ranked.columns:
     display_cols.append("games_played")
 
-display_df = scored_sorted[display_cols].copy()
-display_df["Score"] = scored_sorted["score"].apply(format_score)
+display_df = ranked[display_cols].copy()
+display_df.insert(0, "", ranked["sample_pct"].apply(sample_size_badge).values)
+display_df["Score"] = ranked["score"].apply(format_score).values
 
 # Friendlier column names
 rename_map = {
@@ -686,10 +743,15 @@ st.subheader("Player detail")
 
 selected = st.selectbox(
     "Pick a lineman to see how their score breaks down",
-    options=scored_sorted["player"].tolist(),
+    options=ranked["player"].tolist(),
     index=0,
 )
-player = scored_sorted[scored_sorted["player"] == selected].iloc[0]
+player = ranked[ranked["player"] == selected].iloc[0]
+
+# Sample size warning for the selected player
+warn = sample_size_caption(player.get("sample_pct", 100))
+if warn:
+    st.warning(warn)
 
 c1, c2 = st.columns([1, 1])
 
