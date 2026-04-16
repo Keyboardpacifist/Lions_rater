@@ -506,6 +506,47 @@ else:
         "Direct control over every underlying stat. Hover the ⓘ icon next to "
         "each slider for methodology."
     )
+    st.sidebar.markdown(
+        "<div style='display:flex;justify-content:space-between;font-size:0.75rem;color:#888;margin-bottom:-0.5rem'>"
+        "<span>← Low priority</span><span>High priority →</span></div>",
+        unsafe_allow_html=True,
+    )
+In pages/2_Running_backs.py
+Exact same change — find the identical caption block in the else branch and add the same st.sidebar.markdown(...) line right after it.
+
+That'll put a small "← Low priority" on the left and "High priority →" on the right, just above the first slider. Commit both files and you're set.
+
+
+
+In pages/2_Running_backs.py
+Exact same change — find the identical caption block in the else branch and add the same st.sidebar.markdown(...) line right after it.
+
+That'll put a small "← Low priority" on the left and "High priority →" on the right, just above the first slider. Commit both files and you're set.
+
+
+
+    st.sidebar.markdown(
+        "<div style='display:flex;justify-content:space-between;font-size:0.75rem;color:#888;margin-bottom:-0.5rem'>"
+        "<span>← Low priority</span><span>High priority →</span></div>",
+        unsafe_allow_html=True,
+    )
+In pages/2_Running_backs.py
+Exact same change — find the identical caption block in the else branch and add the same st.sidebar.markdown(...) line right after it.
+
+That'll put a small "← Low priority" on the left and "High priority →" on the right, just above the first slider. Commit both files and you're set.
+
+
+
+    st.sidebar.markdown(
+        "<div style='display:flex;justify-content:space-between;font-size:0.75rem;color:#888;margin-bottom:-0.5rem'>"
+        "<span>← Low priority</span><span>High priority →</span></div>",
+        unsafe_allow_html=True,
+    )
+In pages/2_Running_backs.py
+Exact same change — find the identical caption block in the else branch and add the same st.sidebar.markdown(...) line right after it.
+
+That'll put a small "← Low priority" on the left and "High priority →" on the right, just above the first slider. Commit both files and you're set.
+
 
     # Build list of all stats in enabled tiers, sorted by tier then by label
     all_enabled_stats = [
