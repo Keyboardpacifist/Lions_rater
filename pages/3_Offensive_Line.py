@@ -12,6 +12,8 @@ from pathlib import Path
 import json
 import pandas as pd
 import streamlit as st
+import plotly.graph_objects as go
+from scipy.stats import norm
 
 from lib_shared import (
     apply_algo_weights,
@@ -173,10 +175,107 @@ OL_METHODOLOGY = {
 
 
 # ============================================================
+# Radar chart config — 8 headline stats, fixed across users
+# ============================================================
+# Mix of run blocking, pass protection, discipline, and availability.
+# Penalty rate is INVERTED on the radar so higher = fewer penalties = "Discipline".
+RADAR_STATS = [
+    "z_gap_success_rate",        # run blocking
+    "z_gap_epa_per_play",        # run blocking quality
+    "z_garsr",                   # adjusted run success
+    "z_rb_adjusted_gap_epa",     # RB-adjusted run blocking
+    "z_explosive_enablement",    # big play creation
+    "z_on_off_sack_rate_diff",   # pass protection
+    "z_penalty_rate",            # discipline (inverted)
+    "z_availability_index",      # durability
+]
+
+# Stats where the z-score needs to be flipped for the radar
+# (high raw value = bad, so we invert so high = good on the chart)
+RADAR_INVERT = {"z_penalty_rate"}
+
+# Custom radar axis labels — override default stat labels for clarity
+RADAR_LABEL_OVERRIDES = {
+    "z_penalty_rate": "Discipline",
+    "z_on_off_sack_rate_diff": "Pass protection",
+}
+
+
+def zscore_to_percentile(z):
+    """Convert a z-score to a 0-100 percentile via the normal CDF."""
+    if pd.isna(z):
+        return None
+    return float(norm.cdf(z) * 100)
+
+
+def build_radar_figure(player, stat_labels):
+    """Return a Plotly polar figure showing this player's percentiles
+    on the RADAR_STATS axes. Missing values are skipped.
+    Stats in RADAR_INVERT have their z-score sign flipped before
+    conversion to percentile."""
+    axes = []
+    values = []
+    for z_col in RADAR_STATS:
+        if z_col not in player.index:
+            continue
+        z = player.get(z_col)
+        if pd.isna(z):
+            continue
+        # Flip inverted stats so higher percentile = better
+        if z_col in RADAR_INVERT:
+            z = -z
+        pct = zscore_to_percentile(z)
+        # Use override label if available, else fall back to metadata label
+        label = RADAR_LABEL_OVERRIDES.get(z_col, stat_labels.get(z_col, z_col))
+        axes.append(label)
+        values.append(pct)
+
+    if not axes:
+        return None
+
+    # Close the polygon by repeating the first point at the end
+    axes_closed = axes + [axes[0]]
+    values_closed = values + [values[0]]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=values_closed,
+        theta=axes_closed,
+        fill="toself",
+        fillcolor="rgba(31, 119, 180, 0.25)",
+        line=dict(color="rgba(31, 119, 180, 0.9)", width=2),
+        marker=dict(size=6, color="rgba(31, 119, 180, 1)"),
+        hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<extra></extra>",
+    ))
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 100],
+                tickvals=[25, 50, 75, 100],
+                ticktext=["25", "50", "75", "100"],
+                tickfont=dict(size=9, color="#888"),
+                gridcolor="#ddd",
+            ),
+            angularaxis=dict(
+                tickfont=dict(size=11),
+                gridcolor="#ddd",
+            ),
+            bgcolor="rgba(0,0,0,0)",
+        ),
+        showlegend=False,
+        margin=dict(l=60, r=60, t=20, b=20),
+        height=380,
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig
+
+
+# ============================================================
 # Data loading
 # ============================================================
 @st.cache_data
-def load_data():
+def load_ol_data():
     if not DATA_PATH.exists():
         return None, None
     df = pd.read_parquet(DATA_PATH)
@@ -290,8 +389,8 @@ small gaps. (League-wide z-scores for OL are on the project's roadmap.)
 # ============================================================
 # Session state
 # ============================================================
-if "loaded_algo" not in st.session_state:
-    st.session_state.loaded_algo = None
+if "ol_loaded_algo" not in st.session_state:
+    st.session_state.ol_loaded_algo = None
 if "upvoted_ids" not in st.session_state:
     st.session_state.upvoted_ids = set()
 if "ol_tiers_enabled" not in st.session_state:
@@ -316,7 +415,7 @@ st.caption(
 # ============================================================
 # Load data
 # ============================================================
-df, meta = load_data()
+df, meta = load_ol_data()
 if df is None:
     st.error(f"OL data not found at {DATA_PATH}")
     st.caption(
@@ -333,14 +432,14 @@ ctx = meta.get("team_context", {}) if meta else {}
 # ============================================================
 # Loaded algorithm indicator (sidebar to match WR/RB)
 # ============================================================
-if st.session_state.loaded_algo:
-    la = st.session_state.loaded_algo
+if st.session_state.ol_loaded_algo:
+    la = st.session_state.ol_loaded_algo
     st.sidebar.info(
         f"Loaded: **{la['name']}** by {la['author']}\n\n"
         f"_{la.get('description', '')}_"
     )
     if st.sidebar.button("Clear loaded algorithm"):
-        st.session_state.loaded_algo = None
+        st.session_state.ol_loaded_algo = None
 
 
 # ============================================================
@@ -407,12 +506,12 @@ if not advanced_mode:
             f"<small>{tier_summary}</small></div>",
             unsafe_allow_html=True,
         )
-        if f"bundle_{bk}" not in st.session_state:
-            st.session_state[f"bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
+        if f"ol_bundle_{bk}" not in st.session_state:
+            st.session_state[f"ol_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
         bundle_weights[bk] = st.sidebar.slider(
             bundle["label"], 0, 100,
             step=5,
-            key=f"bundle_{bk}",
+            key=f"ol_bundle_{bk}",
             label_visibility="collapsed",
         )
     # Bundles not currently active still need a zero entry for save
@@ -424,6 +523,11 @@ else:
     st.sidebar.caption(
         "Direct control over every underlying stat. Hover the ⓘ icon next to "
         "each slider for methodology."
+    )
+    st.sidebar.markdown(
+        "<div style='display:flex;justify-content:space-between;font-size:0.75rem;color:#888;margin-bottom:-0.5rem'>"
+        "<span>\u2190 Low priority</span><span>High priority \u2192</span></div>",
+        unsafe_allow_html=True,
     )
     # Collect all active stats across bundles
     all_active_stats = set()
@@ -555,20 +659,21 @@ selected = st.selectbox(
 )
 player = scored_sorted[scored_sorted["player"] == selected].iloc[0]
 
-c1, c2 = st.columns([1, 2])
+c1, c2 = st.columns([1, 1])
 
 with c1:
-    if "slot" in player.index and pd.notna(player.get("slot")):
-        st.metric("Position", player["slot"])
-    if "snaps_played" in player.index and pd.notna(player.get("snaps_played")):
-        st.metric("Snaps played", int(player["snaps_played"]))
-    if "games_played" in player.index and pd.notna(player.get("games_played")):
-        st.metric("Games played", int(player["games_played"]))
-    if "penalties_total" in player.index and pd.notna(player.get("penalties_total")):
-        st.metric("Penalties", int(player["penalties_total"]))
-    st.metric("Your score", format_score(player["score"]))
+    # Player heading
+    slot = player.get("slot", "") if pd.notna(player.get("slot")) else ""
+    st.markdown(f"### {selected}")
+    st.caption(
+        f"**{slot}** · "
+        f"{int(player.get('snaps_played') or 0)} snaps · "
+        f"{int(player.get('games_played') or 0)} games · "
+        f"{int(player.get('penalties_total') or 0)} penalties"
+    )
+    st.markdown(f"**Your score:** {format_score(player['score'])}")
+    st.markdown("---")
 
-with c2:
     total_weight = sum(effective_weights.values())
 
     if not advanced_mode:
@@ -629,6 +734,18 @@ with c2:
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         else:
             st.caption("No stats weighted — drag some sliders.")
+
+with c2:
+    st.markdown("**Stat profile** (percentiles within Lions starters)")
+    fig = build_radar_figure(player, stat_labels)
+    if fig is not None:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.caption("No radar data available for this player.")
+    st.caption(
+        "Each axis shows where this player ranks among the Lions starting five. "
+        "50 = group median. The 'Discipline' axis is inverted — higher = fewer penalties."
+    )
 
 
 # ============================================================
