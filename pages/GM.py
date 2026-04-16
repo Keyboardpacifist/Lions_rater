@@ -79,6 +79,7 @@ def load_gms_metadata():
 # ============================================================
 RAW_COL_MAP = {
     "draft_hit_rate_z": "draft_hit_rate",
+    "draft_quality_score_z": "draft_quality_score",
     "day3_gem_rate_z": "day3_gem_rate",
     "first_round_success_z": "first_round_success",
     "fa_hit_rate_z": "fa_hit_rate",
@@ -96,11 +97,12 @@ RAW_COL_MAP = {
 BUNDLES = {
     "drafting": {
         "label": "🎯 Drafting",
-        "description": "Hits on picks, finds Day 3 gems, nails the first round.",
+        "description": "Hits on picks, finds Day 3 gems, nails the first round. Quality rewards Pro Bowlers and All-Pros.",
         "stats": {
-            "draft_hit_rate_z": 0.40,
-            "day3_gem_rate_z": 0.30,
-            "first_round_success_z": 0.30,
+            "draft_hit_rate_z": 0.25,
+            "draft_quality_score_z": 0.30,
+            "day3_gem_rate_z": 0.20,
+            "first_round_success_z": 0.25,
         },
     },
     "free_agency": {
@@ -138,10 +140,11 @@ DEFAULT_BUNDLE_WEIGHTS = {
 
 
 # ============================================================
-# Radar chart config — all 9 stats
+# Radar chart config — all 10 stats
 # ============================================================
 RADAR_STATS = [
     "draft_hit_rate_z",
+    "draft_quality_score_z",
     "day3_gem_rate_z",
     "first_round_success_z",
     "fa_hit_rate_z",
@@ -152,10 +155,11 @@ RADAR_STATS = [
     "udfa_hit_rate_z",
 ]
 
-RADAR_INVERT = set()  # No stats need inverting — higher is better for all 9
+RADAR_INVERT = set()  # No stats need inverting — higher is better for all 10
 
 RADAR_LABEL_OVERRIDES = {
     "draft_hit_rate_z": "Draft hits",
+    "draft_quality_score_z": "Draft quality",
     "day3_gem_rate_z": "Day 3 gems",
     "first_round_success_z": "1st-round value",
     "fa_hit_rate_z": "FA hits",
