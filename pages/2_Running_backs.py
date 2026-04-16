@@ -200,11 +200,14 @@ def zscore_to_percentile(z):
     return float(norm.cdf(z) * 100)
 
 
-def build_radar_figure(player, stat_labels):
+def build_radar_figure(player, stat_labels, stat_methodology):
     """Return a Plotly polar figure showing this player's percentiles
-    on the 8 RADAR_STATS axes. Missing values are skipped."""
+    on the 8 RADAR_STATS axes. Missing values are skipped.
+    Hovering over a data point shows the stat's 'what' description
+    from the methodology metadata."""
     axes = []
     values = []
+    descriptions = []
     for z_col in RADAR_STATS:
         if z_col not in player.index:
             continue
@@ -213,8 +216,10 @@ def build_radar_figure(player, stat_labels):
             continue
         pct = zscore_to_percentile(z)
         label = stat_labels.get(z_col, z_col).replace(" (raw)", "")
+        desc = stat_methodology.get(z_col, {}).get("what", "")
         axes.append(label)
         values.append(pct)
+        descriptions.append(desc)
 
     if not axes:
         return None
@@ -222,16 +227,18 @@ def build_radar_figure(player, stat_labels):
     # Close the polygon by repeating the first point at the end
     axes_closed = axes + [axes[0]]
     values_closed = values + [values[0]]
+    descriptions_closed = descriptions + [descriptions[0]]
 
     fig = go.Figure()
     fig.add_trace(go.Scatterpolar(
         r=values_closed,
         theta=axes_closed,
+        customdata=descriptions_closed,
         fill="toself",
         fillcolor="rgba(31, 119, 180, 0.25)",
         line=dict(color="rgba(31, 119, 180, 0.9)", width=2),
         marker=dict(size=6, color="rgba(31, 119, 180, 1)"),
-        hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<extra></extra>",
+        hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<br><br><i>%{customdata}</i><extra></extra>",
     ))
     fig.update_layout(
         polar=dict(
@@ -692,7 +699,7 @@ with c1:
 
 with c2:
     st.markdown("**Stat profile** (percentiles vs. league reference)")
-    fig = build_radar_figure(player, stat_labels)
+    fig = build_radar_figure(player, stat_labels, stat_methodology)
     if fig is not None:
         st.plotly_chart(fig, use_container_width=True)
     else:
@@ -700,7 +707,7 @@ with c2:
     st.caption(
         "Each axis shows where this player ranks among the league reference "
         "population (top 32 RBs). 50 = league median, 84 = +1 SD, "
-        "97 = +2 SD."
+        "97 = +2 SD. Hover any data point for the stat description."
     )
 
 
