@@ -323,6 +323,29 @@ def format_score(score: float) -> str:
     return f"{sign}{score:.2f} ({score_label(score)})"
 
 
+def sample_size_badge(pct: float) -> str:
+    """Return an emoji badge for sample size as a % of group leader.
+    🔴 severe (<20%), 🟡 caution (20–50%), '' otherwise."""
+    if pd.isna(pct):
+        return ""
+    if pct < 20:
+        return "🔴"
+    if pct < 50:
+        return "🟡"
+    return ""
+
+
+def sample_size_caption(pct: float) -> str:
+    """Plain-English caption for sample size warning, or empty string."""
+    if pd.isna(pct):
+        return ""
+    if pct < 20:
+        return f"⚠️ Severe small sample: {pct:.0f}% of group leader's snaps. Treat as directional only."
+    if pct < 50:
+        return f"⚠️ Small sample: {pct:.0f}% of group leader's snaps. Score may be noisy."
+    return ""
+
+
 SCORE_EXPLAINER = """
 **What this number means.** The score is a weighted average of z-scores —
 standardized stats where 0 is the league average, +1 is one standard
@@ -565,45 +588,77 @@ if total_weight == 0:
 filtered = filtered.sort_values("score", ascending=False).reset_index(drop=True)
 filtered.index = filtered.index + 1
 
+# Compute sample size as % of group leader's snaps
+max_snaps = filtered["off_snaps"].fillna(0).max()
+if max_snaps > 0:
+    filtered["sample_pct"] = (filtered["off_snaps"].fillna(0) / max_snaps) * 100
+else:
+    filtered["sample_pct"] = 0
+
 
 # ============================================================
 # Ranking table
 # ============================================================
 st.subheader("Ranking")
 
+# Hide-small-samples checkbox
+hide_small = st.checkbox(
+    "Hide players with severe small samples (<20% of group leader's snaps)",
+    value=False,
+    key="rec_hide_small",
+    help="Hides red-flagged players. Yellow-flagged players still show with a caution.",
+)
+
+# Apply the filter (but keep the original for max_snaps calculation already done)
+ranked = filtered.copy()
+if hide_small:
+    ranked = ranked[ranked["sample_pct"] >= 20].copy()
+    if len(ranked) == 0:
+        st.warning("All players are below 20% sample size. Uncheck the filter to see them.")
+        st.stop()
+    ranked = ranked.sort_values("score", ascending=False).reset_index(drop=True)
+    ranked.index = ranked.index + 1
+
 # Top-ranked highlight banner
-if len(filtered) > 0:
-    top = filtered.iloc[0]
+if len(ranked) > 0:
+    top = ranked.iloc[0]
     top_name = top["player_display_name"]
     top_pos = top.get("position", "")
     top_score = top["score"]
+    top_pct = top.get("sample_pct", 100)
+    badge = sample_size_badge(top_pct)
     sign = "+" if top_score >= 0 else ""
     st.markdown(
         f"<div style='background:#0076B6;color:white;padding:14px 20px;"
-        f"border-radius:8px;margin-bottom:12px;font-size:1.1rem;'>"
-        f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(filtered)}</span>"
-        f" &nbsp;·&nbsp; <strong>{top_name}</strong> ({top_pos})"
+        f"border-radius:8px;margin-bottom:8px;font-size:1.1rem;'>"
+        f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span>"
+        f" &nbsp;·&nbsp; <strong>{top_name}</strong> ({top_pos}) {badge}"
         f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span>"
         f" <span style='opacity:0.85;'>({score_label(top_score)})</span>"
         f"</div>",
         unsafe_allow_html=True,
     )
+    warn = sample_size_caption(top_pct)
+    if warn:
+        st.warning(warn)
 
 st.caption(
     "⚠️ Players with very few targets have noisy scores — extreme values "
     "reflect small sample sizes, not skill. Use the 'Minimum offensive snaps' "
-    "filter in the sidebar to hide low-volume players if desired."
+    "filter in the sidebar to hide low-volume players if desired. "
+    "🔴 = severe small sample (<20% of group leader's snaps), 🟡 = caution (20–50%)."
 )
 
 display_df = pd.DataFrame({
-    "Rank": filtered.index,
-    "Player": filtered["player_display_name"],
-    "Pos": filtered["position"],
-    "Snaps": filtered["off_snaps"].fillna(0).astype(int),
-    "Targets": filtered["targets"].fillna(0).astype(int),
-    "Yards": filtered["rec_yards"].fillna(0).astype(int),
-    "TDs": filtered["rec_tds"].fillna(0).astype(int),
-    "Score": filtered["score"].apply(format_score),
+    "Rank": ranked.index,
+    "": ranked["sample_pct"].apply(sample_size_badge),
+    "Player": ranked["player_display_name"],
+    "Pos": ranked["position"],
+    "Snaps": ranked["off_snaps"].fillna(0).astype(int),
+    "Targets": ranked["targets"].fillna(0).astype(int),
+    "Yards": ranked["rec_yards"].fillna(0).astype(int),
+    "TDs": ranked["rec_tds"].fillna(0).astype(int),
+    "Score": ranked["score"].apply(format_score),
 })
 st.dataframe(
     display_df,
@@ -623,11 +678,16 @@ st.subheader("Player detail")
 
 selected = st.selectbox(
     "Pick a player to see how their score breaks down",
-    options=filtered["player_display_name"].tolist(),
+    options=ranked["player_display_name"].tolist(),
     index=0,
 )
 
-player = filtered[filtered["player_display_name"] == selected].iloc[0]
+player = ranked[ranked["player_display_name"] == selected].iloc[0]
+
+# Sample size warning for the selected player
+warn = sample_size_caption(player.get("sample_pct", 100))
+if warn:
+    st.warning(warn)
 
 c1, c2 = st.columns([1, 1])
 with c1:
