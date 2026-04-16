@@ -208,13 +208,15 @@ def zscore_to_percentile(z):
     return float(norm.cdf(z) * 100)
 
 
-def build_radar_figure(player, stat_labels):
+def build_radar_figure(player, stat_labels, stat_methodology):
     """Return a Plotly polar figure showing this player's percentiles
     on the RADAR_STATS axes. Missing values are skipped.
     Stats in RADAR_INVERT have their z-score sign flipped before
-    conversion to percentile."""
+    conversion to percentile.
+    Hovering over a data point shows the stat's 'what' description."""
     axes = []
     values = []
+    descriptions = []
     for z_col in RADAR_STATS:
         if z_col not in player.index:
             continue
@@ -227,8 +229,15 @@ def build_radar_figure(player, stat_labels):
         pct = zscore_to_percentile(z)
         # Use override label if available, else fall back to metadata label
         label = RADAR_LABEL_OVERRIDES.get(z_col, stat_labels.get(z_col, z_col))
+        # Use methodology "what", but mention the inversion if relevant
+        desc = stat_methodology.get(z_col, {}).get("what", "")
+        if not desc:
+            desc = OL_METHODOLOGY.get(z_col, {}).get("what", "")
+        if z_col in RADAR_INVERT:
+            desc = f"{desc} (Higher on chart = fewer penalties.)"
         axes.append(label)
         values.append(pct)
+        descriptions.append(desc)
 
     if not axes:
         return None
@@ -236,16 +245,18 @@ def build_radar_figure(player, stat_labels):
     # Close the polygon by repeating the first point at the end
     axes_closed = axes + [axes[0]]
     values_closed = values + [values[0]]
+    descriptions_closed = descriptions + [descriptions[0]]
 
     fig = go.Figure()
     fig.add_trace(go.Scatterpolar(
         r=values_closed,
         theta=axes_closed,
+        customdata=descriptions_closed,
         fill="toself",
         fillcolor="rgba(31, 119, 180, 0.25)",
         line=dict(color="rgba(31, 119, 180, 0.9)", width=2),
         marker=dict(size=6, color="rgba(31, 119, 180, 1)"),
-        hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<extra></extra>",
+        hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<br><br><i>%{customdata}</i><extra></extra>",
     ))
     fig.update_layout(
         polar=dict(
@@ -737,14 +748,15 @@ with c1:
 
 with c2:
     st.markdown("**Stat profile** (percentiles within Lions starters)")
-    fig = build_radar_figure(player, stat_labels)
+    fig = build_radar_figure(player, stat_labels, OL_METHODOLOGY)
     if fig is not None:
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.caption("No radar data available for this player.")
     st.caption(
         "Each axis shows where this player ranks among the Lions starting five. "
-        "50 = group median. The 'Discipline' axis is inverted — higher = fewer penalties."
+        "50 = group median. The 'Discipline' axis is inverted — higher = fewer penalties. "
+        "Hover any data point for the stat description."
     )
 
 
