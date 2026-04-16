@@ -1,0 +1,106 @@
+{
+  "position_group": "coach",
+  "reference_population": "Active head coaches with 34+ games (2024 season)",
+  "first_season_in_data": 2006,
+  "last_season_in_data": 2024,
+  "n_coaches": 138,
+  "stat_tiers": {
+    "ats_win_pct_z": 2,
+    "close_game_win_pct_z": 2,
+    "post_bye_win_pct_z": 2,
+    "pre_snap_penalty_rate_z": 2,
+    "rz_td_rate_z": 2,
+    "record_vs_winning_win_pct_z": 3,
+    "fourth_down_epa_z": 3,
+    "timeout_efficiency_z": 3
+  },
+  "stat_labels": {
+    "ats_win_pct_z": "ATS record",
+    "fourth_down_epa_z": "4th-down decision EPA",
+    "close_game_win_pct_z": "Close game record",
+    "record_vs_winning_win_pct_z": "Record vs. winning teams",
+    "pre_snap_penalty_rate_z": "Pre-snap penalty rate",
+    "rz_td_rate_z": "Red zone TD rate",
+    "post_bye_win_pct_z": "Post-bye record",
+    "timeout_efficiency_z": "Timeout efficiency"
+  },
+  "stat_methodology": {
+    "ats_win_pct_z": {
+      "what": "Percentage of games where the team beat the closing spread.",
+      "how": "(games where point differential exceeded the closing spread) / (total games with a spread on record).",
+      "limits": "Spread data only available from 2006 on. Older coaches have shorter ATS histories."
+    },
+    "fourth_down_epa_z": {
+      "what": "Average Expected Points Added on 4th-down plays.",
+      "how": "Mean of nflverse EPA on all 4th-down plays (pass, run, punt, FG) where this coach was on offense.",
+      "limits": "Does not directly compare to the analytically correct decision. Bold coaches who go for it and convert look great; conservative coaches who always punt get league-average results."
+    },
+    "close_game_win_pct_z": {
+      "what": "Win percentage in games decided by 7 points or fewer.",
+      "how": "(wins in games with absolute point diff <= 7) / (total such games).",
+      "limits": "Close-game results are famously noisy. Even good coaches go .500 in close games over small samples."
+    },
+    "record_vs_winning_win_pct_z": {
+      "what": "Win percentage against opponents that finished 9 or more wins that season.",
+      "how": "(wins vs. winning teams) / (games vs. winning teams).",
+      "limits": "Fraud check, but sample sizes are smaller than full-season record. 9-win cutoff is a judgement call."
+    },
+    "pre_snap_penalty_rate_z": {
+      "what": "Pre-snap penalties per play while this coach was coaching (both sides of the ball).",
+      "how": "(false starts, delay of game, illegal formation/shift/motion, encroachment, 12-men, etc.) / (total plays).",
+      "limits": "Measures team discipline, which is attributable to coaching but also to roster composition. Rookie-heavy rosters commit more pre-snap penalties regardless of coach."
+    },
+    "rz_td_rate_z": {
+      "what": "Percentage of red zone offensive plays that ended in a touchdown.",
+      "how": "(red zone pass TDs + rush TDs) / (red zone pass + rush plays).",
+      "limits": "True red-zone efficiency should be measured per trip, not per play. This play-rate proxy rewards teams that score fast in the red zone and penalizes those that need multiple plays."
+    },
+    "post_bye_win_pct_z": {
+      "what": "Win percentage in the first game after a bye week.",
+      "how": "(wins in post-bye games) / (post-bye games). Post-bye = gap greater than 1 week in the schedule.",
+      "limits": "Tiny sample per coach - usually 1 post-bye game per season. Very noisy."
+    },
+    "timeout_efficiency_z": {
+      "what": "Average timeouts remaining entering the 2-minute warning of each half.",
+      "how": "Mean of timeouts remaining at the first play with 120 or fewer seconds left in Q2 and Q4, averaged across all games.",
+      "limits": "Higher is not always better - a coach SHOULD sometimes spend timeouts in the 2nd or 4th quarter. This rewards hoarding, which is not always optimal."
+    }
+  },
+  "invert_stats": [
+    "pre_snap_penalty_rate_z"
+  ],
+  "zscore_params": {
+    "ats_win_pct": {
+      "mean": 0.5050257841879979,
+      "std": 0.06850123485739175
+    },
+    "fourth_down_epa": {
+      "mean": -0.020482758060097694,
+      "std": 0.07373713701963425
+    },
+    "close_game_win_pct": {
+      "mean": 0.5097181295542915,
+      "std": 0.11688257190003296
+    },
+    "record_vs_winning_win_pct": {
+      "mean": 0.37059893951213013,
+      "std": 0.12845489900108162
+    },
+    "pre_snap_penalty_rate": {
+      "mean": 0.011009105364992555,
+      "std": 0.001522999839477992
+    },
+    "rz_td_rate": {
+      "mean": 0.1929819574097273,
+      "std": 0.014504444667385053
+    },
+    "post_bye_win_pct": {
+      "mean": 0.5596907118922942,
+      "std": 0.22828707223030012
+    },
+    "timeout_efficiency": {
+      "mean": 2.1130869388580322,
+      "std": 0.21436312794685364
+    }
+  }
+}
