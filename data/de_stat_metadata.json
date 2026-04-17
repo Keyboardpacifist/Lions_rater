@@ -1,0 +1,71 @@
+{
+  "stat_tiers": {
+    "sacks_per_game_z": 1,
+    "qb_hits_per_game_z": 2,
+    "pressure_rate_z": 2,
+    "tfl_per_game_z": 1,
+    "solo_tackle_rate_z": 2,
+    "tackles_per_snap_z": 2,
+    "forced_fumbles_per_game_z": 2,
+    "passes_defended_per_game_z": 2,
+    "interceptions_per_game_z": 2
+  },
+  "stat_labels": {
+    "sacks_per_game_z": "Sacks per game",
+    "qb_hits_per_game_z": "QB hits per game",
+    "pressure_rate_z": "Pressure rate",
+    "tfl_per_game_z": "TFLs per game",
+    "solo_tackle_rate_z": "Solo tackle rate",
+    "tackles_per_snap_z": "Tackles per snap",
+    "forced_fumbles_per_game_z": "Forced fumbles/game",
+    "passes_defended_per_game_z": "Passes defended/game",
+    "interceptions_per_game_z": "Interceptions/game"
+  },
+  "stat_methodology": {
+    "sacks_per_game_z": {
+      "what": "Sacks per game \u2014 the headline edge rusher stat",
+      "how": "Total sacks (full + 0.5 \u00d7 half) / games.",
+      "limits": "Scheme-dependent. Some edges drop into coverage on many snaps."
+    },
+    "qb_hits_per_game_z": {
+      "what": "QB hits per game \u2014 pressures beyond sacks",
+      "how": "QB hits from PBP / games.",
+      "limits": "Tracking inconsistency across seasons."
+    },
+    "pressure_rate_z": {
+      "what": "Total pressures (sacks + QB hits) per game",
+      "how": "(Sacks + QB hits) / games.",
+      "limits": "Doesn't separate unblocked pressures from winning 1-on-1."
+    },
+    "tfl_per_game_z": {
+      "what": "Tackles for loss per game \u2014 backfield penetration on runs",
+      "how": "TFLs / games.",
+      "limits": "Pass rush specialists may not set the edge on runs."
+    },
+    "solo_tackle_rate_z": {
+      "what": "Solo tackles as % of total tackles",
+      "how": "Solo / (solo + assisted).",
+      "limits": "Can be low for edges who funnel to help."
+    },
+    "tackles_per_snap_z": {
+      "what": "Tackles per defensive snap",
+      "how": "Total tackles / defensive snaps.",
+      "limits": "High rates can reflect poor team defense (more tackles needed)."
+    },
+    "forced_fumbles_per_game_z": {
+      "what": "Forced fumbles per game \u2014 strip sack ability",
+      "how": "Forced fumbles / games.",
+      "limits": "Low frequency event. One play can dominate career rates."
+    },
+    "passes_defended_per_game_z": {
+      "what": "Passes defended per game \u2014 tipped passes and deflections",
+      "how": "Pass breakups / games.",
+      "limits": "Rare for pure edge rushers. More common for OLB types who drop into coverage."
+    },
+    "interceptions_per_game_z": {
+      "what": "Interceptions per game \u2014 opportunistic playmaking",
+      "how": "INTs / games.",
+      "limits": "Very rare for DEs. One or two lucky plays can inflate this."
+    }
+  }
+}
