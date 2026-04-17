@@ -46,7 +46,7 @@ BUNDLES = {
     "playmaking": {"label": "💥 Playmaking", "description": "Creates turnovers — forced fumbles and opportunistic plays.", "stats": {"forced_fumbles_per_game_z": 1.0}},
     "man_coverage": {"label": "🔬 Man coverage (theoretical)", "description": "⚠️ TIER 4: How the defense performs on pass plays in man coverage when this CB is on the field. Based on 2023-2024 participation data. We know the team was in man, but NOT which receiver this CB was covering.", "stats": {"man_coverage_epa_z": 0.50, "man_coverage_comp_pct_z": 0.50}},
 }
-DEFAULT_BUNDLE_WEIGHTS = {"coverage": 70, "tackling": 30, "playmaking": 40, "man_coverage": 0}
+DEFAULT_BUNDLE_WEIGHTS = {"coverage": 70, "tackling": 30, "playmaking": 40, "man_coverage": 40}
 
 RADAR_STATS = ["passes_defended_per_game_z", "interceptions_per_game_z", "solo_tackle_rate_z", "tackles_per_snap_z", "tfl_per_game_z", "forced_fumbles_per_game_z", "man_coverage_epa_z", "man_coverage_comp_pct_z"]
 RADAR_INVERT = set()
