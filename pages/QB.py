@@ -364,8 +364,8 @@ st.markdown(
     "_No 'best QB' — just **your** best QB._"
 )
 st.caption(
-    "Career-weighted stats • Per-play rates (volume-neutral) • "
-    "Compared against QBs with 2+ qualified seasons • "
+    "Lions QBs shown by default • Z-scores computed league-wide for sample size • "
+    "Per-play rates (volume-neutral) • "
     "Every stat has a methodology popover"
 )
 
@@ -504,14 +504,26 @@ else:
 # Filter QB population
 # ============================================================
 st.markdown("### Who's in the pool?")
-c_opts = st.columns(2)
+st.caption(
+    "💡 **Why league-wide z-scores?** With only one Lions QB in the data, "
+    "we need the full league to compute meaningful comparisons. Goff's scores "
+    "tell you where he ranks among all qualified QBs. Check the box below to "
+    "see the full league rankings."
+)
+c_opts = st.columns(3)
 with c_opts[0]:
+    show_league = st.checkbox(
+        "Show league-wide QBs",
+        value=False, key="qb_show_league",
+        help="Reveals all qualified QBs across the league. Lions QBs are always included.",
+    )
+with c_opts[1]:
     include_rookies = st.checkbox(
         "Include 1st-year QBs",
         value=False, key="qb_include_rookies",
         help="Adds QBs with only 1 qualified season. Flagged 🔴 for small sample.",
     )
-with c_opts[1]:
+with c_opts[2]:
     include_historical = st.checkbox(
         "Include historical QBs",
         value=False, key="qb_include_historical",
@@ -519,11 +531,31 @@ with c_opts[1]:
     )
 
 qbs = df.copy()
-keep_mask = (qbs["current_status"] == "active") & (qbs["seasons"].fillna(0) >= 2)
+
+# Start with Lions-only, expand if user opts in
+if show_league:
+    keep_mask = (qbs["current_status"] == "active") & (qbs["seasons"].fillna(0) >= 2)
+else:
+    keep_mask = (qbs["current_status"] == "active") & (qbs["seasons"].fillna(0) >= 2) & (qbs["team"] == "DET")
+
+# Always include Lions QBs regardless of other filters
+lions_mask = qbs["team"] == "DET"
+
 if include_rookies:
-    keep_mask = keep_mask | ((qbs["current_status"] == "active") & (qbs["seasons"].fillna(0) < 2))
+    if show_league:
+        keep_mask = keep_mask | ((qbs["current_status"] == "active") & (qbs["seasons"].fillna(0) < 2))
+    else:
+        keep_mask = keep_mask | (lions_mask & (qbs["current_status"] == "active") & (qbs["seasons"].fillna(0) < 2))
+
 if include_historical:
-    keep_mask = keep_mask | (qbs["current_status"] == "historical")
+    if show_league:
+        keep_mask = keep_mask | (qbs["current_status"] == "historical")
+    else:
+        keep_mask = keep_mask | (lions_mask & (qbs["current_status"] == "historical"))
+
+# Always include any Lions QB
+keep_mask = keep_mask | lions_mask
+
 qbs = qbs[keep_mask].copy()
 
 if len(qbs) == 0:
