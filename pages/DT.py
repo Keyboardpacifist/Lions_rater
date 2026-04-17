@@ -41,7 +41,7 @@ inject_css()
 
 POSITION_GROUP = "dt"
 PAGE_URL = "https://lions-rater.streamlit.app/DT"
-DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_dts_with_z.parquet"
+DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_dts_with_z.parquet"
 METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "dt_stat_metadata.json"
 
 
@@ -303,8 +303,8 @@ st.markdown(
     "_No 'best DT' — just **your** best DT._"
 )
 st.caption(
-    "Career-weighted stats • Per-game and per-snap rates • "
-    "Compared against DTs with 2+ qualified seasons • "
+    "Lions DTs shown • Z-scores computed against league-wide DTs (200+ snaps/season) • "
+    "Per-game and per-snap rates • "
     "Every stat has a methodology popover"
 )
 
@@ -428,21 +428,17 @@ else:
 # Filter population
 # ============================================================
 st.markdown("### Who's in the pool?")
-c_opts = st.columns(2)
-with c_opts[0]:
-    include_rookies = st.checkbox("Include 1st-year DTs", value=False, key="dt_include_rookies",
-        help="Adds DTs with only 1 qualified season. Flagged 🔴 for small sample.")
-with c_opts[1]:
-    include_historical = st.checkbox("Include historical DTs", value=False, key="dt_include_historical",
-        help="Adds DTs whose last qualified season was before 2024.")
+st.caption(
+    "All Lions DTs with 200+ defensive snaps in a season. "
+    "Z-scores are computed against league-wide DTs for meaningful comparison."
+)
+
+include_historical = st.checkbox("Include historical Lions DTs", value=False, key="dt_include_historical",
+    help="Adds Lions DTs whose last qualified season was before 2024.")
 
 dts = df.copy()
-keep_mask = (dts["current_status"] == "active") & (dts["seasons"].fillna(0) >= 2)
-if include_rookies:
-    keep_mask = keep_mask | ((dts["current_status"] == "active") & (dts["seasons"].fillna(0) < 2))
-if include_historical:
-    keep_mask = keep_mask | (dts["current_status"] == "historical")
-dts = dts[keep_mask].copy()
+if not include_historical:
+    dts = dts[dts["current_status"] == "active"].copy()
 
 if len(dts) == 0:
     st.warning("No DTs match the current filters.")
