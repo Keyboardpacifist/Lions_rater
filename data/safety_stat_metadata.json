@@ -1,0 +1,64 @@
+{
+  "stat_tiers": {
+    "passes_defended_per_game_z": 2,
+    "interceptions_per_game_z": 2,
+    "solo_tackle_rate_z": 2,
+    "tackles_per_snap_z": 2,
+    "tfl_per_game_z": 1,
+    "forced_fumbles_per_game_z": 2,
+    "man_coverage_epa_z": 4,
+    "man_coverage_comp_pct_z": 4
+  },
+  "stat_labels": {
+    "passes_defended_per_game_z": "Passes defended/game",
+    "interceptions_per_game_z": "Interceptions/game",
+    "solo_tackle_rate_z": "Solo tackle rate",
+    "tackles_per_snap_z": "Tackles per snap",
+    "tfl_per_game_z": "TFLs per game",
+    "forced_fumbles_per_game_z": "Forced fumbles/game",
+    "man_coverage_epa_z": "Man coverage EPA (theoretical)",
+    "man_coverage_comp_pct_z": "Man coverage comp% allowed (theoretical)"
+  },
+  "stat_methodology": {
+    "passes_defended_per_game_z": {
+      "what": "Passes defended per game",
+      "how": "Pass breakups / games.",
+      "limits": "Safeties in zone may have fewer PDs than those in man. Scheme-dependent."
+    },
+    "interceptions_per_game_z": {
+      "what": "Interceptions per game",
+      "how": "INTs / games.",
+      "limits": "Low frequency. Safeties in deep zone get more INT opportunities than box safeties."
+    },
+    "solo_tackle_rate_z": {
+      "what": "Solo tackles as % of total tackles",
+      "how": "Solo / (solo + assisted).",
+      "limits": "Box safeties tackle more but may have lower solo rates due to gang tackling near the LOS."
+    },
+    "tackles_per_snap_z": {
+      "what": "Tackles per defensive snap",
+      "how": "Total tackles / defensive snaps.",
+      "limits": "High tackle rates for a safety can mean receivers are catching the ball in their zone (mixed signal)."
+    },
+    "tfl_per_game_z": {
+      "what": "Tackles for loss per game",
+      "how": "TFLs / games.",
+      "limits": "More common for box safeties who play near the LOS."
+    },
+    "forced_fumbles_per_game_z": {
+      "what": "Forced fumbles per game",
+      "how": "Forced fumbles / games.",
+      "limits": "Very rare. One big hit dominates career rates."
+    },
+    "man_coverage_epa_z": {
+      "what": "THEORETICAL: Average EPA allowed on pass plays when this safety is on the field in man coverage",
+      "how": "EPA on man coverage pass plays where this safety was on the field / number of such plays. Inverted so positive z = fewer points allowed. Requires 30+ man coverage pass snaps.",
+      "limits": "\u26a0\ufe0f TIER 4 \u2014 THEORETICAL. We know the team was in man and this safety was playing, but NOT who they were covering. Only 2023-2024 data."
+    },
+    "man_coverage_comp_pct_z": {
+      "what": "THEORETICAL: Completion % on pass plays when this safety is on the field in man coverage",
+      "how": "Completions / attempts on man coverage plays where this safety was on the field. Inverted. Requires 30+ snaps.",
+      "limits": "\u26a0\ufe0f TIER 4 \u2014 Same caveats. A completion anywhere on the field counts. Only 2023-2024."
+    }
+  }
+}
