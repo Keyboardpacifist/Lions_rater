@@ -433,15 +433,10 @@ st.caption(
     "Z-scores are computed against league-wide DTs for meaningful comparison."
 )
 
-include_historical = st.checkbox("Include historical Lions DTs", value=False, key="dt_include_historical",
-    help="Adds Lions DTs whose last qualified season was before 2024.")
-
 dts = df.copy()
-if not include_historical:
-    dts = dts[dts["current_status"] == "active"].copy()
 
 if len(dts) == 0:
-    st.warning("No DTs match the current filters.")
+    st.warning("No DTs found in the data.")
     st.stop()
 
 
