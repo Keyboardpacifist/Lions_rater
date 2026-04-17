@@ -1,0 +1,71 @@
+{
+  "stat_tiers": {
+    "sacks_per_game_z": 1,
+    "qb_hits_per_game_z": 2,
+    "pressure_rate_z": 2,
+    "tfl_per_game_z": 1,
+    "solo_tackle_rate_z": 2,
+    "tackles_per_snap_z": 2,
+    "forced_fumbles_per_game_z": 2,
+    "passes_defended_per_game_z": 2,
+    "interceptions_per_game_z": 2
+  },
+  "stat_labels": {
+    "sacks_per_game_z": "Sacks per game",
+    "qb_hits_per_game_z": "QB hits per game",
+    "pressure_rate_z": "Pressure rate",
+    "tfl_per_game_z": "TFLs per game",
+    "solo_tackle_rate_z": "Solo tackle rate",
+    "tackles_per_snap_z": "Tackles per snap",
+    "forced_fumbles_per_game_z": "Forced fumbles/game",
+    "passes_defended_per_game_z": "Passes defended/game",
+    "interceptions_per_game_z": "Interceptions/game"
+  },
+  "stat_methodology": {
+    "sacks_per_game_z": {
+      "what": "Sacks per game",
+      "how": "Total sacks (full + 0.5 \u00d7 half) / games.",
+      "limits": "Pass-rushing LBs naturally get more. Use lb_type filter to compare like-for-like."
+    },
+    "qb_hits_per_game_z": {
+      "what": "QB hits per game \u2014 pressures beyond sacks",
+      "how": "QB hits / games.",
+      "limits": "Off-ball LBs rarely blitz enough to register many hits."
+    },
+    "pressure_rate_z": {
+      "what": "Total pressures (sacks + QB hits) per game",
+      "how": "(Sacks + QB hits) / games. Also used to classify pass-rusher vs off-ball (threshold: 0.4/game).",
+      "limits": "Scheme-dependent. Some LBs blitz by design, others never do."
+    },
+    "tfl_per_game_z": {
+      "what": "Tackles for loss per game",
+      "how": "TFLs / games.",
+      "limits": "Both pass-rushing and off-ball LBs can get TFLs. Good for both types."
+    },
+    "solo_tackle_rate_z": {
+      "what": "Solo tackles as % of total tackles",
+      "how": "Solo / (solo + assisted).",
+      "limits": "Off-ball LBs in tackle-heavy schemes may have lower solo rates due to gang tackling."
+    },
+    "tackles_per_snap_z": {
+      "what": "Tackles per defensive snap \u2014 involvement rate",
+      "how": "Total tackles / defensive snaps.",
+      "limits": "High rates can mean the defense is giving up yards. Not always positive."
+    },
+    "forced_fumbles_per_game_z": {
+      "what": "Forced fumbles per game",
+      "how": "Forced fumbles / games.",
+      "limits": "Low frequency. Strip-sack specialists inflate this."
+    },
+    "passes_defended_per_game_z": {
+      "what": "Passes defended per game \u2014 coverage ability",
+      "how": "Pass breakups / games.",
+      "limits": "Key differentiator for coverage LBs. Pass rushers rarely register these."
+    },
+    "interceptions_per_game_z": {
+      "what": "Interceptions per game",
+      "how": "INTs / games.",
+      "limits": "Rare event. One lucky play dominates career rates. But elite coverage LBs (like Roquan Smith) consistently get these."
+    }
+  }
+}
