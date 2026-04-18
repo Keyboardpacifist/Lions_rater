@@ -1,0 +1,71 @@
+{
+  "stat_tiers": {
+    "epa_per_play_z": 2,
+    "pass_epa_per_play_z": 2,
+    "rush_epa_per_play_z": 2,
+    "success_rate_z": 2,
+    "explosive_pass_rate_z": 2,
+    "explosive_rush_rate_z": 2,
+    "third_down_rate_z": 2,
+    "red_zone_td_rate_z": 2,
+    "win_pct_z": 1
+  },
+  "stat_labels": {
+    "epa_per_play_z": "Defensive EPA/play (inverted)",
+    "pass_epa_per_play_z": "Pass defense EPA (inverted)",
+    "rush_epa_per_play_z": "Rush defense EPA (inverted)",
+    "success_rate_z": "Success rate allowed (inverted)",
+    "explosive_pass_rate_z": "Explosive pass allowed (inverted)",
+    "explosive_rush_rate_z": "Explosive rush allowed (inverted)",
+    "third_down_rate_z": "3rd down rate allowed (inverted)",
+    "red_zone_td_rate_z": "Red zone TD allowed (inverted)",
+    "win_pct_z": "Win percentage"
+  },
+  "stat_methodology": {
+    "epa_per_play_z": {
+      "what": "Average EPA allowed per defensive play \u2014 lower = better",
+      "how": "Inverted so positive z = fewer points allowed.",
+      "limits": "Talent-dependent. Scheme matters but so do players."
+    },
+    "pass_epa_per_play_z": {
+      "what": "EPA allowed per pass \u2014 lower = better",
+      "how": "Inverted.",
+      "limits": "CB/S talent is a major factor."
+    },
+    "rush_epa_per_play_z": {
+      "what": "EPA allowed per rush \u2014 lower = better",
+      "how": "Inverted.",
+      "limits": "DL talent matters."
+    },
+    "success_rate_z": {
+      "what": "Opponent success rate \u2014 lower = better",
+      "how": "Inverted.",
+      "limits": "Consistency of defense."
+    },
+    "explosive_pass_rate_z": {
+      "what": "Explosive passes allowed \u2014 fewer = better",
+      "how": "Inverted.",
+      "limits": "Coverage quality."
+    },
+    "explosive_rush_rate_z": {
+      "what": "Explosive rushes allowed \u2014 fewer = better",
+      "how": "Inverted.",
+      "limits": "Front seven talent."
+    },
+    "third_down_rate_z": {
+      "what": "3rd down conversion rate allowed \u2014 lower = better",
+      "how": "Inverted.",
+      "limits": "Situational defense."
+    },
+    "red_zone_td_rate_z": {
+      "what": "Red zone TDs allowed \u2014 fewer = better",
+      "how": "Inverted.",
+      "limits": "Goal-line defense."
+    },
+    "win_pct_z": {
+      "what": "Team win percentage",
+      "how": "Wins / games.",
+      "limits": "Entire team contributes."
+    }
+  }
+}
