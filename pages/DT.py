@@ -1,4 +1,4 @@
-]"""
+"""
 Lions DT Rater — 2024 season
 """
 import json
