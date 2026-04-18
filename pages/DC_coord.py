@@ -35,19 +35,21 @@ RAW_COL_MAP = {
     "explosive_pass_rate_z": "explosive_pass_rate", "explosive_rush_rate_z": "explosive_rush_rate",
     "third_down_rate_z": "third_down_rate", "red_zone_td_rate_z": "red_zone_td_rate",
     "win_pct_z": "win_pct",
+    "def_cap_pct_z": "def_cap_pct", "def_draft_capital_z": "def_draft_capital",
 }
 
 BUNDLES = {
     "efficiency": {"label": "🛡️ Defensive efficiency", "description": "EPA allowed per play. Lower = better. Inverted so positive z = good defense.", "stats": {"epa_per_play_z": 0.40, "pass_epa_per_play_z": 0.30, "rush_epa_per_play_z": 0.30}},
     "execution": {"label": "🎯 Situational defense", "description": "Third down stops and red zone defense. Prevents conversions in critical moments.", "stats": {"third_down_rate_z": 0.50, "red_zone_td_rate_z": 0.50}},
     "explosiveness": {"label": "🔒 Explosive prevention", "description": "Prevents big plays — 20+ yard passes and 10+ yard runs. Keeps offense in front of the sticks.", "stats": {"explosive_pass_rate_z": 0.55, "explosive_rush_rate_z": 0.45}},
+    "investment": {"label": "💰 Roster investment", "description": "Salary cap % and draft capital invested in defense. Higher = more resources given to this coordinator.", "stats": {"def_cap_pct_z": 0.50, "def_draft_capital_z": 0.50}},
     "winning": {"label": "🏆 Winning", "description": "Team win percentage during coordinator tenure. The ultimate measure, but the least isolatable.", "stats": {"win_pct_z": 1.00}},
 }
-DEFAULT_BUNDLE_WEIGHTS = {"efficiency": 60, "execution": 50, "explosiveness": 40, "winning": 30}
+DEFAULT_BUNDLE_WEIGHTS = {"efficiency": 60, "execution": 50, "explosiveness": 40, "investment": 0, "winning": 30}
 
-RADAR_STATS = ["epa_per_play_z", "pass_epa_per_play_z", "rush_epa_per_play_z", "success_rate_z", "explosive_pass_rate_z", "explosive_rush_rate_z", "third_down_rate_z", "red_zone_td_rate_z", "win_pct_z"]
+RADAR_STATS = ["epa_per_play_z", "pass_epa_per_play_z", "rush_epa_per_play_z", "success_rate_z", "explosive_pass_rate_z", "explosive_rush_rate_z", "third_down_rate_z", "red_zone_td_rate_z", "win_pct_z", "def_cap_pct_z", "def_draft_capital_z"]
 RADAR_INVERT = set()
-RADAR_LABEL_OVERRIDES = {"epa_per_play_z": "Def EPA", "pass_epa_per_play_z": "Pass D", "rush_epa_per_play_z": "Rush D", "success_rate_z": "Opp success", "explosive_pass_rate_z": "No big pass", "explosive_rush_rate_z": "No big rush", "third_down_rate_z": "3rd down D", "red_zone_td_rate_z": "Red zone D", "win_pct_z": "Win %"}
+RADAR_LABEL_OVERRIDES = {"epa_per_play_z": "Def EPA", "pass_epa_per_play_z": "Pass D", "rush_epa_per_play_z": "Rush D", "success_rate_z": "Opp success", "explosive_pass_rate_z": "No big pass", "explosive_rush_rate_z": "No big rush", "third_down_rate_z": "3rd down D", "red_zone_td_rate_z": "Red zone D", "win_pct_z": "Win %", "def_cap_pct_z": "Cap invested", "def_draft_capital_z": "Draft capital"}
 
 def zscore_to_percentile(z):
     if pd.isna(z): return None
