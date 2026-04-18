@@ -1,5 +1,5 @@
 """
-Lions CB Rater — 2024 season
+Lions Safety Rater — 2024 season
 """
 import json
 from pathlib import Path
@@ -10,18 +10,18 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
 
-st.set_page_config(page_title="Lions CB Rater", page_icon="🦁", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Lions Safety Rater", page_icon="🦁", layout="wide", initial_sidebar_state="expanded")
 inject_css()
 
-POSITION_GROUP = "cb"
-PAGE_URL = "https://lions-rater.streamlit.app/CB"
-DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_cbs_with_z.parquet"
-METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "cb_stat_metadata.json"
+POSITION_GROUP = "safety"
+PAGE_URL = "https://lions-rater.streamlit.app/Safety"
+DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_safeties_with_z.parquet"
+METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "safety_stat_metadata.json"
 
 @st.cache_data
-def load_cb_data(): return pl.read_parquet(DATA_PATH).to_pandas()
+def load_safety_data(): return pl.read_parquet(DATA_PATH).to_pandas()
 @st.cache_data
-def load_cb_metadata():
+def load_safety_metadata():
     if not METADATA_PATH.exists(): return {}
     with open(METADATA_PATH) as f: return json.load(f)
 
@@ -30,19 +30,19 @@ RAW_COL_MAP = {
     "forced_fumbles_per_game_z": "forced_fumbles_per_game",
     "passes_defended_per_game_z": "passes_defended_per_game",
     "interceptions_per_game_z": "interceptions_per_game",
-    "tfl_per_game_z": "tfl_per_game",
+    "tfl_per_game_z": "tfl_per_game", "sacks_per_game_z": "sacks_per_game",
 }
 
 BUNDLES = {
-    "coverage": {"label": "🛡️ Coverage", "description": "Breaks up passes and intercepts throws. The core CB skill.", "stats": {"passes_defended_per_game_z": 0.50, "interceptions_per_game_z": 0.50}},
-    "tackling": {"label": "🏈 Tackling", "description": "Makes tackles, especially solo tackles. Run support and after-catch stops.", "stats": {"solo_tackle_rate_z": 0.35, "tackles_per_snap_z": 0.35, "tfl_per_game_z": 0.30}},
-    "playmaking": {"label": "💥 Playmaking", "description": "Forces fumbles. Game-changing disruption beyond coverage.", "stats": {"forced_fumbles_per_game_z": 1.00}},
+    "coverage": {"label": "🛡️ Coverage", "description": "Breaks up passes and intercepts throws. The core safety coverage skill.", "stats": {"passes_defended_per_game_z": 0.45, "interceptions_per_game_z": 0.55}},
+    "tackling": {"label": "🏈 Tackling & run support", "description": "Makes tackles, TFLs, and provides run support.", "stats": {"solo_tackle_rate_z": 0.30, "tackles_per_snap_z": 0.35, "tfl_per_game_z": 0.35}},
+    "playmaking": {"label": "💥 Playmaking & pressure", "description": "Forces fumbles and generates sacks on blitzes.", "stats": {"forced_fumbles_per_game_z": 0.50, "sacks_per_game_z": 0.50}},
 }
-DEFAULT_BUNDLE_WEIGHTS = {"coverage": 70, "tackling": 40, "playmaking": 20}
+DEFAULT_BUNDLE_WEIGHTS = {"coverage": 60, "tackling": 50, "playmaking": 30}
 
 RADAR_STATS = list(RAW_COL_MAP.keys())
 RADAR_INVERT = set()
-RADAR_LABEL_OVERRIDES = {"solo_tackle_rate_z": "Solo tackle %", "tackles_per_snap_z": "Tackles/snap", "forced_fumbles_per_game_z": "Forced fumbles", "passes_defended_per_game_z": "Passes defended", "interceptions_per_game_z": "Interceptions", "tfl_per_game_z": "TFLs"}
+RADAR_LABEL_OVERRIDES = {"solo_tackle_rate_z": "Solo tackle %", "tackles_per_snap_z": "Tackles/snap", "forced_fumbles_per_game_z": "Forced fumbles", "passes_defended_per_game_z": "Passes defended", "interceptions_per_game_z": "Interceptions", "tfl_per_game_z": "TFLs", "sacks_per_game_z": "Sacks"}
 
 def zscore_to_percentile(z):
     if pd.isna(z): return None
@@ -100,28 +100,28 @@ def sample_size_caption(snaps):
     return ""
 
 SCORE_EXPLAINER = """
-**What this number means.** Weighted average of z-scores — 0 is league-average CB, +1 is one SD above, −1 is one SD below.
+**What this number means.** Weighted average of z-scores — 0 is league-average safety, +1 is one SD above, −1 is one SD below.
 
 **How to read it:** `+1.0` or higher → well above average • `+0.4` to `+1.0` → above average • `−0.4` to `+0.4` → roughly average • `−1.0` or lower → well below average
 
-**CB population:** 2024 regular season, z-scored against all CBs league-wide with 200+ defensive snaps.
+**Safety population:** 2024 regular season, z-scored against all safeties league-wide with 200+ defensive snaps.
 """
 
-if "cb_loaded_algo" not in st.session_state: st.session_state.cb_loaded_algo = None
+if "safety_loaded_algo" not in st.session_state: st.session_state.safety_loaded_algo = None
 if "upvoted_ids" not in st.session_state: st.session_state.upvoted_ids = set()
-if "cb_tiers_enabled" not in st.session_state: st.session_state.cb_tiers_enabled = [1, 2]
+if "safety_tiers_enabled" not in st.session_state: st.session_state.safety_tiers_enabled = [1, 2]
 
-st.title("🦁 Lions CB Rater")
-st.markdown("**Build your own algorithm.** Drag the sliders to weight what you value, and watch the Lions cornerbacks re-rank in real time. _No 'best CB' — just **your** best CB._")
-st.caption("2024 regular season • Z-scores vs all CBs league-wide (200+ snaps) • Coverage-focused stats")
+st.title("🦁 Lions Safety Rater")
+st.markdown("**Build your own algorithm.** Drag the sliders to weight what you value, and watch the Lions safeties re-rank in real time. _No 'best safety' — just **your** best safety._")
+st.caption("2024 regular season • Z-scores vs all safeties league-wide (200+ snaps)")
 
-try: df = load_cb_data()
+try: df = load_safety_data()
 except FileNotFoundError: st.error(f"Couldn't find DE data at {DATA_PATH}."); st.stop()
 
-meta = load_cb_metadata()
+meta = load_safety_metadata()
 stat_tiers = meta.get("stat_tiers", {}); stat_labels = meta.get("stat_labels", {}); stat_methodology = meta.get("stat_methodology", {})
 
-if "algo" in st.query_params and st.session_state.cb_loaded_algo is None:
+if "algo" in st.query_params and st.session_state.safety_loaded_algo is None:
     linked = get_algorithm_by_slug(st.query_params["algo"])
     if linked and linked.get("position_group") == POSITION_GROUP: apply_algo_weights(linked, BUNDLES); st.rerun()
 
@@ -130,19 +130,19 @@ st.sidebar.markdown('<div class="section-divider"></div>', unsafe_allow_html=Tru
 advanced_mode = st.sidebar.toggle("🔬 Advanced mode", value=False)
 st.sidebar.header("What do you value?")
 
-if st.session_state.cb_loaded_algo:
-    la = st.session_state.cb_loaded_algo
+if st.session_state.safety_loaded_algo:
+    la = st.session_state.safety_loaded_algo
     st.sidebar.info(f"Loaded: **{la['name']}** by {la['author']}\n\n_{la.get('description', '')}_")
-    if st.sidebar.button("Clear loaded algorithm"): st.session_state.cb_loaded_algo = None
+    if st.sidebar.button("Clear loaded algorithm"): st.session_state.safety_loaded_algo = None
 
 st.markdown("### How speculative do you want to get?")
 tier_cols = st.columns(4)
 new_enabled = []
 for i, tier in enumerate([1, 2, 3, 4]):
     with tier_cols[i]:
-        checked = st.checkbox(f"{tier_badge(tier)} {TIER_LABELS[tier]}", value=(tier in st.session_state.cb_tiers_enabled), help=TIER_DESCRIPTIONS[tier], key=f"cb_tier_checkbox_{tier}")
+        checked = st.checkbox(f"{tier_badge(tier)} {TIER_LABELS[tier]}", value=(tier in st.session_state.safety_tiers_enabled), help=TIER_DESCRIPTIONS[tier], key=f"safety_tier_checkbox_{tier}")
         if checked: new_enabled.append(tier)
-st.session_state.cb_tiers_enabled = new_enabled
+st.session_state.safety_tiers_enabled = new_enabled
 if not new_enabled: st.warning("Enable at least one tier."); st.stop()
 active_bundles = filter_bundles_by_tier(BUNDLES, stat_tiers, new_enabled)
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
@@ -155,8 +155,8 @@ if not advanced_mode:
         tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
         st.sidebar.markdown(f"**{bundle['label']}**")
         st.sidebar.markdown(f"<div class='bundle-desc'>{bundle['description']}<br><small>{tier_summary}</small></div>", unsafe_allow_html=True)
-        if f"cb_bundle_{bk}" not in st.session_state: st.session_state[f"cb_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
-        bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"cb_bundle_{bk}", label_visibility="collapsed")
+        if f"safety_bundle_{bk}" not in st.session_state: st.session_state[f"safety_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
+        bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"safety_bundle_{bk}", label_visibility="collapsed")
     for bk in BUNDLES:
         if bk not in bundle_weights: bundle_weights[bk] = 0
     effective_weights = compute_effective_weights(active_bundles, bundle_weights)
@@ -168,23 +168,23 @@ else:
         if meth.get("what"): help_parts.append(f"What: {meth['what']}")
         if meth.get("how"): help_parts.append(f"How: {meth['how']}")
         if meth.get("limits"): help_parts.append(f"Limits: {meth['limits']}")
-        w = st.sidebar.slider(f"{tier_badge(tier)} {label}", 0, 100, 50, 5, key=f"adv_cb_{z_col}", help="\n\n".join(help_parts) if help_parts else None)
+        w = st.sidebar.slider(f"{tier_badge(tier)} {label}", 0, 100, 50, 5, key=f"adv_safety_{z_col}", help="\n\n".join(help_parts) if help_parts else None)
         if w > 0: effective_weights[z_col] = w
     bundle_weights = {bk: 0 for bk in BUNDLES}
 
 st.markdown("### Who's in the pool?")
-st.caption("All Lions CBs with 25+ defensive snaps in 2024. Z-scores computed against all CBs league-wide (200+ snaps).")
-cbs = df.copy()
-if len(cbs) == 0: st.warning("No DEs found."); st.stop()
-cbs = score_players(cbs, effective_weights)
+st.caption("All Lions safeties with 25+ defensive snaps in 2024. Z-scores computed against all safeties league-wide (200+ snaps).")
+safeties = df.copy()
+if len(safeties) == 0: st.warning("No DEs found."); st.stop()
+safeties = score_players(safeties, effective_weights)
 total_weight = sum(effective_weights.values())
 if total_weight == 0: st.info("All weights are zero — drag some sliders.")
-cbs = cbs.sort_values("score", ascending=False).reset_index(drop=True)
-cbs.index = cbs.index + 1
+safeties = safeties.sort_values("score", ascending=False).reset_index(drop=True)
+safeties.index = safeties.index + 1
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.subheader("Ranking")
-ranked = cbs.copy()
+ranked = safeties.copy()
 
 if len(ranked) > 0:
     top = ranked.iloc[0]
@@ -208,7 +208,7 @@ with st.expander("ℹ️ How is this score calculated?"): st.markdown(SCORE_EXPL
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.subheader("Player detail")
-selected = st.selectbox("Pick a CB to see their breakdown", options=ranked["player_name"].tolist(), index=0)
+selected = st.selectbox("Pick a safety to see their breakdown", options=ranked["player_name"].tolist(), index=0)
 player = ranked[ranked["player_name"] == selected].iloc[0]
 warn = sample_size_caption(player.get("def_snaps", 0))
 if warn: st.warning(warn)
@@ -243,7 +243,7 @@ with c1:
         if rows: st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 with c2:
-    st.markdown("**CB profile** (percentiles vs. league CBs)")
+    st.markdown("**Safety profile** (percentiles vs. league safeties)")
     fig = build_radar_figure(player, stat_labels, stat_methodology)
     if fig: st.plotly_chart(fig, use_container_width=True)
     else: st.caption("No radar data available.")
@@ -251,4 +251,4 @@ with c2:
 community_section(position_group=POSITION_GROUP, bundles=BUNDLES, bundle_weights=bundle_weights, advanced_mode=advanced_mode, page_url=PAGE_URL)
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.caption("Data via [nflverse](https://github.com/nflverse) • 2024 regular season • Z-scored against 124 CBs with 200+ snaps • Fan project, not affiliated with the NFL or Detroit Lions.")
+st.caption("Data via [nflverse](https://github.com/nflverse) • 2024 regular season • Z-scored against safeties with 200+ snaps • Fan project, not affiliated with the NFL or Detroit Lions.")
