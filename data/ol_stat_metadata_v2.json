@@ -1,0 +1,64 @@
+{
+  "stat_tiers": {
+    "pos_run_epa_z": 2,
+    "pos_run_success_z": 2,
+    "pos_run_explosive_z": 2,
+    "team_sack_rate_z": 2,
+    "team_pressure_rate_z": 2,
+    "penalty_rate_z": 2,
+    "penalty_epa_per_game_z": 2,
+    "snap_share_z": 1
+  },
+  "stat_labels": {
+    "pos_run_epa_z": "Run EPA (position-specific)",
+    "pos_run_success_z": "Run success rate (position-specific)",
+    "pos_run_explosive_z": "Explosive run rate (position-specific)",
+    "team_sack_rate_z": "Team sack rate (inverted)",
+    "team_pressure_rate_z": "Team pressure rate (inverted)",
+    "penalty_rate_z": "Penalty rate (inverted)",
+    "penalty_epa_per_game_z": "Penalty EPA cost/game (inverted)",
+    "snap_share_z": "Snap share"
+  },
+  "stat_methodology": {
+    "pos_run_epa_z": {
+      "what": "EPA on runs through this lineman's position-specific gaps",
+      "how": "Tackles \u2192 end-gap runs (outside zone, sweeps). Guards \u2192 guard + tackle gap runs (interior). Center \u2192 middle + guard-gap runs from both sides.",
+      "limits": "Team-level \u2014 RB and play-calling contribute. But position-specific gaps isolate the tackle's outside blocking from the guard's interior blocking."
+    },
+    "pos_run_success_z": {
+      "what": "Success rate on position-specific gap runs",
+      "how": "% of position-attributed runs gaining positive EPA.",
+      "limits": "Same team-level caveats. 70% of runs have gap data."
+    },
+    "pos_run_explosive_z": {
+      "what": "Rate of 10+ yard runs through position-specific gaps",
+      "how": "% of position-attributed runs gaining 10+ yards. Captures big-play creation.",
+      "limits": "Requires both blocking and RB quality. Tackles naturally see more explosives on outside runs."
+    },
+    "team_sack_rate_z": {
+      "what": "Team sack rate \u2014 fewer sacks = better",
+      "how": "Sacks / dropbacks. Inverted.",
+      "limits": "All 5 OL + QB contribute."
+    },
+    "team_pressure_rate_z": {
+      "what": "Team pressure rate \u2014 less pressure = better",
+      "how": "(Sacks + QB hits) / dropbacks. Inverted.",
+      "limits": "Team-level."
+    },
+    "penalty_rate_z": {
+      "what": "Penalties per snap \u2014 fewer = better",
+      "how": "OL penalties / offensive snaps. Inverted.",
+      "limits": "Doesn't distinguish costly vs trivial."
+    },
+    "penalty_epa_per_game_z": {
+      "what": "Penalty EPA cost per game \u2014 less damage = better",
+      "how": "EPA on penalty plays / games. Inverted.",
+      "limits": "Captures actual game impact."
+    },
+    "snap_share_z": {
+      "what": "Share of team's max OL snaps played",
+      "how": "Player snaps / highest OL snap count on team.",
+      "limits": "Durability measure."
+    }
+  }
+}
