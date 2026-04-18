@@ -176,12 +176,12 @@ else:
 st.markdown("### Who's in the pool?")
 st.caption("All Lions LBs with 25+ defensive snaps in 2024. Z-scores computed against all LBs league-wide (200+ snaps).")
 lbs = df.copy()
-if len(des) == 0: st.warning("No LBs found."); st.stop()
-lbs = score_players(des, effective_weights)
+if len(lbs) == 0: st.warning("No LBs found."); st.stop()
+lbs = score_players(lbs, effective_weights)
 total_weight = sum(effective_weights.values())
 if total_weight == 0: st.info("All weights are zero — drag some sliders.")
 lbs = lbs.sort_values("score", ascending=False).reset_index(drop=True)
-des.index = des.index + 1
+lbs.index = lbs.index + 1
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.subheader("Ranking")
