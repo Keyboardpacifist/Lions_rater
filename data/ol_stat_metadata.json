@@ -1,0 +1,106 @@
+{
+  "stat_tiers": {
+    "pos_run_epa_z": 2,
+    "pos_run_success_z": 2,
+    "pos_run_explosive_z": 2,
+    "sg_run_epa_z": 2,
+    "sg_run_success_z": 2,
+    "sg_run_explosive_z": 2,
+    "uc_run_epa_z": 2,
+    "uc_run_success_z": 2,
+    "uc_run_explosive_z": 2,
+    "team_sack_rate_z": 2,
+    "team_pressure_rate_z": 2,
+    "penalty_rate_z": 2,
+    "penalty_epa_per_game_z": 2,
+    "snap_share_z": 1
+  },
+  "stat_labels": {
+    "pos_run_epa_z": "Run EPA (overall)",
+    "pos_run_success_z": "Run success rate (overall)",
+    "pos_run_explosive_z": "Explosive run rate (overall)",
+    "sg_run_epa_z": "Shotgun run EPA",
+    "sg_run_success_z": "Shotgun run success rate",
+    "sg_run_explosive_z": "Shotgun explosive rate",
+    "uc_run_epa_z": "Under center run EPA",
+    "uc_run_success_z": "Under center run success rate",
+    "uc_run_explosive_z": "Under center explosive rate",
+    "team_sack_rate_z": "Team sack rate (inverted)",
+    "team_pressure_rate_z": "Team pressure rate (inverted)",
+    "penalty_rate_z": "Penalty rate (inverted)",
+    "penalty_epa_per_game_z": "Penalty EPA cost/game (inverted)",
+    "snap_share_z": "Snap share"
+  },
+  "stat_methodology": {
+    "pos_run_epa_z": {
+      "what": "EPA on position-specific gap runs (scrambles excluded)",
+      "how": "Tackles \u2192 end-gap. Guards \u2192 guard+tackle gap. Center \u2192 guard-gap+middle. QB scrambles filtered out. Z-scored within position group.",
+      "limits": "Team-level. Position-group z-scoring ensures fair comparison."
+    },
+    "pos_run_success_z": {
+      "what": "Success rate on position-specific runs",
+      "how": "% gaining positive EPA. Z-scored within position group.",
+      "limits": "Team-level."
+    },
+    "pos_run_explosive_z": {
+      "what": "Explosive rate (10+ yds) on position-specific runs",
+      "how": "Z-scored within position group.",
+      "limits": "Tackles naturally see more explosives on outside runs \u2014 position-group z-scoring accounts for this."
+    },
+    "sg_run_epa_z": {
+      "what": "EPA on position-specific runs from shotgun formation",
+      "how": "Shotgun runs through this position's gaps. Captures outside zone and spread run game. Z-scored within position group.",
+      "limits": "Smaller sample than overall. Requires 10+ shotgun runs to qualify."
+    },
+    "sg_run_success_z": {
+      "what": "Success rate on shotgun runs",
+      "how": "Z-scored within position group.",
+      "limits": "Sample size."
+    },
+    "sg_run_explosive_z": {
+      "what": "Explosive rate on shotgun runs",
+      "how": "Z-scored within position group.",
+      "limits": "Sample size."
+    },
+    "uc_run_epa_z": {
+      "what": "EPA on position-specific runs from under center",
+      "how": "Under center runs through this position's gaps. Captures power, counter, and gap scheme. Z-scored within position group.",
+      "limits": "Smaller sample. Requires 10+ under-center runs."
+    },
+    "uc_run_success_z": {
+      "what": "Success rate on under center runs",
+      "how": "Z-scored within position group.",
+      "limits": "Sample size."
+    },
+    "uc_run_explosive_z": {
+      "what": "Explosive rate on under center runs",
+      "how": "Z-scored within position group.",
+      "limits": "Sample size."
+    },
+    "team_sack_rate_z": {
+      "what": "Team sack rate \u2014 fewer sacks = better",
+      "how": "Sacks / dropbacks. Inverted. Z-scored against all OL.",
+      "limits": "All 5 OL + QB contribute."
+    },
+    "team_pressure_rate_z": {
+      "what": "Team pressure rate \u2014 less pressure = better",
+      "how": "(Sacks + QB hits) / dropbacks. Inverted.",
+      "limits": "Team-level."
+    },
+    "penalty_rate_z": {
+      "what": "Penalties per snap \u2014 fewer = better",
+      "how": "Inverted.",
+      "limits": "Doesn't distinguish costly vs trivial."
+    },
+    "penalty_epa_per_game_z": {
+      "what": "Penalty EPA cost per game \u2014 less damage = better",
+      "how": "Inverted.",
+      "limits": "Captures actual game impact."
+    },
+    "snap_share_z": {
+      "what": "Share of team's max OL snaps",
+      "how": "Durability measure.",
+      "limits": "Benched = same as injured."
+    }
+  }
+}
