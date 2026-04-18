@@ -1,0 +1,57 @@
+{
+  "stat_tiers": {
+    "solo_tackle_rate_z": 2,
+    "tackles_per_snap_z": 2,
+    "forced_fumbles_per_game_z": 2,
+    "passes_defended_per_game_z": 1,
+    "interceptions_per_game_z": 1,
+    "tfl_per_game_z": 2,
+    "sacks_per_game_z": 1
+  },
+  "stat_labels": {
+    "solo_tackle_rate_z": "Solo tackle rate",
+    "tackles_per_snap_z": "Tackles per snap",
+    "forced_fumbles_per_game_z": "Forced fumbles/game",
+    "passes_defended_per_game_z": "Passes defended/game",
+    "interceptions_per_game_z": "Interceptions/game",
+    "tfl_per_game_z": "TFLs per game",
+    "sacks_per_game_z": "Sacks per game"
+  },
+  "stat_methodology": {
+    "solo_tackle_rate_z": {
+      "what": "Solo tackles as % of total",
+      "how": "Solo / total. Z-scored vs 2024 safeties.",
+      "limits": "Box safeties naturally tackle more."
+    },
+    "tackles_per_snap_z": {
+      "what": "Tackles per snap",
+      "how": "Tackles / snaps.",
+      "limits": "High rates can mean poor coverage forcing more tackles."
+    },
+    "forced_fumbles_per_game_z": {
+      "what": "Forced fumbles per game",
+      "how": "FF / games.",
+      "limits": "Very rare."
+    },
+    "passes_defended_per_game_z": {
+      "what": "Passes defended per game",
+      "how": "PD / games.",
+      "limits": "Key coverage stat."
+    },
+    "interceptions_per_game_z": {
+      "what": "Interceptions per game",
+      "how": "INT / games.",
+      "limits": "Free safeties get more opportunities."
+    },
+    "tfl_per_game_z": {
+      "what": "TFLs per game",
+      "how": "TFLs / games.",
+      "limits": "Box safeties shine here."
+    },
+    "sacks_per_game_z": {
+      "what": "Sacks per game",
+      "how": "Sacks / games.",
+      "limits": "Blitzing safeties only."
+    }
+  }
+}
