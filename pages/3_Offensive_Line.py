@@ -1,866 +1,309 @@
 """
-Lions Offensive Line Rater
-==========================
-Tier-based slider UI for OL rankings, with save/load/browse community
-algorithms scoped to position_group='ol'.
-
-Layout matches the Receivers and Running Backs pages: ranking table at the
-top, then team context banner, then player detail, then community section.
+Lions Offensive Line Rater v2
+===============================
+2024 season data, z-scored against all 2024 starting OL league-wide.
+Position-specific run attribution: tackles get outside/end-gap runs,
+guards get interior gaps, center gets middle runs.
+8 stats across 3 bundles.
 """
 
-from pathlib import Path
 import json
+from pathlib import Path
 import pandas as pd
+import polars as pl
 import streamlit as st
 import plotly.graph_objects as go
 from scipy.stats import norm
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
 
-from lib_shared import (
-    apply_algo_weights,
-    community_section,
-    compute_effective_weights,
-    inject_css,
-    score_players,
-)
-
-# ============================================================
-# Page config
-# ============================================================
-st.set_page_config(
-    page_title="Lions Offensive Line Rater",
-    page_icon="🦁",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="Lions OL Rater", page_icon="🦁", layout="wide", initial_sidebar_state="expanded")
 inject_css()
 
 POSITION_GROUP = "ol"
 PAGE_URL = "https://lions-rater.streamlit.app/Offensive_Line"
+DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_ol_with_z_v2.parquet"
+METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "ol_stat_metadata_v2.json"
 
-DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_ol_with_z.parquet"
-METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "ol_stat_metadata.json"
+@st.cache_data
+def load_ol_data(): return pl.read_parquet(DATA_PATH).to_pandas()
+@st.cache_data
+def load_ol_metadata():
+    if not METADATA_PATH.exists(): return {}
+    with open(METADATA_PATH) as f: return json.load(f)
 
+RAW_COL_MAP = {
+    "pos_run_epa_z": "pos_run_epa",
+    "pos_run_success_z": "pos_run_success",
+    "pos_run_explosive_z": "pos_run_explosive",
+    "team_sack_rate_z": "team_sack_rate",
+    "team_pressure_rate_z": "team_pressure_rate",
+    "penalty_rate_z": "penalty_rate",
+    "penalty_epa_per_game_z": "penalty_epa_per_game",
+    "snap_share_z": "snap_share",
+}
 
-# ============================================================
-# Bundle definitions
-# ============================================================
-OL_BUNDLES = {
+BUNDLES = {
     "run_blocking": {
-        "label": "Run blocking",
-        "description": "Creates space on running plays.",
-        "stats": {
-            "z_gap_success_rate": 1.0,
-            "z_gap_epa_per_play": 1.0,
-            "z_garsr": 1.0,
-            "z_rb_adjusted_gap_epa": 1.0,
-            "z_explosive_enablement": 1.0,
-        },
+        "label": "🏃 Run blocking",
+        "description": "How well the run game works through this lineman's position-specific gaps. Tackles are measured on outside/end runs, guards on interior gaps, center on middle runs.",
+        "stats": {"pos_run_epa_z": 0.35, "pos_run_success_z": 0.30, "pos_run_explosive_z": 0.35},
     },
     "pass_protection": {
-        "label": "Pass protection",
-        "description": "Keeps the QB upright.",
-        "stats": {
-            "z_on_off_sack_rate_diff": 1.0,
-        },
+        "label": "🛡️ Pass protection",
+        "description": "Team sack rate and pressure rate. Lower = better. All 5 OL contribute, but elite linemen correlate with low team pressure.",
+        "stats": {"team_sack_rate_z": 0.55, "team_pressure_rate_z": 0.45},
     },
     "discipline": {
-        "label": "Discipline",
-        "description": "Avoids costly penalties.",
-        "stats": {
-            "z_penalties_total": 1.0,
-            "z_penalty_rate": 1.0,
-            "z_penalty_leverage_cost": 1.0,
-        },
-    },
-    "availability": {
-        "label": "Availability",
-        "description": "On the field when it matters.",
-        "stats": {
-            "z_snaps_played": 1.0,
-            "z_availability_index": 1.0,
-        },
-    },
-    "experimental": {
-        "label": "Experimental",
-        "description": "Speculative stats — use with skepticism.",
-        "stats": {
-            "z_mobility_index": 1.0,
-            "z_leverage_rating": 1.0,
-            "z_pass_run_balance": 1.0,
-        },
+        "label": "⚖️ Discipline & durability",
+        "description": "Avoids penalties, minimizes penalty damage, and stays on the field.",
+        "stats": {"penalty_rate_z": 0.30, "penalty_epa_per_game_z": 0.30, "snap_share_z": 0.40},
     },
 }
+DEFAULT_BUNDLE_WEIGHTS = {"run_blocking": 60, "pass_protection": 50, "discipline": 30}
 
-DEFAULT_BUNDLE_WEIGHTS = {
-    "run_blocking": 60,
-    "pass_protection": 50,
-    "discipline": 30,
-    "availability": 20,
-    "experimental": 0,
-}
-
-# Methodology — per-stat What/How/Limits used in Advanced mode tooltips
-OL_METHODOLOGY = {
-    "z_snaps_played": {
-        "what": "Total offensive snaps played in the season.",
-        "how": "Sum of offense_snaps from nflverse snap counts.",
-        "limits": "Doesn't distinguish run from pass snaps.",
-    },
-    "z_penalties_total": {
-        "what": "Count of offensive penalties charged to this player.",
-        "how": "Filter PBP where penalty_player_name matches, restricted to OL penalty types.",
-        "limits": "Raw counts ignore context — a holding wiping out 40 yards counts the same as one on a 2-yard loss. Penalty Leverage Cost addresses this.",
-    },
-    "z_penalty_rate": {
-        "what": "Penalties per offensive snap.",
-        "how": "Total penalties divided by offense snaps.",
-        "limits": "Season-rate smoothing means one bad game can move the number meaningfully.",
-    },
-    "z_gap_success_rate": {
-        "what": "Success rate on runs through this lineman's assigned gap.",
-        "how": "Filter Lions runs to the gap owned by this player's position (strict attribution), then take the mean of nflverse's built-in 'success' field.",
-        "limits": "Gap attribution is approximate — linemen pull and combo-block on plays the play-by-play doesn't know about. Guards get smaller samples because most interior runs get coded as 'middle' rather than 'guard'.",
-    },
-    "z_gap_epa_per_play": {
-        "what": "Average Expected Points Added on runs through this lineman's gap.",
-        "how": "Mean of nflverse EPA on gap-attributed plays.",
-        "limits": "Same gap attribution caveats as Gap Success Rate.",
-    },
-    "z_availability_index": {
-        "what": "Share of team snaps played, weighted by games played.",
-        "how": "(player_snaps / max_possible_snaps) × (games_played / 17)",
-        "limits": "A player benched for performance looks the same as one benched for injury.",
-    },
-    "z_garsr": {
-        "what": "Gap Run Success Rate adjusted for situational difficulty.",
-        "how": "Actual gap success rate minus predicted success rate from a league-wide linear regression (features: down, distance, yardline, gap, location).",
-        "limits": "The baseline model is deliberately simple for transparency. R² ~0.04 because run success is inherently noisy.",
-    },
-    "z_rb_adjusted_gap_epa": {
-        "what": "Gap EPA minus what you'd expect from the backs who ran through it.",
-        "how": "For each gap run, compute (actual EPA) - (that rusher's season average EPA per carry). Average the residuals.",
-        "limits": "Adjusts for rusher quality but not for situational mix.",
-    },
-    "z_penalty_leverage_cost": {
-        "what": "Total EPA cost of penalties committed by this player.",
-        "how": "Sum the nflverse EPA value on each penalty play attributed to the player.",
-        "limits": "Leverage weighting is a methodological choice — some analysts think it mixes talent measurement with clutch narrative.",
-    },
-    "z_explosive_enablement": {
-        "what": "Rate of 15+ yard runs through this gap, relative to league baseline.",
-        "how": "Percent of gap runs gaining 15+ yards, minus the same rate for comparable league-wide runs.",
-        "limits": "Explosive runs require the line AND the back. Separating 'line sprung it' from 'back made it' is fundamentally hard.",
-    },
-    "z_on_off_sack_rate_diff": {
-        "what": "Team sack rate when this player was out of the lineup vs. in the lineup.",
-        "how": "(sack rate in games they missed) - (sack rate in games they played). Positive = team was sacked more often without them.",
-        "limits": "Game-level, not play-level. NaN for players who didn't miss any games. Small samples for players who missed only 1-2 games.",
-    },
-    "z_mobility_index": {
-        "what": "EXPERIMENTAL. Rough inference of pulling success for guards.",
-        "how": "Success rate on runs to the opposite side of where the guard lines up, minus success rate on same-side runs.",
-        "limits": "We can't actually see which plays involved pulls. This uses direction as a noisy proxy.",
-    },
-    "z_leverage_rating": {
-        "what": "EXPERIMENTAL. Gap run EPA weighted by each play's win probability impact.",
-        "how": "sum(EPA × |WPA|) / sum(|WPA|). Plays in close games get weighted more than blowouts.",
-        "limits": "Leverage weighting is philosophically contested.",
-    },
-    "z_pass_run_balance": {
-        "what": "EXPERIMENTAL. Whether this player is better at pass protection or run blocking.",
-        "how": "z-score of Pass Pro On/Off Split minus z-score of Gap Run Success Rate.",
-        "limits": "Derived from other stats, so it inherits all their weaknesses.",
-    },
-}
-
-
-# ============================================================
-# Radar chart config — 8 headline stats, fixed across users
-# ============================================================
-# Mix of run blocking, pass protection, discipline, and availability.
-# Penalty rate is INVERTED on the radar so higher = fewer penalties = "Discipline".
-RADAR_STATS = [
-    "z_gap_success_rate",        # run blocking
-    "z_gap_epa_per_play",        # run blocking quality
-    "z_garsr",                   # adjusted run success
-    "z_rb_adjusted_gap_epa",     # RB-adjusted run blocking
-    "z_explosive_enablement",    # big play creation
-    "z_on_off_sack_rate_diff",   # pass protection
-    "z_penalty_rate",            # discipline (inverted)
-    "z_availability_index",      # durability
-]
-
-# Stats where the z-score needs to be flipped for the radar
-# (high raw value = bad, so we invert so high = good on the chart)
-RADAR_INVERT = {"z_penalty_rate"}
-
-# Custom radar axis labels — override default stat labels for clarity
+RADAR_STATS = ["pos_run_epa_z", "pos_run_success_z", "pos_run_explosive_z", "team_sack_rate_z", "team_pressure_rate_z", "penalty_rate_z", "penalty_epa_per_game_z", "snap_share_z"]
+RADAR_INVERT = set()
 RADAR_LABEL_OVERRIDES = {
-    "z_penalty_rate": "Discipline",
-    "z_on_off_sack_rate_diff": "Pass protection",
+    "pos_run_epa_z": "Run EPA", "pos_run_success_z": "Run success", "pos_run_explosive_z": "Explosive runs",
+    "team_sack_rate_z": "Sack prevention", "team_pressure_rate_z": "Pressure prevention",
+    "penalty_rate_z": "Discipline", "penalty_epa_per_game_z": "Penalty impact", "snap_share_z": "Durability",
 }
-
 
 def zscore_to_percentile(z):
-    """Convert a z-score to a 0-100 percentile via the normal CDF."""
-    if pd.isna(z):
-        return None
+    if pd.isna(z): return None
     return float(norm.cdf(z) * 100)
 
-
 def build_radar_figure(player, stat_labels, stat_methodology):
-    """Return a Plotly polar figure showing this player's percentiles
-    on the RADAR_STATS axes. Missing values are skipped.
-    Stats in RADAR_INVERT have their z-score sign flipped before
-    conversion to percentile.
-    Hovering over a data point shows the stat's 'what' description."""
-    axes = []
-    values = []
-    descriptions = []
+    axes, values, descriptions = [], [], []
     for z_col in RADAR_STATS:
-        if z_col not in player.index:
-            continue
+        if z_col not in player.index: continue
         z = player.get(z_col)
-        if pd.isna(z):
-            continue
-        # Flip inverted stats so higher percentile = better
-        if z_col in RADAR_INVERT:
-            z = -z
+        if pd.isna(z): continue
         pct = zscore_to_percentile(z)
-        # Use override label if available, else fall back to metadata label
         label = RADAR_LABEL_OVERRIDES.get(z_col, stat_labels.get(z_col, z_col))
-        # Use methodology "what", but mention the inversion if relevant
         desc = stat_methodology.get(z_col, {}).get("what", "")
-        if not desc:
-            desc = OL_METHODOLOGY.get(z_col, {}).get("what", "")
-        if z_col in RADAR_INVERT:
-            desc = f"{desc} (Higher on chart = fewer penalties.)"
-        axes.append(label)
-        values.append(pct)
-        descriptions.append(desc)
-
-    if not axes:
-        return None
-
-    # Close the polygon by repeating the first point at the end
-    axes_closed = axes + [axes[0]]
-    values_closed = values + [values[0]]
-    descriptions_closed = descriptions + [descriptions[0]]
-
+        axes.append(label); values.append(pct); descriptions.append(desc)
+    if not axes: return None
     fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(
-        r=values_closed,
-        theta=axes_closed,
-        customdata=descriptions_closed,
-        fill="toself",
-        fillcolor="rgba(31, 119, 180, 0.25)",
-        line=dict(color="rgba(31, 119, 180, 0.9)", width=2),
-        marker=dict(size=6, color="rgba(31, 119, 180, 1)"),
-        hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<br><br><i>%{customdata}</i><extra></extra>",
-    ))
-    fig.update_layout(
-        polar=dict(
-            radialaxis=dict(
-                visible=True,
-                range=[0, 100],
-                tickvals=[25, 50, 75, 100],
-                ticktext=["25", "50", "75", "100"],
-                tickfont=dict(size=9, color="#888"),
-                gridcolor="#ddd",
-            ),
-            angularaxis=dict(
-                tickfont=dict(size=11),
-                gridcolor="#ddd",
-            ),
-            bgcolor="rgba(0,0,0,0)",
-        ),
-        showlegend=False,
-        margin=dict(l=60, r=60, t=20, b=20),
-        height=380,
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
+    fig.add_trace(go.Scatterpolar(r=values+[values[0]], theta=axes+[axes[0]], customdata=descriptions+[descriptions[0]], fill="toself", fillcolor="rgba(31, 119, 180, 0.25)", line=dict(color="rgba(31, 119, 180, 0.9)", width=2), marker=dict(size=6, color="rgba(31, 119, 180, 1)"), hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<br><br><i>%{customdata}</i><extra></extra>"))
+    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100], tickvals=[25, 50, 75, 100], ticktext=["25", "50", "75", "100"], tickfont=dict(size=9, color="#888"), gridcolor="#ddd"), angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"), bgcolor="rgba(0,0,0,0)"), showlegend=False, margin=dict(l=60, r=60, t=20, b=20), height=380, paper_bgcolor="rgba(0,0,0,0)")
     return fig
 
+TIER_LABELS = {1: "Tier 1 — Counted", 2: "Tier 2 — Contextualized", 3: "Tier 3 — Adjusted", 4: "Tier 4 — Inferred"}
+TIER_DESCRIPTIONS = {1: "Pure recorded facts.", 2: "Counts divided by opportunity.", 3: "Compared against a modeled baseline.", 4: "Inferred from patterns. Use with skepticism."}
+def tier_badge(tier): return {1: "🟢", 2: "🔵", 3: "🟡", 4: "🟠"}.get(tier, "⚪")
 
-# ============================================================
-# Data loading
-# ============================================================
-@st.cache_data
-def load_ol_data():
-    if not DATA_PATH.exists():
-        return None, None
-    df = pd.read_parquet(DATA_PATH)
-    meta = {}
-    if METADATA_PATH.exists():
-        with open(METADATA_PATH) as f:
-            meta = json.load(f)
-    return df, meta
-
-
-# ============================================================
-# Tier helpers (matching WR/RB)
-# ============================================================
-TIER_LABELS = {
-    1: "Tier 1 — Counted",
-    2: "Tier 2 — Contextualized",
-    3: "Tier 3 — Adjusted",
-    4: "Tier 4 — Inferred",
-}
-TIER_DESCRIPTIONS = {
-    1: "Pure recorded facts. No modeling.",
-    2: "Counts divided by opportunity. Still no modeling.",
-    3: "Compared against a modeled baseline. Model is simple and visible.",
-    4: "Inferred from patterns the data can't directly see. Use with skepticism.",
-}
-
-
-def tier_badge(tier: int) -> str:
-    return {1: "🟢", 2: "🔵", 3: "🟡", 4: "🟠"}.get(tier, "⚪")
-
-
-def filter_bundles_by_tier(bundles: dict, stat_tiers: dict, enabled_tiers: list) -> dict:
-    """Strip disabled-tier stats out of each bundle. Empty bundles drop out."""
+def filter_bundles_by_tier(bundles, stat_tiers, enabled_tiers):
     filtered = {}
     for bk, bdef in bundles.items():
-        kept_stats = {
-            z: w for z, w in bdef["stats"].items()
-            if stat_tiers.get(z, 1) in enabled_tiers
-        }
-        if kept_stats:
-            filtered[bk] = {
-                "label": bdef["label"],
-                "description": bdef["description"],
-                "stats": kept_stats,
-            }
+        kept = {z: w for z, w in bdef["stats"].items() if stat_tiers.get(z, 2) in enabled_tiers}
+        if kept: filtered[bk] = {"label": bdef["label"], "description": bdef["description"], "stats": kept}
     return filtered
 
-
-def bundle_tier_summary(bundle_stats: dict, stat_tiers: dict) -> str:
+def bundle_tier_summary(bundle_stats, stat_tiers):
     counts = {}
-    for z in bundle_stats:
-        t = stat_tiers.get(z, 1)
-        counts[t] = counts.get(t, 0) + 1
+    for z in bundle_stats: t = stat_tiers.get(z, 2); counts[t] = counts.get(t, 0) + 1
     return " ".join(f"{tier_badge(t)}×{c}" for t, c in sorted(counts.items()))
 
-
-# ============================================================
-# Score labels (matching WR/RB)
-# ============================================================
 def score_label(score):
-    if pd.isna(score):
-        return "—"
-    if score >= 1.0:
-        return "well above group"
-    if score >= 0.4:
-        return "above group"
-    if score >= -0.4:
-        return "about average"
-    if score >= -1.0:
-        return "below group"
+    if pd.isna(score): return "—"
+    if score >= 1.0: return "well above group"
+    if score >= 0.4: return "above group"
+    if score >= -0.4: return "about average"
+    if score >= -1.0: return "below group"
     return "well below group"
 
-
 def format_score(score):
-    if pd.isna(score):
-        return "—"
+    if pd.isna(score): return "—"
     sign = "+" if score >= 0 else ""
     return f"{sign}{score:.2f} ({score_label(score)})"
 
-
-def sample_size_badge(pct: float) -> str:
-    """Return an emoji badge for sample size as a % of group leader.
-    🔴 severe (<20%), 🟡 caution (20–50%), '' otherwise."""
-    if pd.isna(pct):
-        return ""
-    if pct < 20:
-        return "🔴"
-    if pct < 50:
-        return "🟡"
+def sample_size_badge(snaps):
+    if pd.isna(snaps): return ""
+    if snaps < 400: return "🔴"
+    if snaps < 800: return "🟡"
     return ""
 
-
-def sample_size_caption(pct: float) -> str:
-    """Plain-English caption for sample size warning, or empty string."""
-    if pd.isna(pct):
-        return ""
-    if pct < 20:
-        return f"⚠️ Severe small sample: {pct:.0f}% of group leader's snaps. Treat as directional only."
-    if pct < 50:
-        return f"⚠️ Small sample: {pct:.0f}% of group leader's snaps. Score may be noisy."
+def sample_size_caption(snaps):
+    if pd.isna(snaps): return ""
+    if snaps < 400: return f"⚠️ Only {int(snaps)} snaps. Small sample — treat as directional only."
+    if snaps < 800: return f"⚠️ {int(snaps)} snaps. Moderate sample — scores may be noisy."
     return ""
 
+POSITION_LABELS = {"LT": "Left Tackle", "LG": "Left Guard", "C": "Center", "RG": "Right Guard", "RT": "Right Tackle"}
 
 SCORE_EXPLAINER = """
-**What this number means.** The score is a weighted average of z-scores —
-standardized stats where 0 is the group average, +1 is one standard
-deviation above, and −1 is one standard deviation below. Your slider
-weights control how much each bundle contributes.
+**What this number means.** Weighted average of z-scores — 0 is league-average starting OL, +1 is one SD above, −1 is one SD below.
 
-**How to read it:**
-- `+1.0` or higher → well above the group average on what you weighted
-- `+0.4` to `+1.0` → above average
-- `−0.4` to `+0.4` → roughly average
-- `−1.0` or lower → well below average
+**How to read it:** `+1.0` or higher → well above average • `+0.4` to `+1.0` → above average • `−0.4` to `+0.4` → roughly average • `−1.0` or lower → well below average
 
-**What this is not.** It's not a PFF-style 0-100 grade. It's a
-**comparative** number telling you how the Lions starters stack up
-against each other under the methodology *you* chose.
+**Position-specific run blocking.** Unlike most OL tools, this page attributes runs to the correct lineman based on gap:
+- **Tackles** are measured on outside/end-gap runs (sweeps, outside zone, tosses) — where their reach blocking and athleticism matter most.
+- **Guards** are measured on interior guard + tackle gap runs — their combo blocks and short pulls.
+- **Center** is measured on middle runs plus guard-gap runs from both sides.
 
-**Pass protection limitation.** Pass protection is genuinely harder to
-measure from free data than run blocking. The pass-protection bundle
-relies on a single game-level on/off split, while the run-blocking
-bundle has five complementary stats. Treat the pass-protection
-contribution accordingly.
+This means a tackle's explosive run rate measures HIS outside blocking, not the whole side's production.
 
-**Small-sample warning.** Scores here are computed within the Lions
-starting five (n=5), so distributions are noisy and a player's "+1.0"
-means one SD above the other Lions starters, not one SD above NFL
-starting OL. Treat directional differences seriously, but don't over-read
-small gaps. (League-wide z-scores for OL are on the project's roadmap.)
+**Pass protection limitation.** Sack rate and pressure rate are team-level — we can't isolate which lineman allowed the pressure from free data. But elite OL correlate with low team pressure rates.
+
+**Inverted stats.** Sack rate, pressure rate, penalty rate, and penalty EPA are inverted so positive z always = good.
 """
 
+if "ol_loaded_algo" not in st.session_state: st.session_state.ol_loaded_algo = None
+if "upvoted_ids" not in st.session_state: st.session_state.upvoted_ids = set()
+if "ol_tiers_enabled" not in st.session_state: st.session_state.ol_tiers_enabled = [1, 2]
 
-# ============================================================
-# Session state
-# ============================================================
-if "ol_loaded_algo" not in st.session_state:
-    st.session_state.ol_loaded_algo = None
-if "upvoted_ids" not in st.session_state:
-    st.session_state.upvoted_ids = set()
-if "ol_tiers_enabled" not in st.session_state:
-    st.session_state.ol_tiers_enabled = [1, 2, 3]  # Tier 4 off by default
-
-
-# ============================================================
-# Header
-# ============================================================
 st.title("🦁 Lions Offensive Line Rater")
-st.markdown(
-    "**Build your own algorithm.** Drag the sliders to weight what you "
-    "value, and watch the Lions starting five re-rank in real time. "
-    "_No 'best lineman' — just **your** best lineman._"
-)
-st.caption(
-    "2024 regular season • Compared within the Lions starting five • "
-    "Transparency-first: every stat has a methodology popover"
-)
+st.markdown("**Build your own algorithm.** Drag the sliders to weight what you value, and watch the Lions starting five re-rank in real time. _No 'best lineman' — just **your** best lineman._")
+st.caption("2024 regular season • Z-scores vs all 153 starting OL league-wide • Position-specific run gap attribution")
 
+try: df = load_ol_data()
+except FileNotFoundError: st.error(f"Couldn't find OL data at {DATA_PATH}."); st.stop()
 
-# ============================================================
-# Load data
-# ============================================================
-df, meta = load_ol_data()
-if df is None:
-    st.error(f"OL data not found at {DATA_PATH}")
-    st.caption(
-        "Run the data-pull notebook and upload the parquet + metadata "
-        "files to `data/` in the repo."
-    )
-    st.stop()
+meta = load_ol_metadata()
+stat_tiers = meta.get("stat_tiers", {}); stat_labels = meta.get("stat_labels", {}); stat_methodology = meta.get("stat_methodology", {})
 
-stat_tiers = meta.get("stat_tiers", {}) if meta else {}
-stat_labels = meta.get("stat_labels", {}) if meta else {}
-ctx = meta.get("team_context", {}) if meta else {}
+if "algo" in st.query_params and st.session_state.ol_loaded_algo is None:
+    linked = get_algorithm_by_slug(st.query_params["algo"])
+    if linked and linked.get("position_group") == POSITION_GROUP: apply_algo_weights(linked, BUNDLES); st.rerun()
 
-
-# ============================================================
-# Loaded algorithm indicator (sidebar to match WR/RB)
-# ============================================================
-if st.session_state.ol_loaded_algo:
-    la = st.session_state.ol_loaded_algo
-    st.sidebar.info(
-        f"Loaded: **{la['name']}** by {la['author']}\n\n"
-        f"_{la.get('description', '')}_"
-    )
-    if st.sidebar.button("Clear loaded algorithm"):
-        st.session_state.ol_loaded_algo = None
-
-
-# ============================================================
-# Sidebar — Advanced mode toggle (matching WR/RB)
-# ============================================================
+st.sidebar.header("Filters")
 st.sidebar.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-advanced_mode = st.sidebar.toggle(
-    "🔬 Advanced mode", value=False,
-    key="ol_advanced_mode",
-    help="Show individual stat sliders with methodology tooltips instead of plain-English bundles.",
-)
-
+advanced_mode = st.sidebar.toggle("🔬 Advanced mode", value=False, help="Show individual stat sliders.")
 st.sidebar.header("What do you value?")
 
+if st.session_state.ol_loaded_algo:
+    la = st.session_state.ol_loaded_algo
+    st.sidebar.info(f"Loaded: **{la['name']}** by {la['author']}\n\n_{la.get('description', '')}_")
+    if st.sidebar.button("Clear loaded algorithm"): st.session_state.ol_loaded_algo = None
 
-# ============================================================
-# Tier filter (main content area)
-# ============================================================
 st.markdown("### How speculative do you want to get?")
-st.caption(
-    "Each stat is labeled by how much trust it asks from you. "
-    "Uncheck tiers you don't want to include. Philosophy in a checkbox."
-)
+st.caption("Each stat is labeled by how much trust it asks from you.")
 tier_cols = st.columns(4)
 new_enabled = []
 for i, tier in enumerate([1, 2, 3, 4]):
     with tier_cols[i]:
-        checked = st.checkbox(
-            f"{tier_badge(tier)} {TIER_LABELS[tier]}",
-            value=(tier in st.session_state.ol_tiers_enabled),
-            help=TIER_DESCRIPTIONS[tier],
-            key=f"ol_tier_checkbox_{tier}",
-        )
-        if checked:
-            new_enabled.append(tier)
+        checked = st.checkbox(f"{tier_badge(tier)} {TIER_LABELS[tier]}", value=(tier in st.session_state.ol_tiers_enabled), help=TIER_DESCRIPTIONS[tier], key=f"ol_tier_checkbox_{tier}")
+        if checked: new_enabled.append(tier)
 st.session_state.ol_tiers_enabled = new_enabled
-
-if not new_enabled:
-    st.warning("Enable at least one tier to see ratings.")
-    st.stop()
-
-active_bundles = filter_bundles_by_tier(OL_BUNDLES, stat_tiers, new_enabled)
-
+if not new_enabled: st.warning("Enable at least one tier."); st.stop()
+active_bundles = filter_bundles_by_tier(BUNDLES, stat_tiers, new_enabled)
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-
-# ============================================================
-# Sliders (in sidebar to match WR/RB)
-# ============================================================
-bundle_weights = {}
-effective_weights = {}
-
+bundle_weights = {}; effective_weights = {}
 if not advanced_mode:
-    if not active_bundles:
-        st.info("No bundles have stats in the enabled tiers. Try enabling more tiers.")
-        st.stop()
-
+    if not active_bundles: st.info("No bundles in enabled tiers."); st.stop()
     st.sidebar.caption("Drag to weight what matters to you. 0 = ignore, 100 = max.")
     for bk, bundle in active_bundles.items():
         tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
         st.sidebar.markdown(f"**{bundle['label']}**")
-        st.sidebar.markdown(
-            f"<div class='bundle-desc'>{bundle['description']}<br>"
-            f"<small>{tier_summary}</small></div>",
-            unsafe_allow_html=True,
-        )
-        if f"ol_bundle_{bk}" not in st.session_state:
-            st.session_state[f"ol_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
-        bundle_weights[bk] = st.sidebar.slider(
-            bundle["label"], 0, 100,
-            step=5,
-            key=f"ol_bundle_{bk}",
-            label_visibility="collapsed",
-        )
-    # Bundles not currently active still need a zero entry for save
-    for bk in OL_BUNDLES:
-        if bk not in bundle_weights:
-            bundle_weights[bk] = 0
+        st.sidebar.markdown(f"<div class='bundle-desc'>{bundle['description']}<br><small>{tier_summary}</small></div>", unsafe_allow_html=True)
+        if f"ol_bundle_{bk}" not in st.session_state: st.session_state[f"ol_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
+        bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"ol_bundle_{bk}", label_visibility="collapsed")
+    for bk in BUNDLES:
+        if bk not in bundle_weights: bundle_weights[bk] = 0
     effective_weights = compute_effective_weights(active_bundles, bundle_weights)
 else:
-    st.sidebar.caption(
-        "Direct control over every underlying stat. Hover the ⓘ icon next to "
-        "each slider for methodology."
-    )
-    st.sidebar.markdown(
-        "<div style='display:flex;justify-content:space-between;font-size:0.75rem;color:#888;margin-bottom:-0.5rem'>"
-        "<span>\u2190 Low priority</span><span>High priority \u2192</span></div>",
-        unsafe_allow_html=True,
-    )
-    # Collect all active stats across bundles
-    all_active_stats = set()
-    for bdef in active_bundles.values():
-        all_active_stats.update(bdef["stats"].keys())
+    st.sidebar.caption("Direct control over every stat.")
+    st.sidebar.markdown("<div style='display:flex;justify-content:space-between;font-size:0.75rem;color:#888;margin-bottom:-0.5rem'><span>\u2190 Low priority</span><span>High priority \u2192</span></div>", unsafe_allow_html=True)
+    all_enabled_stats = sorted([z for z, t in stat_tiers.items() if t in new_enabled], key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z)))
+    for z_col in all_enabled_stats:
+        tier = stat_tiers.get(z_col, 2); label = stat_labels.get(z_col, z_col); meth = stat_methodology.get(z_col, {}); help_parts = []
+        if meth.get("what"): help_parts.append(f"What: {meth['what']}")
+        if meth.get("how"): help_parts.append(f"How: {meth['how']}")
+        if meth.get("limits"): help_parts.append(f"Limits: {meth['limits']}")
+        w = st.sidebar.slider(f"{tier_badge(tier)} {label}", 0, 100, 50, 5, key=f"adv_ol_{z_col}", help="\n\n".join(help_parts) if help_parts else None)
+        if w > 0: effective_weights[z_col] = w
+    bundle_weights = {bk: 0 for bk in BUNDLES}
 
-    # Sort by tier then by label
-    sorted_stats = sorted(
-        all_active_stats,
-        key=lambda s: (stat_tiers.get(s, 1), stat_labels.get(s, s)),
-    )
+st.markdown("### Who's in the pool?")
+st.caption("Lions 2024 starting offensive linemen. Z-scores computed against all 153 qualified starting OL league-wide. Position-specific gap attribution for run blocking.")
+ol = df.copy()
+if len(ol) == 0: st.warning("No OL found."); st.stop()
 
-    for stat in sorted_stats:
-        tier = stat_tiers.get(stat, 1)
-        label = stat_labels.get(stat, stat)
-        meth = OL_METHODOLOGY.get(stat, {})
+ol = score_players(ol, effective_weights)
+total_weight = sum(effective_weights.values())
+if total_weight == 0: st.info("All weights are zero — drag some sliders.")
+ol = ol.sort_values("score", ascending=False).reset_index(drop=True)
+ol.index = ol.index + 1
 
-        # Build a rich help tooltip
-        help_parts = []
-        if meth.get("what"):
-            help_parts.append(f"What: {meth['what']}")
-        if meth.get("how"):
-            help_parts.append(f"How: {meth['how']}")
-        if meth.get("limits"):
-            help_parts.append(f"Limits: {meth['limits']}")
-        help_text = "\n\n".join(help_parts) if help_parts else None
-
-        w = st.sidebar.slider(
-            f"{tier_badge(tier)} {label}",
-            min_value=0, max_value=100, value=50, step=5,
-            key=f"ol_stat_{stat}",
-            help=help_text,
-        )
-        if w > 0:
-            effective_weights[stat] = w
-
-    # For save compatibility — advanced mode doesn't save, but community_section
-    # expects bundle_weights to exist
-    bundle_weights = {bk: 0 for bk in OL_BUNDLES}
-
-
-# ============================================================
-# Score and ranking
-# ============================================================
-scored = score_players(df, effective_weights)
-scored_sorted = scored.sort_values("score", ascending=False).reset_index(drop=True)
-scored_sorted.index = scored_sorted.index + 1
-
-# Compute sample size as % of group leader's snaps
-if "snaps_played" in scored_sorted.columns:
-    max_snaps_ol = scored_sorted["snaps_played"].fillna(0).max()
-    if max_snaps_ol > 0:
-        scored_sorted["sample_pct"] = (scored_sorted["snaps_played"].fillna(0) / max_snaps_ol) * 100
-    else:
-        scored_sorted["sample_pct"] = 0
-else:
-    scored_sorted["sample_pct"] = 100  # No snap data — assume fine
-
+st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.subheader("Ranking")
+ranked = ol.copy()
 
-# Hide-small-samples checkbox
-hide_small = st.checkbox(
-    "Hide players with severe small samples (<20% of group leader's snaps)",
-    value=False,
-    key="ol_hide_small",
-    help="Hides red-flagged players. Yellow-flagged players still show with a caution.",
-)
-
-ranked = scored_sorted.copy()
-if hide_small:
-    ranked = ranked[ranked["sample_pct"] >= 20].copy()
-    if len(ranked) == 0:
-        st.warning("All linemen are below 20% sample size. Uncheck the filter to see them.")
-        st.stop()
-    ranked = ranked.sort_values("score", ascending=False).reset_index(drop=True)
-    ranked.index = ranked.index + 1
-
-# Top-ranked highlight banner
 if len(ranked) > 0:
     top = ranked.iloc[0]
-    top_name = top.get("player", "—")
-    top_slot = top.get("slot", "") if pd.notna(top.get("slot")) else ""
-    top_score = top["score"]
-    top_pct = top.get("sample_pct", 100)
-    badge = sample_size_badge(top_pct)
-    if pd.notna(top_score):
-        sign = "+" if top_score >= 0 else ""
-        slot_part = f" ({top_slot})" if top_slot else ""
-        st.markdown(
-            f"<div style='background:#0076B6;color:white;padding:14px 20px;"
-            f"border-radius:8px;margin-bottom:8px;font-size:1.1rem;'>"
-            f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span>"
-            f" &nbsp;·&nbsp; <strong>{top_name}</strong>{slot_part} {badge}"
-            f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span>"
-            f" <span style='opacity:0.85;'>({score_label(top_score)})</span>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-        warn = sample_size_caption(top_pct)
-        if warn:
-            st.warning(warn)
+    top_name = top.get("full_name", "—"); top_pos = POSITION_LABELS.get(top.get("depth_position", ""), "")
+    top_score = top["score"]; top_snaps = top.get("off_snaps", 0)
+    badge = sample_size_badge(top_snaps); sign = "+" if top_score >= 0 else ""
+    pos_part = f" ({top_pos})" if top_pos else ""
+    st.markdown(f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;margin-bottom:8px;font-size:1.1rem;'><span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span> &nbsp;·&nbsp; <strong>{top_name}</strong>{pos_part} {badge} &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span> <span style='opacity:0.85;'>({score_label(top_score)})</span></div>", unsafe_allow_html=True)
+    warn = sample_size_caption(top_snaps)
+    if warn: st.warning(warn)
 
-st.caption(
-    "⚠️ Scores here compare the five Lions starters to each other, not to "
-    "league-wide OL. With a sample of five, small differences are noisy — "
-    "treat directional results seriously, but don't over-read close gaps. "
-    "🔴 = severe small sample (<20% of group leader's snaps), 🟡 = caution (20–50%)."
-)
+st.caption("⚠️ Run blocking stats are position-specific: tackles measured on outside runs, guards on interior, center on middle. Pass protection is team-level.")
 
-display_cols = []
-if "player" in ranked.columns:
-    display_cols.append("player")
-if "slot" in ranked.columns:
-    display_cols.append("slot")
-if "games_played" in ranked.columns:
-    display_cols.append("games_played")
+display_df = pd.DataFrame({
+    "Rank": ranked.index, "": ranked.get("off_snaps", pd.Series([0]*len(ranked))).apply(sample_size_badge),
+    "Player": ranked["full_name"],
+    "Pos": ranked["depth_position"].map(POSITION_LABELS),
+    "Games": ranked.get("games_played", pd.Series([0]*len(ranked))).fillna(0).astype(int),
+    "Snaps": ranked.get("off_snaps", pd.Series([0]*len(ranked))).fillna(0).astype(int),
+    "Penalties": ranked.get("penalties_total", pd.Series([0]*len(ranked))).fillna(0).astype(int),
+    "Score": ranked["score"].apply(format_score),
+})
+st.dataframe(display_df, use_container_width=True, hide_index=True)
+with st.expander("ℹ️ How is this score calculated?"): st.markdown(SCORE_EXPLAINER)
 
-display_df = ranked[display_cols].copy()
-display_df.insert(0, "", ranked["sample_pct"].apply(sample_size_badge).values)
-display_df["Score"] = ranked["score"].apply(format_score).values
-
-# Friendlier column names
-rename_map = {
-    "player": "Player",
-    "slot": "Position",
-    "games_played": "Games",
-}
-display_df = display_df.rename(columns=rename_map)
-
-st.dataframe(display_df, use_container_width=True)
-
-with st.expander("ℹ️ How is this score calculated?"):
-    st.markdown(SCORE_EXPLAINER)
-
-
-# ============================================================
-# Team context banner (now BELOW the ranking)
-# ============================================================
-if ctx:
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    st.markdown("### How did the line perform as a unit?")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if ctx.get("lions_ybc_per_att") is not None:
-            delta = ctx['lions_ybc_per_att'] - ctx.get('league_ybc_per_att', 0)
-            st.metric(
-                "Yards before contact / att",
-                f"{ctx['lions_ybc_per_att']:.2f}",
-                delta=f"{delta:+.2f} vs league",
-            )
-    with col2:
-        if ctx.get("lions_yac_per_att") is not None:
-            delta = ctx['lions_yac_per_att'] - ctx.get('league_yac_per_att', 0)
-            st.metric(
-                "Yards after contact / att",
-                f"{ctx['lions_yac_per_att']:.2f}",
-                delta=f"{delta:+.2f} vs league",
-            )
-    with col3:
-        if ctx.get("lions_sack_rate") is not None:
-            delta = ctx['lions_sack_rate'] - ctx.get('league_sack_rate', 0)
-            st.metric(
-                "Sack rate",
-                f"{ctx['lions_sack_rate']:.1%}",
-                delta=f"{delta:+.1%} vs league",
-                delta_color="inverse",
-            )
-    st.caption(
-        "Team-level numbers for the whole OL. Individual ratings above "
-        "attribute play-by-play results to specific linemen by position."
-    )
-
-
-# ============================================================
-# Player detail (matching WR/RB)
-# ============================================================
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.subheader("Player detail")
-
-selected = st.selectbox(
-    "Pick a lineman to see how their score breaks down",
-    options=ranked["player"].tolist(),
-    index=0,
-)
-player = ranked[ranked["player"] == selected].iloc[0]
-
-# Sample size warning for the selected player
-warn = sample_size_caption(player.get("sample_pct", 100))
-if warn:
-    st.warning(warn)
+selected = st.selectbox("Pick a lineman to see their breakdown", options=ranked["full_name"].tolist(), index=0)
+player = ranked[ranked["full_name"] == selected].iloc[0]
+warn = sample_size_caption(player.get("off_snaps", 0))
+if warn: st.warning(warn)
 
 c1, c2 = st.columns([1, 1])
-
 with c1:
-    # Player heading
-    slot = player.get("slot", "") if pd.notna(player.get("slot")) else ""
+    pos = POSITION_LABELS.get(player.get("depth_position", ""), "")
+    run_plays = int(player.get("pos_run_plays") or 0)
+    gap_type = "outside/end-gap" if player.get("depth_position") in ("LT", "RT") else "interior gap" if player.get("depth_position") in ("LG", "RG") else "middle"
     st.markdown(f"### {selected}")
-    st.caption(
-        f"**{slot}** · "
-        f"{int(player.get('snaps_played') or 0)} snaps · "
-        f"{int(player.get('games_played') or 0)} games · "
-        f"{int(player.get('penalties_total') or 0)} penalties"
-    )
+    st.caption(f"**{pos}** · {int(player.get('games_played') or 0)} games · {int(player.get('off_snaps') or 0)} snaps · {run_plays} {gap_type} runs · {int(player.get('penalties_total') or 0)} penalties")
     st.markdown(f"**Your score:** {format_score(player['score'])}")
-    st.markdown("---")
-
-    total_weight = sum(effective_weights.values())
-
+    st.markdown("---"); st.markdown("**How your score breaks down**")
     if not advanced_mode:
-        st.markdown("**How your score breaks down**")
         bundle_rows = []
         for bk, bundle in active_bundles.items():
             bw = bundle_weights.get(bk, 0)
-            if bw == 0:
-                continue
-            contribution = 0.0
-            for z_col, internal in bundle["stats"].items():
-                z = player.get(z_col)
-                if pd.notna(z) and total_weight > 0:
-                    contribution += z * (bw * internal / total_weight)
-            bundle_rows.append({
-                "Bundle": bundle["label"],
-                "Your weight": f"{bw}",
-                "Contribution": f"{contribution:+.2f}",
-            })
-        if bundle_rows:
-            st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
-        else:
-            st.caption("No bundles weighted — drag some sliders.")
-
+            if bw == 0: continue
+            contribution = sum(player.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(player.get(z)) and total_weight > 0)
+            bundle_rows.append({"Bundle": bundle["label"], "Your weight": f"{bw}", "Contribution": f"{contribution:+.2f}"})
+        if bundle_rows: st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
+        else: st.caption("No bundles weighted.")
         with st.expander("🔬 See the underlying stats"):
-            stat_rows = []
-            shown_stats = set()
-            for bundle in active_bundles.values():
-                shown_stats.update(bundle["stats"].keys())
-            for z_col in sorted(shown_stats, key=lambda z: (stat_tiers.get(z, 1), stat_labels.get(z, z))):
-                tier = stat_tiers.get(z_col, 1)
-                label = stat_labels.get(z_col, z_col)
-                z = player.get(z_col)
-                stat_rows.append({
-                    "Tier": tier_badge(tier),
-                    "Stat": label,
-                    "Z-score": f"{z:+.2f}" if pd.notna(z) else "—",
-                })
-            if stat_rows:
-                st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
+            stat_rows = []; shown = set()
+            for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
+            for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+                raw_col = RAW_COL_MAP.get(z_col); z = player.get(z_col); raw = player.get(raw_col) if raw_col else None
+                stat_rows.append({"Tier": tier_badge(stat_tiers.get(z_col, 2)), "Stat": stat_labels.get(z_col, z_col), "Raw": f"{raw:.3f}" if pd.notna(raw) else "—", "Z-score": f"{z:+.2f}" if pd.notna(z) else "—"})
+            st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
     else:
-        st.markdown("**Stat-by-stat breakdown** (z-score within Lions starters)")
+        st.caption("Stat-by-stat breakdown")
         rows = []
-        for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 1), stat_labels.get(z, z))):
-            tier = stat_tiers.get(z_col, 1)
-            label = stat_labels.get(z_col, z_col)
-            z = player.get(z_col)
-            w = effective_weights.get(z_col, 0)
-            contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
-            rows.append({
-                "Tier": tier_badge(tier),
-                "Stat": label,
-                "Z-score": f"{z:+.2f}" if pd.notna(z) else "—",
-                "Weight": f"{w}",
-                "Contribution": f"{contrib:+.2f}",
-            })
-        if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-        else:
-            st.caption("No stats weighted — drag some sliders.")
+        for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+            raw_col = RAW_COL_MAP.get(z_col); z = player.get(z_col); raw = player.get(raw_col) if raw_col else None
+            w = effective_weights.get(z_col, 0); contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
+            rows.append({"Tier": tier_badge(stat_tiers.get(z_col, 2)), "Stat": stat_labels.get(z_col, z_col), "Raw": f"{raw:.3f}" if pd.notna(raw) else "—", "Z-score": f"{z:+.2f}" if pd.notna(z) else "—", "Weight": f"{w}", "Contribution": f"{contrib:+.2f}"})
+        if rows: st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 with c2:
-    st.markdown("**Stat profile** (percentiles within Lions starters)")
-    fig = build_radar_figure(player, stat_labels, OL_METHODOLOGY)
-    if fig is not None:
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.caption("No radar data available for this player.")
-    st.caption(
-        "Each axis shows where this player ranks among the Lions starting five. "
-        "50 = group median. The 'Discipline' axis is inverted — higher = fewer penalties. "
-        "Hover any data point for the stat description."
-    )
+    st.markdown("**OL profile** (percentiles vs. league starters)")
+    fig = build_radar_figure(player, stat_labels, stat_methodology)
+    if fig: st.plotly_chart(fig, use_container_width=True)
+    else: st.caption("No radar data available.")
+    st.caption("Each axis shows where this lineman ranks among all 153 qualified starting OL league-wide. 50 = median. Inverted stats (sacks, penalties) are flipped so higher = better on all axes.")
 
+community_section(position_group=POSITION_GROUP, bundles=BUNDLES, bundle_weights=bundle_weights, advanced_mode=advanced_mode, page_url=PAGE_URL)
 
-# ============================================================
-# Community algorithms
-# ============================================================
-community_section(
-    position_group=POSITION_GROUP,
-    bundles=OL_BUNDLES,
-    bundle_weights=bundle_weights,
-    advanced_mode=advanced_mode,
-    page_url=PAGE_URL,
-)
-
-
-# ============================================================
-# Footer
-# ============================================================
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.caption(
-    "Data via [nflverse](https://github.com/nflverse) • "
-    "FTN charting via FTN Data via nflverse (CC-BY-SA 4.0) • "
-    "Built as a fan project, not affiliated with the NFL or the Detroit Lions."
-)
+st.caption("Data via [nflverse](https://github.com/nflverse) • Depth charts via ESPN • Play-by-play via nflfastR • Snap counts via PFR • 2024 regular season • Position-specific gap attribution • Fan project, not affiliated with the NFL or Detroit Lions.")
