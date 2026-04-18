@@ -21,8 +21,8 @@ inject_css()
 
 POSITION_GROUP = "ol"
 PAGE_URL = "https://lions-rater.streamlit.app/Offensive_Line"
-DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_ol_with_z_v2.parquet"
-METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "ol_stat_metadata_v2.json"
+DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_ol_with_z.parquet"
+METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "ol_stat_metadata.json"
 
 @st.cache_data
 def load_ol_data(): return pl.read_parquet(DATA_PATH).to_pandas()
@@ -40,13 +40,29 @@ RAW_COL_MAP = {
     "penalty_rate_z": "penalty_rate",
     "penalty_epa_per_game_z": "penalty_epa_per_game",
     "snap_share_z": "snap_share",
+    "sg_run_epa_z": "sg_run_epa",
+    "sg_run_success_z": "sg_run_success",
+    "sg_run_explosive_z": "sg_run_explosive",
+    "uc_run_epa_z": "uc_run_epa",
+    "uc_run_success_z": "uc_run_success",
+    "uc_run_explosive_z": "uc_run_explosive",
 }
 
 BUNDLES = {
     "run_blocking": {
-        "label": "🏃 Run blocking",
-        "description": "How well the run game works through this lineman's position-specific gaps. Tackles are measured on outside/end runs, guards on interior gaps, center on middle runs.",
+        "label": "🏃 Run blocking (overall)",
+        "description": "Overall run game through this lineman's position-specific gaps. Scrambles excluded. Tackles on outside/end runs, guards on interior, center on middle.",
         "stats": {"pos_run_epa_z": 0.35, "pos_run_success_z": 0.30, "pos_run_explosive_z": 0.35},
+    },
+    "run_shotgun": {
+        "label": "🔫 Run blocking — shotgun",
+        "description": "Outside zone, spread runs, and stretch plays from shotgun formation. Rewards lateral athleticism and reach blocking.",
+        "stats": {"sg_run_epa_z": 0.35, "sg_run_success_z": 0.30, "sg_run_explosive_z": 0.35},
+    },
+    "run_under_center": {
+        "label": "🏋️ Run blocking — under center",
+        "description": "Power, counter, and gap scheme runs from under center. Rewards drive blocking and combo blocks.",
+        "stats": {"uc_run_epa_z": 0.35, "uc_run_success_z": 0.30, "uc_run_explosive_z": 0.35},
     },
     "pass_protection": {
         "label": "🛡️ Pass protection",
@@ -59,14 +75,16 @@ BUNDLES = {
         "stats": {"penalty_rate_z": 0.30, "penalty_epa_per_game_z": 0.30, "snap_share_z": 0.40},
     },
 }
-DEFAULT_BUNDLE_WEIGHTS = {"run_blocking": 60, "pass_protection": 50, "discipline": 30}
+DEFAULT_BUNDLE_WEIGHTS = {"run_blocking": 50, "run_shotgun": 40, "run_under_center": 40, "pass_protection": 50, "discipline": 30}
 
-RADAR_STATS = ["pos_run_epa_z", "pos_run_success_z", "pos_run_explosive_z", "team_sack_rate_z", "team_pressure_rate_z", "penalty_rate_z", "penalty_epa_per_game_z", "snap_share_z"]
+RADAR_STATS = ["pos_run_epa_z", "pos_run_explosive_z", "sg_run_epa_z", "sg_run_explosive_z", "uc_run_epa_z", "uc_run_explosive_z", "team_sack_rate_z", "team_pressure_rate_z", "penalty_rate_z", "snap_share_z"]
 RADAR_INVERT = set()
 RADAR_LABEL_OVERRIDES = {
-    "pos_run_epa_z": "Run EPA", "pos_run_success_z": "Run success", "pos_run_explosive_z": "Explosive runs",
+    "pos_run_epa_z": "Run EPA", "pos_run_explosive_z": "Explosive runs",
+    "sg_run_epa_z": "Shotgun EPA", "sg_run_explosive_z": "Shotgun explosive",
+    "uc_run_epa_z": "Under center EPA", "uc_run_explosive_z": "UC explosive",
     "team_sack_rate_z": "Sack prevention", "team_pressure_rate_z": "Pressure prevention",
-    "penalty_rate_z": "Discipline", "penalty_epa_per_game_z": "Penalty impact", "snap_share_z": "Durability",
+    "penalty_rate_z": "Discipline", "snap_share_z": "Durability",
 }
 
 def zscore_to_percentile(z):
@@ -142,7 +160,14 @@ SCORE_EXPLAINER = """
 - **Guards** are measured on interior guard + tackle gap runs — their combo blocks and short pulls.
 - **Center** is measured on middle runs plus guard-gap runs from both sides.
 
-This means a tackle's explosive run rate measures HIS outside blocking, not the whole side's production.
+**Formation splits.** Run blocking is further split by shotgun vs under center:
+- **Shotgun** captures outside zone, stretch, and spread run schemes — rewards lateral athleticism and reach blocking.
+- **Under center** captures power, counter, and gap schemes — rewards drive blocking and physicality.
+This reveals linemen who excel in one scheme but struggle in another (e.g., a tackle who dominates power runs but struggles in outside zone).
+
+**Data cleaning.** QB scrambles are excluded from all run stats — they inflate tackle numbers without reflecting blocking quality.
+
+**Position-group z-scores.** Run stats are z-scored within position group (tackles vs tackles, guards vs guards, centers vs centers) so interior linemen aren't penalized for naturally lower explosive rates on inside runs.
 
 **Pass protection limitation.** Sack rate and pressure rate are team-level — we can't isolate which lineman allowed the pressure from free data. But elite OL correlate with low team pressure rates.
 
