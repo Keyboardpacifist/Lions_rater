@@ -1,0 +1,57 @@
+{
+  "stat_tiers": {
+    "fg_pct_z": 1,
+    "fg_40_pct_z": 2,
+    "fg_over_expected_z": 3,
+    "fg_epa_z": 2,
+    "clutch_pct_z": 2,
+    "clutch_epa_z": 3,
+    "xp_pct_z": 1
+  },
+  "stat_labels": {
+    "fg_pct_z": "FG make %",
+    "fg_40_pct_z": "FG make % (40+ yards)",
+    "fg_over_expected_z": "FG over expected",
+    "fg_epa_z": "FG EPA",
+    "clutch_pct_z": "Clutch FG make %",
+    "clutch_epa_z": "Clutch FG EPA",
+    "xp_pct_z": "Extra point %"
+  },
+  "stat_methodology": {
+    "fg_pct_z": {
+      "what": "Overall field goal make percentage",
+      "how": "FG made / FG attempted. Z-scored vs all 2024 kickers with 10+ attempts.",
+      "limits": "Doesn't account for distance or difficulty."
+    },
+    "fg_40_pct_z": {
+      "what": "FG make % on 40+ yard kicks",
+      "how": "Makes / attempts from 40+ yards.",
+      "limits": "Smaller sample. Some kickers attempt more long FGs due to team trust."
+    },
+    "fg_over_expected_z": {
+      "what": "FG makes above pre-snap probability \u2014 difficulty-adjusted accuracy",
+      "how": "Average of (actual make - fg_prob) per attempt. Positive = beating expectations.",
+      "limits": "fg_prob model doesn't fully capture weather or indoor advantage."
+    },
+    "fg_epa_z": {
+      "what": "Average EPA per FG attempt",
+      "how": "EPA on all field goal plays.",
+      "limits": "Influenced by when the team chooses to kick vs go for it."
+    },
+    "clutch_pct_z": {
+      "what": "FG make % in clutch \u2014 4th Q/OT, game within 8 points",
+      "how": "Makes / attempts in clutch situations.",
+      "limits": "Small samples \u2014 most kickers get 5-10 clutch attempts per season."
+    },
+    "clutch_epa_z": {
+      "what": "EPA on clutch field goal attempts",
+      "how": "Average EPA on 4th Q/OT kicks within 8 points.",
+      "limits": "Small sample. One miss can crater this stat."
+    },
+    "xp_pct_z": {
+      "what": "Extra point make percentage",
+      "how": "XP made / XP attempted.",
+      "limits": "Most kickers are 95%+. Low variance."
+    }
+  }
+}

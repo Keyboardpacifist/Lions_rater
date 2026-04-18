@@ -1,0 +1,57 @@
+{
+  "stat_tiers": {
+    "avg_distance_z": 1,
+    "avg_net_z": 2,
+    "inside_20_rate_z": 1,
+    "touchback_rate_z": 2,
+    "fair_catch_rate_z": 2,
+    "pin_rate_z": 2,
+    "punt_epa_z": 2
+  },
+  "stat_labels": {
+    "avg_distance_z": "Average punt distance",
+    "avg_net_z": "Average net yards",
+    "inside_20_rate_z": "Inside-20 rate",
+    "touchback_rate_z": "Touchback rate (inverted)",
+    "fair_catch_rate_z": "Fair catch rate",
+    "pin_rate_z": "Pin rate (inside 20 + downed)",
+    "punt_epa_z": "Punt EPA"
+  },
+  "stat_methodology": {
+    "avg_distance_z": {
+      "what": "Average gross punt distance",
+      "how": "Kick distance averaged across all punts.",
+      "limits": "Doesn't capture placement quality."
+    },
+    "avg_net_z": {
+      "what": "Average net punt yards (gross minus return)",
+      "how": "Kick distance minus return yards.",
+      "limits": "Punt coverage unit affects returns."
+    },
+    "inside_20_rate_z": {
+      "what": "Rate of punts landing inside the 20",
+      "how": "Inside-20 punts / total punts.",
+      "limits": "Depends on field position when punting."
+    },
+    "touchback_rate_z": {
+      "what": "Touchback rate \u2014 fewer = better",
+      "how": "Inverted so positive z = fewer touchbacks.",
+      "limits": "Some touchbacks are acceptable on long punts."
+    },
+    "fair_catch_rate_z": {
+      "what": "Fair catch rate \u2014 higher suggests better hang time",
+      "how": "Fair catches / total punts.",
+      "limits": "Returner decisions vary."
+    },
+    "pin_rate_z": {
+      "what": "Pin rate \u2014 inside 20 + downed combined",
+      "how": "Captures total placement success.",
+      "limits": "Field position when punting matters."
+    },
+    "punt_epa_z": {
+      "what": "Average EPA per punt",
+      "how": "EPA on all punt plays.",
+      "limits": "Influenced by coverage unit and return game."
+    }
+  }
+}
