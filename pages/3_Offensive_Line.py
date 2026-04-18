@@ -75,7 +75,7 @@ BUNDLES = {
         "stats": {"penalty_rate_z": 0.30, "penalty_epa_per_game_z": 0.30, "snap_share_z": 0.40},
     },
 }
-DEFAULT_BUNDLE_WEIGHTS = {"run_blocking": 50, "run_shotgun": 40, "run_under_center": 40, "pass_protection": 50, "discipline": 30}
+DEFAULT_BUNDLE_WEIGHTS = {"run_blocking": 70, "run_shotgun": 0, "run_under_center": 0, "pass_protection": 50, "discipline": 30}
 
 RADAR_STATS = ["pos_run_epa_z", "pos_run_explosive_z", "sg_run_epa_z", "sg_run_explosive_z", "uc_run_epa_z", "uc_run_explosive_z", "team_sack_rate_z", "team_pressure_rate_z", "penalty_rate_z", "snap_share_z"]
 RADAR_INVERT = set()
