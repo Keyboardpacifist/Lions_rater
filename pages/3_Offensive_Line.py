@@ -52,17 +52,17 @@ BUNDLES = {
     "run_blocking": {
         "label": "🏃 Run blocking (overall)",
         "description": "Overall run game through this lineman's position-specific gaps. Scrambles excluded. Tackles on outside/end runs, guards on interior, center on middle.",
-        "stats": {"pos_run_epa_z": 0.35, "pos_run_success_z": 0.30, "pos_run_explosive_z": 0.35},
+        "stats": {"pos_run_epa_z": 0.45, "pos_run_success_z": 0.35, "pos_run_explosive_z": 0.20},
     },
     "run_shotgun": {
         "label": "🔫 Run blocking — shotgun",
         "description": "Outside zone, spread runs, and stretch plays from shotgun formation. Rewards lateral athleticism and reach blocking.",
-        "stats": {"sg_run_epa_z": 0.35, "sg_run_success_z": 0.30, "sg_run_explosive_z": 0.35},
+        "stats": {"sg_run_epa_z": 0.45, "sg_run_success_z": 0.35, "sg_run_explosive_z": 0.20},
     },
     "run_under_center": {
         "label": "🏋️ Run blocking — under center",
         "description": "Power, counter, and gap scheme runs from under center. Rewards drive blocking and combo blocks.",
-        "stats": {"uc_run_epa_z": 0.35, "uc_run_success_z": 0.30, "uc_run_explosive_z": 0.35},
+        "stats": {"uc_run_epa_z": 0.45, "uc_run_success_z": 0.35, "uc_run_explosive_z": 0.20},
     },
     "pass_protection": {
         "label": "🛡️ Pass protection",
