@@ -399,7 +399,7 @@ if "rb_tiers_enabled" not in st.session_state:
 # ============================================================
 # Header
 # ============================================================
-st.title(f"🏈 {team_name} running backs")
+st.subheader(f"{team_name} running backs")
 st.markdown(
     "What makes a great player? **You decide.** Drag the sliders to weight what you "
     "value, and watch the Lions running backs re-rank in real time. "
