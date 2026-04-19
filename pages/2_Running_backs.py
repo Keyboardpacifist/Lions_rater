@@ -31,6 +31,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from scipy.stats import norm
 
+from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
 from lib_shared import (
     apply_algo_weights,
     community_section,
@@ -45,15 +46,19 @@ from lib_shared import (
 # ============================================================
 st.set_page_config(
     page_title="Lions Running Back Rater",
-    page_icon="🦁",
+    page_icon="🏈",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 inject_css()
 
+# ── Team & Season selector ────────────────────────────────────
+selected_team, selected_season = get_team_and_season()
+team_name = NFL_TEAMS.get(selected_team, selected_team)
+
 POSITION_GROUP = "rb"
 PAGE_URL = "https://lions-rater.streamlit.app/Running_backs"
-DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_rbs_with_z.parquet"
+DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "league_rb_all_seasons.parquet"
 METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "rb_stat_metadata.json"
 
 
@@ -394,14 +399,14 @@ if "rb_tiers_enabled" not in st.session_state:
 # ============================================================
 # Header
 # ============================================================
-st.title("🦁 Lions Running Back Rater")
+st.title(f"🏈 {team_name} running backs")
 st.markdown(
     "What makes a great player? **You decide.** Drag the sliders to weight what you "
     "value, and watch the Lions running backs re-rank in real time. "
     "_No 'best back' — just **your** best back._"
 )
 st.caption(
-    "2024 regular season • Compared against top 32 RBs by snaps • "
+    f"{selected_season} regular season • Compared against top 32 RBs by snaps • "
     "Every Lions RB visible"
 )
 
@@ -413,6 +418,12 @@ try:
     df = load_rb_data()
 except FileNotFoundError:
     st.error("Couldn't find the running backs data file.")
+    st.stop()
+
+# Filter to selected team and season
+df = filter_by_team_and_season(df, selected_team, selected_season, team_col="recent_team", season_col="season_year")
+if len(df) == 0:
+    st.warning(f"No {team_name} running backs found for {selected_season}.")
     st.stop()
 
 meta = load_rb_metadata()
