@@ -63,8 +63,8 @@ def build_radar_figure(player, stat_labels, stat_methodology):
     fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100], tickvals=[25, 50, 75, 100], ticktext=["25", "50", "75", "100"], tickfont=dict(size=9, color="#888"), gridcolor="#ddd"), angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"), bgcolor="rgba(0,0,0,0)"), showlegend=False, margin=dict(l=60, r=60, t=20, b=20), height=380, paper_bgcolor="rgba(0,0,0,0)")
     return fig
 
-TIER_LABELS = {1: "Tier 1 — Counted", 2: "Tier 2 — Contextualized", 3: "Tier 3 — Adjusted", 4: "Tier 4 — Inferred"}
-TIER_DESCRIPTIONS = {1: "Pure recorded facts.", 2: "Counts divided by opportunity.", 3: "Compared against a modeled baseline.", 4: "Inferred from patterns."}
+TIER_LABELS = {1: "Counting stats", 2: "Rate stats", 3: "Modeled stats", 4: "Estimated stats"}
+TIER_DESCRIPTIONS = {1: "Raw totals — sacks, tackles, yards, touchdowns.", 2: "Per-game and per-snap averages that adjust for playing time.", 3: "Stats adjusted for expected performance based on a model.", 4: "Inferred from patterns."}
 def tier_badge(tier): return {1: "🟢", 2: "🔵", 3: "🟡", 4: "🟠"}.get(tier, "⚪")
 def filter_bundles_by_tier(bundles, stat_tiers, enabled_tiers):
     filtered = {}
@@ -105,7 +105,7 @@ if "upvoted_ids" not in st.session_state: st.session_state.upvoted_ids = set()
 if "punter_tiers_enabled" not in st.session_state: st.session_state.punter_tiers_enabled = [1, 2]
 
 st.title("🦁 Lions Punter Rater")
-st.markdown("**Build your own algorithm.** Drag the sliders to weight what you value.")
+st.markdown("What makes a great player? **You decide.** Drag the sliders to weight what you value.")
 st.caption("2024 regular season • Z-scores vs all punters league-wide (20+ attempts)")
 
 try: df = load_punter_data()
@@ -114,7 +114,7 @@ except FileNotFoundError: st.error(f"Couldn't find punter data at {DATA_PATH}.")
 meta = load_punter_metadata()
 stat_tiers = meta.get("stat_tiers", {}); stat_labels = meta.get("stat_labels", {}); stat_methodology = meta.get("stat_methodology", {})
 
-st.markdown("### How speculative do you want to get?")
+st.markdown("### Which stats should count?")
 tier_cols = st.columns(4)
 new_enabled = []
 for i, tier in enumerate([1, 2, 3, 4]):
@@ -155,7 +155,7 @@ if len(ranked) > 0:
     top = ranked.iloc[0]
     top_name = top.get("player_name", "—"); top_score = top["score"]
     sign = "+" if top_score >= 0 else ""
-    st.markdown(f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;margin-bottom:8px;font-size:1.1rem;'><span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span> &nbsp;·&nbsp; <strong>{top_name}</strong> &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span> <span style='opacity:0.85;'>({score_label(top_score)})</span></div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;margin-bottom:8px;font-size:1.1rem;'><span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span> &nbsp;·&nbsp; <strong>{top_name}</strong> &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span> <span style='opacity:0.85;'>({format_percentile(zscore_to_percentile(top_score))})</span></div>", unsafe_allow_html=True)
 
 display_df = pd.DataFrame({
     "Rank": ranked.index,
@@ -165,10 +165,10 @@ display_df = pd.DataFrame({
     "Avg dist": ranked.get("avg_distance", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1f}" if pd.notna(x) else "—"),
     "Net": ranked.get("avg_net", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1f}" if pd.notna(x) else "—"),
     "In 20 %": ranked.get("inside_20_rate", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—"),
-    "Score": ranked["score"].apply(format_score),
+    "Your score": ranked["score"].apply(format_score),
 })
 st.dataframe(display_df, use_container_width=True, hide_index=True)
-with st.expander("ℹ️ How is this score calculated?"): st.markdown(SCORE_EXPLAINER)
+with st.expander("ℹ️ How is the score calculated?"): st.markdown(SCORE_EXPLAINER)
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.subheader("Player detail")
@@ -186,7 +186,7 @@ with c1:
         bw = bundle_weights.get(bk, 0)
         if bw == 0: continue
         contribution = sum(player.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(player.get(z)) and total_weight > 0)
-        bundle_rows.append({"Bundle": bundle["label"], "Your weight": f"{bw}", "Contribution": f"{contribution:+.2f}"})
+        bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
     if bundle_rows: st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
     with st.expander("🔬 See the underlying stats"):
         stat_rows = []; shown = set()
