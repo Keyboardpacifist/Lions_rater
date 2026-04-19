@@ -33,9 +33,9 @@ RAW_COL_MAP = {
 }
 
 BUNDLES = {
-    "distance": {"label": "📏 Distance", "description": "Raw leg power. Gross and net punt yardage.", "stats": {"avg_distance_z": 0.50, "avg_net_z": 0.50}},
-    "placement": {"label": "📍 Placement", "description": "Pins opponents deep. Inside-20 rate, avoids touchbacks, forces fair catches.", "stats": {"inside_20_rate_z": 0.30, "touchback_rate_z": 0.20, "fair_catch_rate_z": 0.20, "pin_rate_z": 0.30}},
-    "impact": {"label": "💥 Impact", "description": "Overall field position value measured by EPA.", "stats": {"punt_epa_z": 1.00}},
+    "distance": {"label": "📏 Distance", "description": "Raw leg power. Gross and net punt yardage.", "why": "Think a big leg is the most important thing a punter has? Crank this up.", "stats": {"avg_distance_z": 0.50, "avg_net_z": 0.50}},
+    "placement": {"label": "📍 Placement", "description": "Pins opponents deep. Inside-20 rate, avoids touchbacks, forces fair catches.", "why": "Value punters who flip the field with precision, not just power? Slide right.", "stats": {"inside_20_rate_z": 0.30, "touchback_rate_z": 0.20, "fair_catch_rate_z": 0.20, "pin_rate_z": 0.30}},
+    "impact": {"label": "💥 Impact", "description": "Overall field position value measured by EPA.", "why": "Care about the bottom line — how much field position does he actually create? Slide right.", "stats": {"punt_epa_z": 1.00}},
 }
 DEFAULT_BUNDLE_WEIGHTS = {"distance": 40, "placement": 60, "impact": 40}
 
@@ -128,13 +128,14 @@ st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
 bundle_weights = {}; effective_weights = {}
 if not active_bundles: st.info("No bundles in enabled tiers."); st.stop()
-st.sidebar.caption("Drag to weight what matters to you.")
+st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize, left to ignore.")
 for bk, bundle in active_bundles.items():
     tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
     st.sidebar.markdown(f"**{bundle['label']}**")
     st.sidebar.markdown(f"<div class='bundle-desc'>{bundle['description']}<br><small>{tier_summary}</small></div>", unsafe_allow_html=True)
     if f"punter_bundle_{bk}" not in st.session_state: st.session_state[f"punter_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
-    bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"punter_bundle_{bk}", label_visibility="collapsed")
+    bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"punter_bundle_{bk}", label_visibility="collapsed", help=bundle.get("why", ""))
+    st.sidebar.caption(f"_↑ {bundle.get('why', '')}_")
 for bk in BUNDLES:
     if bk not in bundle_weights: bundle_weights[bk] = 0
 effective_weights = compute_effective_weights(active_bundles, bundle_weights)
