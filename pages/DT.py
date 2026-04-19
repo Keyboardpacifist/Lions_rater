@@ -9,14 +9,19 @@ import polars as pl
 import streamlit as st
 import plotly.graph_objects as go
 from scipy.stats import norm
+from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
 from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
 
-st.set_page_config(page_title="Lions DT Rater", page_icon="🦁", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="DT Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
+
+# ── Team & Season selector ────────────────────────────────────
+selected_team, selected_season = get_team_and_season()
+team_name = NFL_TEAMS.get(selected_team, selected_team)
 
 POSITION_GROUP = "dt"
 PAGE_URL = "https://lions-rater.streamlit.app/DT"
-DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_dts_with_z.parquet"
+DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "league_dt_all_seasons.parquet"
 METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "dt_stat_metadata.json"
 
 @st.cache_data
@@ -167,6 +172,12 @@ except FileNotFoundError:
     st.error(f"Couldn't find data at {DATA_PATH}")
     st.stop()
 
+# Filter to selected team and season
+df = filter_by_team_and_season(df, selected_team, selected_season, team_col="team", season_col="season_year")
+if len(df) == 0:
+    st.warning(f"No {team_name} defensive tackles found for {selected_season}.")
+    st.stop()
+
 meta = load_dt_metadata()
 stat_tiers = meta.get("stat_tiers", {})
 stat_labels = meta.get("stat_labels", {})
@@ -181,9 +192,9 @@ if "algo" in st.query_params and st.session_state.dt_loaded_algo is None:
 # ══════════════════════════════════════════════════════════════
 # PAGE HEADER
 # ══════════════════════════════════════════════════════════════
-st.title("🦁 Lions defensive tackles")
+st.title(f"🏈 {team_name} defensive tackles")
 st.markdown("What makes a great DT? **You decide.** Use the sliders on the left to tell us what you value most, and the rankings update instantly.")
-st.caption("2024 regular season · Compared to all 105 DTs league-wide with 200+ snaps")
+st.caption(f"{selected_season} regular season · Compared to all 105 DTs league-wide with 200+ snaps")
 
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR
