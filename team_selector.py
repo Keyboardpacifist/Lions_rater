@@ -1,4 +1,4 @@
-\"""
+"""
 team_selector.py — Global team and season selector.
 Place in repo root alongside lib_shared.py.
 
