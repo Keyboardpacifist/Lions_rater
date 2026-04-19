@@ -52,26 +52,31 @@ BUNDLES = {
     "run_blocking": {
         "label": "🏃 Run blocking (overall)",
         "description": "Overall run game through this lineman's position-specific gaps. Scrambles excluded. Tackles on outside/end runs, guards on interior, center on middle.",
+        "why": "Think run blocking is the foundation of great OL play? Crank this up.",
         "stats": {"pos_run_epa_z": 0.45, "pos_run_success_z": 0.35, "pos_run_explosive_z": 0.20},
     },
     "run_shotgun": {
         "label": "🔫 Run blocking — shotgun",
         "description": "Outside zone, spread runs, and stretch plays from shotgun formation. Rewards lateral athleticism and reach blocking.",
+        "why": "Want to see who dominates in spread/zone schemes? Slide right.",
         "stats": {"sg_run_epa_z": 0.45, "sg_run_success_z": 0.35, "sg_run_explosive_z": 0.20},
     },
     "run_under_center": {
         "label": "🏋️ Run blocking — under center",
         "description": "Power, counter, and gap scheme runs from under center. Rewards drive blocking and combo blocks.",
+        "why": "Value linemen who dominate in power and gap schemes? Slide right.",
         "stats": {"uc_run_epa_z": 0.45, "uc_run_success_z": 0.35, "uc_run_explosive_z": 0.20},
     },
     "pass_protection": {
         "label": "🛡️ Pass protection",
         "description": "Team sack rate and pressure rate. Lower = better. All 5 OL contribute, but elite linemen correlate with low team pressure.",
+        "why": "Think keeping the QB clean is the most important job on the line? Slide right.",
         "stats": {"team_sack_rate_z": 0.55, "team_pressure_rate_z": 0.45},
     },
     "discipline": {
         "label": "⚖️ Discipline & durability",
         "description": "Avoids penalties, minimizes penalty damage, and stays on the field.",
+        "why": "Want linemen who are reliable — no false starts, no holding calls? Slide right.",
         "stats": {"penalty_rate_z": 0.30, "penalty_epa_per_game_z": 0.30, "snap_share_z": 0.40},
     },
 }
@@ -217,13 +222,14 @@ st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 bundle_weights = {}; effective_weights = {}
 if not advanced_mode:
     if not active_bundles: st.info("No bundles in enabled tiers."); st.stop()
-    st.sidebar.caption("Drag to weight what matters to you. 0 = ignore, 100 = max.")
+    st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize, left to ignore.")
     for bk, bundle in active_bundles.items():
         tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
         st.sidebar.markdown(f"**{bundle['label']}**")
         st.sidebar.markdown(f"<div class='bundle-desc'>{bundle['description']}<br><small>{tier_summary}</small></div>", unsafe_allow_html=True)
         if f"ol_bundle_{bk}" not in st.session_state: st.session_state[f"ol_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
-        bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"ol_bundle_{bk}", label_visibility="collapsed")
+        bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"ol_bundle_{bk}", label_visibility="collapsed", help=bundle.get("why", ""))
+        st.sidebar.caption(f"_↑ {bundle.get('why', '')}_")
     for bk in BUNDLES:
         if bk not in bundle_weights: bundle_weights[bk] = 0
     effective_weights = compute_effective_weights(active_bundles, bundle_weights)
