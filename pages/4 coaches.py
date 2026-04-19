@@ -248,16 +248,16 @@ def build_radar_figure(coach, stat_labels, stat_methodology):
 # Tier helpers
 # ============================================================
 TIER_LABELS = {
-    1: "Tier 1 — Counted",
-    2: "Tier 2 — Contextualized",
-    3: "Tier 3 — Adjusted",
-    4: "Tier 4 — Inferred",
+    1: "Counting stats",
+    2: "Rate stats",
+    3: "Modeled stats",
+    4: "Estimated stats",
 }
 TIER_DESCRIPTIONS = {
-    1: "Pure recorded facts. No modeling.",
-    2: "Counts divided by opportunity. Still no modeling.",
-    3: "Compared against a modeled baseline. Model is simple and visible.",
-    4: "Inferred from patterns the data can't directly see. Use with skepticism.",
+    1: "Raw totals — sacks, tackles, yards, touchdowns.",
+    2: "Per-game and per-snap averages that adjust for playing time.",
+    3: "Stats adjusted for expected performance based on a model.",
+    4: "Inferred from limited data — least reliable. Use with caution.",
 }
 
 
@@ -292,25 +292,18 @@ def bundle_tier_summary(bundle_stats: dict, stat_tiers: dict) -> str:
 # ============================================================
 # Score labels
 # ============================================================
-def score_label(score: float) -> str:
-    if pd.isna(score):
-        return "—"
-    if score >= 1.0:
-        return "well above group"
-    if score >= 0.4:
-        return "above group"
-    if score >= -0.4:
-        return "about average"
-    if score >= -1.0:
-        return "below group"
-    return "well below group"
+def format_percentile(pct):
+    if pct is None or pd.isna(pct): return "—"
+    if pct >= 99: return "top 1%"
+    if pct >= 50: return f"top {100 - int(pct)}%"
+    return f"bottom {int(pct)}%"
 
 
-def format_score(score: float) -> str:
-    if pd.isna(score):
-        return "—"
+def format_score(score):
+    if pd.isna(score): return "—"
     sign = "+" if score >= 0 else ""
-    return f"{sign}{score:.2f} ({score_label(score)})"
+    pct = zscore_to_percentile(score)
+    return f"{sign}{score:.2f} ({format_percentile(pct)})"
 
 
 def sample_size_badge(games: float) -> str:
@@ -382,7 +375,7 @@ if "coach_tiers_enabled" not in st.session_state:
 # ============================================================
 st.title("🦁 Lions Coach Rater")
 st.markdown(
-    "**Build your own algorithm.** Drag the sliders to weight what you value, "
+    "What makes a great player? **You decide.** Drag the sliders to weight what you value, "
     "and watch the head coaches re-rank in real time. "
     "_No 'best coach' — just **your** best coach._"
 )
@@ -424,7 +417,7 @@ if "algo" in st.query_params and st.session_state.coach_loaded_algo is None:
 # ============================================================
 # Sidebar — filters
 # ============================================================
-st.sidebar.header("Filters")
+st.sidebar.header("What matters to you?")
 
 st.sidebar.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 advanced_mode = st.sidebar.toggle(
@@ -432,7 +425,7 @@ advanced_mode = st.sidebar.toggle(
     help="Show individual stat sliders with methodology tooltips instead of plain-English bundles.",
 )
 
-st.sidebar.header("What do you value?")
+st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize, left to ignore.")
 
 if st.session_state.coach_loaded_algo:
     la = st.session_state.coach_loaded_algo
@@ -447,10 +440,9 @@ if st.session_state.coach_loaded_algo:
 # ============================================================
 # Tier filter (main content area)
 # ============================================================
-st.markdown("### How speculative do you want to get?")
+st.markdown("### Which stats should count?")
 st.caption(
-    "Each stat is labeled by how much trust it asks from you. "
-    "Uncheck tiers you don't want to include. Philosophy in a checkbox."
+    "Check more boxes to include more types of stats. More boxes = more data, but less certainty."
 )
 
 tier_cols = st.columns(4)
@@ -561,7 +553,7 @@ else:
 # Default: active coaches with 2+ full seasons (34+ games)
 # Checkboxes let user broaden this.
 
-st.markdown("### Who's in the pool?")
+
 c_opts = st.columns(2)
 with c_opts[0]:
     include_rookies = st.checkbox(
@@ -650,7 +642,7 @@ if len(ranked) > 0:
         f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span>"
         f" &nbsp;·&nbsp; <strong>{top_name}</strong>{team_part} {badge}"
         f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span>"
-        f" <span style='opacity:0.85;'>({score_label(top_score)})</span>"
+        f" <span style='opacity:0.85;'>({format_percentile(zscore_to_percentile(top_score))})</span>"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -671,7 +663,7 @@ display_df = pd.DataFrame({
     "Team": ranked.get("team", pd.Series(["—"] * len(ranked))),
     "Seasons": ranked["seasons_as_hc"].fillna(0).astype(int),
     "Games": ranked["games_as_hc"].fillna(0).astype(int),
-    "Score": ranked["score"].apply(format_score),
+    "Your score": ranked["score"].apply(format_score),
 })
 
 st.dataframe(
@@ -728,9 +720,9 @@ with c1:
                 if pd.notna(z) and total_weight > 0:
                     contribution += z * (bw * internal / total_weight)
             bundle_rows.append({
-                "Bundle": bundle["label"],
+                "Skill": bundle["label"],
                 "Your weight": f"{bw}",
-                "Contribution": f"{contribution:+.2f}",
+                "Points added": f"{contribution:+.2f}",
             })
         if bundle_rows:
             st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
@@ -773,7 +765,7 @@ with c1:
                 "Raw": f"{raw:.3f}" if pd.notna(raw) else "—",
                 "Z-score": f"{z:+.2f}" if pd.notna(z) else "—",
                 "Weight": f"{w}",
-                "Contribution": f"{contrib:+.2f}",
+                "Points added": f"{contrib:+.2f}",
             })
         if rows:
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
