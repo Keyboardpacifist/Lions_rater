@@ -39,17 +39,16 @@ RAW_COL_MAP = {
 }
 
 BUNDLES = {
-    "efficiency": {"label": "📊 Offensive efficiency", "description": "Overall EPA per play, passing and rushing EPA. The core measure of offensive production.", "stats": {"epa_per_play_z": 0.40, "pass_epa_per_play_z": 0.30, "rush_epa_per_play_z": 0.30}},
-    "execution": {"label": "🎯 Situational execution", "description": "Third down conversions and red zone TD rate. Measures playcalling in critical moments.", "stats": {"third_down_rate_z": 0.50, "red_zone_td_rate_z": 0.50}},
-    "explosiveness": {"label": "💥 Big play ability", "description": "Explosive pass plays (20+ yds) and explosive rush plays (10+ yds). Creates game-breaking moments.", "stats": {"explosive_pass_rate_z": 0.55, "explosive_rush_rate_z": 0.45}},
-    "investment": {"label": "💰 Roster investment", "description": "Salary cap % and draft capital invested in offense. Higher = more resources given to this coordinator.", "stats": {"off_cap_pct_z": 0.50, "off_draft_capital_z": 0.50}},
-    "winning": {"label": "🏆 Winning", "description": "Team win percentage during coordinator tenure. The ultimate measure, but the least isolatable.", "stats": {"win_pct_z": 1.00}},
+    "efficiency": {"label": "📊 Offensive efficiency", "description": "Overall EPA per play, passing and rushing EPA. The core measure of offensive production.", "why": "Think raw offensive output is what defines a great OC? Crank this up.", "stats": {"epa_per_play_z": 0.40, "pass_epa_per_play_z": 0.30, "rush_epa_per_play_z": 0.30}},
+    "execution": {"label": "🎯 Situational execution", "description": "Third down conversions and red zone TD rate. Measures playcalling in critical moments.", "why": "Value coordinators who convert when it matters most? Slide right.", "stats": {"third_down_rate_z": 0.50, "red_zone_td_rate_z": 0.50}},
+    "explosiveness": {"label": "💥 Big play ability", "description": "Explosive pass plays (20+ yds) and explosive rush plays (10+ yds). Creates game-breaking moments.", "why": "Want offenses that hit home runs, not just move the chains? Slide right.", "stats": {"explosive_pass_rate_z": 0.55, "explosive_rush_rate_z": 0.45}},
+    "winning": {"label": "🏆 Winning", "description": "Team win percentage during coordinator tenure. The ultimate measure, but the least isolatable.", "why": "Think wins are all that matter, regardless of how? Slide right.", "stats": {"win_pct_z": 1.00}},
 }
-DEFAULT_BUNDLE_WEIGHTS = {"efficiency": 60, "execution": 50, "explosiveness": 40, "investment": 0, "winning": 30}
+DEFAULT_BUNDLE_WEIGHTS = {"efficiency": 60, "execution": 50, "explosiveness": 40, "winning": 30}
 
-RADAR_STATS = ["epa_per_play_z", "pass_epa_per_play_z", "rush_epa_per_play_z", "success_rate_z", "explosive_pass_rate_z", "explosive_rush_rate_z", "third_down_rate_z", "red_zone_td_rate_z", "win_pct_z", "off_cap_pct_z", "off_draft_capital_z"]
+RADAR_STATS = ["epa_per_play_z", "pass_epa_per_play_z", "rush_epa_per_play_z", "success_rate_z", "explosive_pass_rate_z", "explosive_rush_rate_z", "third_down_rate_z", "red_zone_td_rate_z", "win_pct_z"]
 RADAR_INVERT = set()
-RADAR_LABEL_OVERRIDES = {"epa_per_play_z": "Off EPA", "pass_epa_per_play_z": "Pass EPA", "rush_epa_per_play_z": "Rush EPA", "success_rate_z": "Success rate", "explosive_pass_rate_z": "Explosive pass", "explosive_rush_rate_z": "Explosive rush", "third_down_rate_z": "3rd down", "red_zone_td_rate_z": "Red zone", "win_pct_z": "Win %", "off_cap_pct_z": "Cap invested", "off_draft_capital_z": "Draft capital"}
+RADAR_LABEL_OVERRIDES = {"epa_per_play_z": "Off EPA", "pass_epa_per_play_z": "Pass EPA", "rush_epa_per_play_z": "Rush EPA", "success_rate_z": "Success rate", "explosive_pass_rate_z": "Explosive pass", "explosive_rush_rate_z": "Explosive rush", "third_down_rate_z": "3rd down", "red_zone_td_rate_z": "Red zone", "win_pct_z": "Win %"}
 
 def zscore_to_percentile(z):
     if pd.isna(z): return None
@@ -157,13 +156,14 @@ st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 bundle_weights = {}; effective_weights = {}
 if not advanced_mode:
     if not active_bundles: st.info("No bundles in enabled tiers."); st.stop()
-    st.sidebar.caption("Drag to weight what matters to you.")
+    st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize, left to ignore.")
     for bk, bundle in active_bundles.items():
         tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
         st.sidebar.markdown(f"**{bundle['label']}**")
         st.sidebar.markdown(f"<div class='bundle-desc'>{bundle['description']}<br><small>{tier_summary}</small></div>", unsafe_allow_html=True)
         if f"oc_bundle_{bk}" not in st.session_state: st.session_state[f"oc_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
-        bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"oc_bundle_{bk}", label_visibility="collapsed")
+        bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"oc_bundle_{bk}", label_visibility="collapsed", help=bundle.get("why", ""))
+        st.sidebar.caption(f"_↑ {bundle.get('why', '')}_")
     for bk in BUNDLES:
         if bk not in bundle_weights: bundle_weights[bk] = 0
     effective_weights = compute_effective_weights(active_bundles, bundle_weights)
@@ -208,6 +208,8 @@ if is_career:
         "Seasons": ranked.get("seasons", pd.Series([1]*len(ranked))).fillna(1).astype(int),
         "W-L": ranked.apply(lambda r: f"{int(r.get('total_wins', 0))}-{int(r.get('total_losses', 0))}", axis=1),
         "EPA/play": ranked.get("epa_per_play", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:+.3f}" if pd.notna(x) else "—"),
+        "💰 Cap %": ranked.get("off_cap_pct", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—"),
+        "💰 Draft $": ranked.get("off_draft_capital", pd.Series([0]*len(ranked))).apply(lambda x: f"{int(x):,}" if pd.notna(x) else "—"),
         "Your score": ranked["score"].apply(format_score),
     })
 else:
@@ -238,6 +240,16 @@ with c1:
         st.caption(f"**{teams}** · {int(player.get('seasons', 1))} seasons · {int(player.get('total_wins', 0))}-{int(player.get('total_losses', 0))} record")
     else:
         st.caption(f"**{teams}** · 2024 season")
+
+    # Investment context — display only, not scored
+    cap_pct = player.get("off_cap_pct")
+    draft_cap = player.get("off_draft_capital")
+    if pd.notna(cap_pct) or pd.notna(draft_cap):
+        cap_str = f"{cap_pct:.1%}" if pd.notna(cap_pct) else "—"
+        draft_str = f"{int(draft_cap):,}" if pd.notna(draft_cap) else "—"
+        st.markdown(f"**💰 Roster investment:** {cap_str} of cap on offense · {draft_str} draft capital")
+        st.caption("_Context only — not factored into the score. Helps you judge whether results came from talent or scheme._")
+
     st.markdown(f"**Your score:** {format_score(player['score'])}")
     st.markdown("---"); st.markdown("**How your score breaks down**")
     if not advanced_mode:
