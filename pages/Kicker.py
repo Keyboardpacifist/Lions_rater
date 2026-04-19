@@ -33,9 +33,9 @@ RAW_COL_MAP = {
 }
 
 BUNDLES = {
-    "accuracy": {"label": "🎯 Accuracy", "description": "Makes field goals at a high rate, especially from distance. Beats difficulty expectations.", "stats": {"fg_pct_z": 0.30, "fg_40_pct_z": 0.30, "fg_over_expected_z": 0.40}},
-    "clutch": {"label": "🧊 Clutch", "description": "Delivers in pressure situations — 4th quarter or OT, game within 8 points.", "stats": {"clutch_pct_z": 0.50, "clutch_epa_z": 0.50}},
-    "consistency": {"label": "✅ Consistency", "description": "Reliable on extra points and overall EPA contribution.", "stats": {"xp_pct_z": 0.40, "fg_epa_z": 0.60}},
+    "accuracy": {"label": "🎯 Accuracy", "description": "Makes field goals at a high rate, especially from distance. Beats difficulty expectations.", "why": "Think making kicks is all that matters? Crank this up.", "stats": {"fg_pct_z": 0.30, "fg_40_pct_z": 0.30, "fg_over_expected_z": 0.40}},
+    "clutch": {"label": "🧊 Clutch", "description": "Delivers in pressure situations — 4th quarter or OT, game within 8 points.", "why": "Value kickers who hit game-winners under pressure? Slide right.", "stats": {"clutch_pct_z": 0.50, "clutch_epa_z": 0.50}},
+    "consistency": {"label": "✅ Consistency", "description": "Reliable on extra points and overall EPA contribution.", "why": "Want a kicker who never costs you points on easy kicks? Slide right.", "stats": {"xp_pct_z": 0.40, "fg_epa_z": 0.60}},
 }
 DEFAULT_BUNDLE_WEIGHTS = {"accuracy": 60, "clutch": 50, "consistency": 30}
 
@@ -128,13 +128,14 @@ st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
 bundle_weights = {}; effective_weights = {}
 if not active_bundles: st.info("No bundles in enabled tiers."); st.stop()
-st.sidebar.caption("Drag to weight what matters to you.")
+st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize, left to ignore.")
 for bk, bundle in active_bundles.items():
     tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
     st.sidebar.markdown(f"**{bundle['label']}**")
     st.sidebar.markdown(f"<div class='bundle-desc'>{bundle['description']}<br><small>{tier_summary}</small></div>", unsafe_allow_html=True)
     if f"kicker_bundle_{bk}" not in st.session_state: st.session_state[f"kicker_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
-    bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"kicker_bundle_{bk}", label_visibility="collapsed")
+    bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"kicker_bundle_{bk}", label_visibility="collapsed", help=bundle.get("why", ""))
+    st.sidebar.caption(f"_↑ {bundle.get('why', '')}_")
 for bk in BUNDLES:
     if bk not in bundle_weights: bundle_weights[bk] = 0
 effective_weights = compute_effective_weights(active_bundles, bundle_weights)
