@@ -77,12 +77,13 @@ def get_team_and_season():
     team_labels = [f"{abbr} — {NFL_TEAMS[abbr]}" for abbr in team_options]
     current_idx = team_options.index(st.session_state.selected_team) if st.session_state.selected_team in team_options else 0
 
-    st.sidebar.markdown("---")
+    st.sidebar.header("🏈 Select your team")
     selected_label = st.sidebar.selectbox(
-        "🏈 Team",
+        "Team",
         options=team_labels,
         index=current_idx,
         key="team_selector_widget",
+        label_visibility="collapsed",
     )
     selected_team = selected_label.split(" — ")[0]
     st.session_state.selected_team = selected_team
@@ -94,6 +95,8 @@ def get_team_and_season():
         index=AVAILABLE_SEASONS.index(st.session_state.selected_season) if st.session_state.selected_season in AVAILABLE_SEASONS else 0,
         key="season_selector_widget",
     )
+    st.session_state.selected_season = selected_season
+    st.sidebar.markdown("---")
     st.session_state.selected_season = selected_season
 
     return selected_team, selected_season
