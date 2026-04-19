@@ -1,5 +1,6 @@
 """
-Lions Punter Rater — 2024 season
+Lions OC Rater — Offensive Coordinators
+Career default with 2024-only toggle. League-wide.
 """
 import json
 from pathlib import Path
@@ -10,38 +11,44 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
 
-st.set_page_config(page_title="Lions Punter Rater", page_icon="🦁", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="NFL OC Rater", page_icon="🦁", layout="wide", initial_sidebar_state="expanded")
 inject_css()
 
-POSITION_GROUP = "punter"
-PAGE_URL = "https://lions-rater.streamlit.app/Punter"
-DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_punters_with_z.parquet"
-METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "punter_stat_metadata.json"
+POSITION_GROUP = "oc"
+PAGE_URL = "https://lions-rater.streamlit.app/OC"
+DATA_PATH_CAREER = Path(__file__).resolve().parent.parent / "data" / "master_ocs_with_z.parquet"
+DATA_PATH_2024 = Path(__file__).resolve().parent.parent / "data" / "master_ocs_2024_with_z.parquet"
+METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "oc_stat_metadata.json"
 
 @st.cache_data
-def load_punter_data(): return pl.read_parquet(DATA_PATH).to_pandas()
+def load_oc_career(): return pl.read_parquet(DATA_PATH_CAREER).to_pandas()
 @st.cache_data
-def load_punter_metadata():
+def load_oc_2024(): return pl.read_parquet(DATA_PATH_2024).to_pandas()
+@st.cache_data
+def load_oc_metadata():
     if not METADATA_PATH.exists(): return {}
     with open(METADATA_PATH) as f: return json.load(f)
 
 RAW_COL_MAP = {
-    "avg_distance_z": "avg_distance", "avg_net_z": "avg_net",
-    "inside_20_rate_z": "inside_20_rate", "touchback_rate_z": "touchback_rate",
-    "fair_catch_rate_z": "fair_catch_rate", "pin_rate_z": "pin_rate",
-    "punt_epa_z": "punt_epa",
+    "epa_per_play_z": "epa_per_play", "pass_epa_per_play_z": "pass_epa_per_play",
+    "rush_epa_per_play_z": "rush_epa_per_play", "success_rate_z": "success_rate",
+    "explosive_pass_rate_z": "explosive_pass_rate", "explosive_rush_rate_z": "explosive_rush_rate",
+    "third_down_rate_z": "third_down_rate", "red_zone_td_rate_z": "red_zone_td_rate",
+    "win_pct_z": "win_pct",
+    "off_cap_pct_z": "off_cap_pct", "off_draft_capital_z": "off_draft_capital",
 }
 
 BUNDLES = {
-    "distance": {"label": "📏 Distance", "description": "Raw leg power. Gross and net punt yardage.", "why": "Think a big leg is the most important thing a punter has? Crank this up.", "stats": {"avg_distance_z": 0.50, "avg_net_z": 0.50}},
-    "placement": {"label": "📍 Placement", "description": "Pins opponents deep. Inside-20 rate, avoids touchbacks, forces fair catches.", "why": "Value punters who flip the field with precision, not just power? Slide right.", "stats": {"inside_20_rate_z": 0.30, "touchback_rate_z": 0.20, "fair_catch_rate_z": 0.20, "pin_rate_z": 0.30}},
-    "impact": {"label": "💥 Impact", "description": "Overall field position value measured by EPA.", "why": "Care about the bottom line — how much field position does he actually create? Slide right.", "stats": {"punt_epa_z": 1.00}},
+    "efficiency": {"label": "📊 Offensive efficiency", "description": "Overall EPA per play, passing and rushing EPA. The core measure of offensive production.", "why": "Think raw offensive output is what defines a great OC? Crank this up.", "stats": {"epa_per_play_z": 0.40, "pass_epa_per_play_z": 0.30, "rush_epa_per_play_z": 0.30}},
+    "execution": {"label": "🎯 Situational execution", "description": "Third down conversions and red zone TD rate. Measures playcalling in critical moments.", "why": "Value coordinators who convert when it matters most? Slide right.", "stats": {"third_down_rate_z": 0.50, "red_zone_td_rate_z": 0.50}},
+    "explosiveness": {"label": "💥 Big play ability", "description": "Explosive pass plays (20+ yds) and explosive rush plays (10+ yds). Creates game-breaking moments.", "why": "Want offenses that hit home runs, not just move the chains? Slide right.", "stats": {"explosive_pass_rate_z": 0.55, "explosive_rush_rate_z": 0.45}},
+    "winning": {"label": "🏆 Winning", "description": "Team win percentage during coordinator tenure. The ultimate measure, but the least isolatable.", "why": "Think wins are all that matter, regardless of how? Slide right.", "stats": {"win_pct_z": 1.00}},
 }
-DEFAULT_BUNDLE_WEIGHTS = {"distance": 40, "placement": 60, "impact": 40}
+DEFAULT_BUNDLE_WEIGHTS = {"efficiency": 60, "execution": 50, "explosiveness": 40, "winning": 30}
 
-RADAR_STATS = list(RAW_COL_MAP.keys())
+RADAR_STATS = ["epa_per_play_z", "pass_epa_per_play_z", "rush_epa_per_play_z", "success_rate_z", "explosive_pass_rate_z", "explosive_rush_rate_z", "third_down_rate_z", "red_zone_td_rate_z", "win_pct_z"]
 RADAR_INVERT = set()
-RADAR_LABEL_OVERRIDES = {"avg_distance_z": "Distance", "avg_net_z": "Net yards", "inside_20_rate_z": "Inside 20", "touchback_rate_z": "No touchbacks", "fair_catch_rate_z": "Fair catches", "pin_rate_z": "Pin rate", "punt_epa_z": "Punt EPA"}
+RADAR_LABEL_OVERRIDES = {"epa_per_play_z": "Off EPA", "pass_epa_per_play_z": "Pass EPA", "rush_epa_per_play_z": "Rush EPA", "success_rate_z": "Success rate", "explosive_pass_rate_z": "Explosive pass", "explosive_rush_rate_z": "Explosive rush", "third_down_rate_z": "3rd down", "red_zone_td_rate_z": "Red zone", "win_pct_z": "Win %"}
 
 def zscore_to_percentile(z):
     if pd.isna(z): return None
@@ -87,126 +94,201 @@ def format_score(score):
     if pd.isna(score): return "—"
     sign = "+" if score >= 0 else ""
     return f"{sign}{score:.2f} ({score_label(score)})"
+def sample_size_badge(seasons):
+    if pd.isna(seasons): return ""
+    if seasons < 2: return "🔴"
+    if seasons < 4: return "🟡"
+    return ""
 
 SCORE_EXPLAINER = """
-**What this number means.** Weighted average of z-scores — 0 is league-average punter, +1 is one SD above, −1 is one SD below.
+**What this number means.** Weighted average of z-scores — 0 is league-average OC, +1 is one SD above, −1 is one SD below.
 
 **How to read it:** `+1.0` or higher → well above average • `+0.4` to `+1.0` → above average • `−0.4` to `+0.4` → roughly average • `−1.0` or lower → well below average
 
-**Punter population:** 2024 regular season, z-scored against all punters league-wide with 20+ punt attempts.
+**Talent caveat.** These stats measure the offense's output, not the coordinator in isolation. A great QB inflates OC numbers. A bad offensive line deflates them. The scores reflect the whole unit's performance under this coordinator's playcalling.
 
-**Touchback rate is inverted** — fewer touchbacks = better, so positive z = good.
-
-**Pin rate** combines inside-20 and downed punts — the total "pinned deep" rate.
+**Career vs 2024.** Career mode averages across all seasons (2016-2024). 2024-only shows single-season performance. Career is more stable; 2024 is more current.
 """
 
-if "punter_loaded_algo" not in st.session_state: st.session_state.punter_loaded_algo = None
+if "oc_loaded_algo" not in st.session_state: st.session_state.oc_loaded_algo = None
 if "upvoted_ids" not in st.session_state: st.session_state.upvoted_ids = set()
-if "punter_tiers_enabled" not in st.session_state: st.session_state.punter_tiers_enabled = [1, 2]
+if "oc_tiers_enabled" not in st.session_state: st.session_state.oc_tiers_enabled = [1, 2]
 
-st.title("🦁 Lions Punter Rater")
-st.markdown("What makes a great player? **You decide.** Drag the sliders to weight what you value.")
-st.caption("2024 regular season • Z-scores vs all punters league-wide (20+ attempts)")
+st.title("🦁 NFL Offensive Coordinator Rater")
+st.markdown("What makes a great player? **You decide.** Drag the sliders to weight what you value, and watch NFL offensive coordinators re-rank in real time.")
 
-try: df = load_punter_data()
-except FileNotFoundError: st.error(f"Couldn't find punter data at {DATA_PATH}."); st.stop()
+# Career vs 2024 toggle
+view_mode = st.radio("View mode", ["Career (2016-2024)", "2024 season only"], horizontal=True, index=0)
+is_career = view_mode.startswith("Career")
 
-meta = load_punter_metadata()
+if is_career:
+    st.caption("Career averages 2016-2024 • Z-scores vs all OCs with 2+ seasons • League-wide")
+else:
+    st.caption("2024 regular season only • Z-scores vs all 2024 OCs • League-wide")
+
+try:
+    if is_career:
+        df = load_oc_career()
+    else:
+        df = load_oc_2024()
+except FileNotFoundError:
+    st.error("Couldn't find OC data."); st.stop()
+
+meta = load_oc_metadata()
 stat_tiers = meta.get("stat_tiers", {}); stat_labels = meta.get("stat_labels", {}); stat_methodology = meta.get("stat_methodology", {})
+
+st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize, left to ignore.")
+st.sidebar.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+advanced_mode = st.sidebar.toggle("🔬 Advanced mode", value=False)
 
 st.markdown("### Which stats should count?")
 tier_cols = st.columns(4)
 new_enabled = []
 for i, tier in enumerate([1, 2, 3, 4]):
     with tier_cols[i]:
-        checked = st.checkbox(f"{tier_badge(tier)} {TIER_LABELS[tier]}", value=(tier in st.session_state.punter_tiers_enabled), help=TIER_DESCRIPTIONS[tier], key=f"punter_tier_checkbox_{tier}")
+        checked = st.checkbox(f"{tier_badge(tier)} {TIER_LABELS[tier]}", value=(tier in st.session_state.oc_tiers_enabled), help=TIER_DESCRIPTIONS[tier], key=f"oc_tier_checkbox_{tier}")
         if checked: new_enabled.append(tier)
-st.session_state.punter_tiers_enabled = new_enabled
+st.session_state.oc_tiers_enabled = new_enabled
 if not new_enabled: st.warning("Enable at least one tier."); st.stop()
 active_bundles = filter_bundles_by_tier(BUNDLES, stat_tiers, new_enabled)
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
 bundle_weights = {}; effective_weights = {}
-if not active_bundles: st.info("No bundles in enabled tiers."); st.stop()
-st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize, left to ignore.")
-for bk, bundle in active_bundles.items():
-    tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
-    st.sidebar.markdown(f"**{bundle['label']}**")
-    st.sidebar.markdown(f"<div class='bundle-desc'>{bundle['description']}<br><small>{tier_summary}</small></div>", unsafe_allow_html=True)
-    if f"punter_bundle_{bk}" not in st.session_state: st.session_state[f"punter_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
-    bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"punter_bundle_{bk}", label_visibility="collapsed", help=bundle.get("why", ""))
-    st.sidebar.caption(f"_↑ {bundle.get('why', '')}_")
-for bk in BUNDLES:
-    if bk not in bundle_weights: bundle_weights[bk] = 0
-effective_weights = compute_effective_weights(active_bundles, bundle_weights)
+if not advanced_mode:
+    if not active_bundles: st.info("No bundles in enabled tiers."); st.stop()
+    st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize, left to ignore.")
+    for bk, bundle in active_bundles.items():
+        tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
+        st.sidebar.markdown(f"**{bundle['label']}**")
+        st.sidebar.markdown(f"<div class='bundle-desc'>{bundle['description']}<br><small>{tier_summary}</small></div>", unsafe_allow_html=True)
+        if f"oc_bundle_{bk}" not in st.session_state: st.session_state[f"oc_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
+        bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"oc_bundle_{bk}", label_visibility="collapsed", help=bundle.get("why", ""))
+        st.sidebar.caption(f"_↑ {bundle.get('why', '')}_")
+    for bk in BUNDLES:
+        if bk not in bundle_weights: bundle_weights[bk] = 0
+    effective_weights = compute_effective_weights(active_bundles, bundle_weights)
+else:
+    st.sidebar.caption("Direct control over every stat.")
+    all_enabled_stats = sorted([z for z, t in stat_tiers.items() if t in new_enabled], key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z)))
+    for z_col in all_enabled_stats:
+        tier = stat_tiers.get(z_col, 2); label = stat_labels.get(z_col, z_col); meth = stat_methodology.get(z_col, {}); help_parts = []
+        if meth.get("what"): help_parts.append(f"What: {meth['what']}")
+        if meth.get("limits"): help_parts.append(f"Limits: {meth['limits']}")
+        w = st.sidebar.slider(f"{tier_badge(tier)} {label}", 0, 100, 50, 5, key=f"adv_oc_{z_col}", help="\n\n".join(help_parts) if help_parts else None)
+        if w > 0: effective_weights[z_col] = w
+    bundle_weights = {bk: 0 for bk in BUNDLES}
 
-punters = df.copy()
-if len(punters) == 0: st.warning("No punters found."); st.stop()
-punters = score_players(punters, effective_weights)
+ocs = df.copy()
+if len(ocs) == 0: st.warning("No OCs found."); st.stop()
+ocs = score_players(ocs, effective_weights)
 total_weight = sum(effective_weights.values())
 if total_weight == 0: st.info("All weights are zero — drag some sliders.")
-punters = punters.sort_values("score", ascending=False).reset_index(drop=True)
-punters.index = punters.index + 1
+ocs = ocs.sort_values("score", ascending=False).reset_index(drop=True)
+ocs.index = ocs.index + 1
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.subheader("Ranking")
-ranked = punters.copy()
+ranked = ocs.copy()
 
 if len(ranked) > 0:
     top = ranked.iloc[0]
-    top_name = top.get("player_name", "—"); top_score = top["score"]
+    top_name = top.get("coordinator", "—"); top_score = top["score"]
+    top_teams = top.get("teams", top.get("team", ""))
     sign = "+" if top_score >= 0 else ""
-    st.markdown(f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;margin-bottom:8px;font-size:1.1rem;'><span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span> &nbsp;·&nbsp; <strong>{top_name}</strong> &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span> <span style='opacity:0.85;'>({format_percentile(zscore_to_percentile(top_score))})</span></div>", unsafe_allow_html=True)
+    seasons_val = top.get("seasons", 1)
+    badge = sample_size_badge(seasons_val) if is_career else ""
+    st.markdown(f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;margin-bottom:8px;font-size:1.1rem;'><span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span> &nbsp;·&nbsp; <strong>{top_name}</strong> ({top_teams}) {badge} &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span> <span style='opacity:0.85;'>({format_percentile(zscore_to_percentile(top_score))})</span></div>", unsafe_allow_html=True)
 
-display_df = pd.DataFrame({
-    "Rank": ranked.index,
-    "Player": ranked["player_name"],
-    "Games": ranked.get("games", pd.Series([0]*len(ranked))).fillna(0).astype(int),
-    "Punts": ranked.get("punt_att", pd.Series([0]*len(ranked))).fillna(0).astype(int),
-    "Avg dist": ranked.get("avg_distance", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1f}" if pd.notna(x) else "—"),
-    "Net": ranked.get("avg_net", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1f}" if pd.notna(x) else "—"),
-    "In 20 %": ranked.get("inside_20_rate", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—"),
-    "Your score": ranked["score"].apply(format_score),
-})
+if is_career:
+    display_df = pd.DataFrame({
+        "Rank": ranked.index,
+        "": ranked.get("seasons", pd.Series([1]*len(ranked))).apply(sample_size_badge),
+        "Coordinator": ranked.get("coordinator", ranked.get("player_name", "—")),
+        "Teams": ranked.get("teams", ranked.get("team", "—")),
+        "Seasons": ranked.get("seasons", pd.Series([1]*len(ranked))).fillna(1).astype(int),
+        "W-L": ranked.apply(lambda r: f"{int(r.get('total_wins', 0))}-{int(r.get('total_losses', 0))}", axis=1),
+        "EPA/play": ranked.get("epa_per_play", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:+.3f}" if pd.notna(x) else "—"),
+        "💰 Cap %": ranked.get("off_cap_pct", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—"),
+        "💰 Draft $": ranked.get("off_draft_capital", pd.Series([0]*len(ranked))).apply(lambda x: f"{int(x):,}" if pd.notna(x) else "—"),
+        "Your score": ranked["score"].apply(format_score),
+    })
+else:
+    display_df = pd.DataFrame({
+        "Rank": ranked.index,
+        "Coordinator": ranked.get("coordinator", ranked.get("player_name", "—")),
+        "Team": ranked.get("team", "—"),
+        "EPA/play": ranked.get("epa_per_play", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:+.3f}" if pd.notna(x) else "—"),
+        "3rd down": ranked.get("third_down_rate", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—"),
+        "Red zone": ranked.get("red_zone_td_rate", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—"),
+        "Your score": ranked["score"].apply(format_score),
+    })
+
 st.dataframe(display_df, use_container_width=True, hide_index=True)
 with st.expander("ℹ️ How is the score calculated?"): st.markdown(SCORE_EXPLAINER)
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.subheader("Player detail")
-selected = st.selectbox("Pick a punter", options=ranked["player_name"].tolist(), index=0)
-player = ranked[ranked["player_name"] == selected].iloc[0]
+st.subheader("Coordinator detail")
+coord_col = "coordinator" if "coordinator" in ranked.columns else "player_name"
+selected = st.selectbox("Pick a coordinator", options=ranked[coord_col].tolist(), index=0)
+player = ranked[ranked[coord_col] == selected].iloc[0]
 
 c1, c2 = st.columns([1, 1])
 with c1:
     st.markdown(f"### {selected}")
-    st.caption(f"{int(player.get('games') or 0)} games · {int(player.get('punt_att') or 0)} punts · Avg {player.get('avg_distance', 0):.1f} yds · Net {player.get('avg_net', 0):.1f} yds")
+    teams = player.get("teams", player.get("team", ""))
+    if is_career:
+        st.caption(f"**{teams}** · {int(player.get('seasons', 1))} seasons · {int(player.get('total_wins', 0))}-{int(player.get('total_losses', 0))} record")
+    else:
+        st.caption(f"**{teams}** · 2024 season")
+
+    # Investment context — display only, not scored
+    cap_pct = player.get("off_cap_pct")
+    draft_cap = player.get("off_draft_capital")
+    if pd.notna(cap_pct) or pd.notna(draft_cap):
+        cap_str = f"{cap_pct:.1%}" if pd.notna(cap_pct) else "—"
+        draft_str = f"{int(draft_cap):,}" if pd.notna(draft_cap) else "—"
+        st.markdown(f"**💰 Roster investment:** {cap_str} of cap on offense · {draft_str} draft capital")
+        st.caption("_Context only — not factored into the score. Helps you judge whether results came from talent or scheme._")
+
     st.markdown(f"**Your score:** {format_score(player['score'])}")
     st.markdown("---"); st.markdown("**How your score breaks down**")
-    bundle_rows = []
-    for bk, bundle in active_bundles.items():
-        bw = bundle_weights.get(bk, 0)
-        if bw == 0: continue
-        contribution = sum(player.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(player.get(z)) and total_weight > 0)
-        bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
-    if bundle_rows: st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
-    with st.expander("🔬 See the underlying stats"):
-        stat_rows = []; shown = set()
-        for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
-        for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+    if not advanced_mode:
+        bundle_rows = []
+        for bk, bundle in active_bundles.items():
+            bw = bundle_weights.get(bk, 0)
+            if bw == 0: continue
+            contribution = sum(player.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(player.get(z)) and total_weight > 0)
+            bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
+        if bundle_rows: st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
+        with st.expander("🔬 See the underlying stats"):
+            stat_rows = []; shown = set()
+            for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
+            for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+                raw_col = RAW_COL_MAP.get(z_col); z = player.get(z_col); raw = player.get(raw_col) if raw_col else None
+                if raw_col in ("success_rate", "third_down_rate", "red_zone_td_rate", "win_pct", "explosive_pass_rate", "explosive_rush_rate"):
+                    raw_fmt = f"{raw:.1%}" if pd.notna(raw) else "—"
+                else:
+                    raw_fmt = f"{raw:+.4f}" if pd.notna(raw) else "—"
+                stat_rows.append({"Tier": tier_badge(stat_tiers.get(z_col, 2)), "Stat": stat_labels.get(z_col, z_col), "Raw": raw_fmt, "Z-score": f"{z:+.2f}" if pd.notna(z) else "—"})
+            st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
+    else:
+        rows = []
+        for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
             raw_col = RAW_COL_MAP.get(z_col); z = player.get(z_col); raw = player.get(raw_col) if raw_col else None
-            if raw_col in ("inside_20_rate", "touchback_rate", "fair_catch_rate", "pin_rate"):
+            w = effective_weights.get(z_col, 0); contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
+            if raw_col in ("success_rate", "third_down_rate", "red_zone_td_rate", "win_pct", "explosive_pass_rate", "explosive_rush_rate"):
                 raw_fmt = f"{raw:.1%}" if pd.notna(raw) else "—"
             else:
-                raw_fmt = f"{raw:.1f}" if pd.notna(raw) else "—"
-            stat_rows.append({"Tier": tier_badge(stat_tiers.get(z_col, 2)), "Stat": stat_labels.get(z_col, z_col), "Raw": raw_fmt, "Z-score": f"{z:+.2f}" if pd.notna(z) else "—"})
-        st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
+                raw_fmt = f"{raw:+.4f}" if pd.notna(raw) else "—"
+            rows.append({"Tier": tier_badge(stat_tiers.get(z_col, 2)), "Stat": stat_labels.get(z_col, z_col), "Raw": raw_fmt, "Z-score": f"{z:+.2f}" if pd.notna(z) else "—", "Weight": f"{w}", "Points added": f"{contrib:+.2f}"})
+        if rows: st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 with c2:
-    st.markdown("**Punter profile** (percentiles vs. league punters)")
+    st.markdown("**OC profile** (percentiles vs. league OCs)")
     fig = build_radar_figure(player, stat_labels, stat_methodology)
     if fig: st.plotly_chart(fig, use_container_width=True)
 
-community_section(position_group=POSITION_GROUP, bundles=BUNDLES, bundle_weights=bundle_weights, advanced_mode=False, page_url=PAGE_URL)
+community_section(position_group=POSITION_GROUP, bundles=BUNDLES, bundle_weights=bundle_weights, advanced_mode=advanced_mode, page_url=PAGE_URL)
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.caption("Data via [nflverse](https://github.com/nflverse) • 2024 regular season • Z-scored against 34 punters with 20+ attempts • Fan project, not affiliated with the NFL or Detroit Lions.")
+st.caption("Data via [nflverse](https://github.com/nflverse) • 2016-2024 regular seasons • Coordinator tenures manually compiled • ⚠️ Stats reflect the entire offensive unit, not the coordinator in isolation • Fan project, not affiliated with the NFL.")
