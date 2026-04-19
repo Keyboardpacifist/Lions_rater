@@ -112,6 +112,7 @@ BUNDLES = {
     "efficiency": {
         "label": "⚡ Efficiency",
         "description": "Productive on a per-carry basis. Doesn't waste touches.",
+        "why": "Think the best RBs make the most of every carry? Crank this up.",
         "stats": {
             "yards_per_carry_z": 0.25,
             "epa_per_rush_z": 0.35,
@@ -122,6 +123,7 @@ BUNDLES = {
     "tackle_breaking": {
         "label": "💪 Tackle breaking",
         "description": "Makes defenders miss and grinds out yards after contact.",
+        "why": "Value backs who create yards on their own after the line does its job? Slide right.",
         "stats": {
             "broken_tackles_per_att_z": 0.40,
             "yards_after_contact_per_att_z": 0.45,
@@ -131,6 +133,7 @@ BUNDLES = {
     "explosive": {
         "label": "💥 Explosive plays",
         "description": "Hits the home run. Big-play threat every carry.",
+        "why": "Want the guy who can take it to the house on any play? Slide right.",
         "stats": {
             "explosive_run_rate_z": 0.50,
             "explosive_15_rate_z": 0.50,
@@ -139,6 +142,7 @@ BUNDLES = {
     "volume": {
         "label": "📊 Volume & usage",
         "description": "Workhorse. The offense runs through him.",
+        "why": "Think the best RB is the one who carries the load? Slide right.",
         "stats": {
             "carries_per_game_z": 0.35,
             "snap_share_z": 0.30,
@@ -148,6 +152,7 @@ BUNDLES = {
     "receiving": {
         "label": "🤲 Receiving back",
         "description": "Dual threat out of the backfield as a pass catcher.",
+        "why": "Value backs who can line up as a receiver and win in the passing game? Slide right.",
         "stats": {
             "rec_yards_per_target_z": 0.25,
             "yac_per_reception_z": 0.20,
@@ -158,6 +163,7 @@ BUNDLES = {
     "short_yardage": {
         "label": "🎯 Short yardage & goal line",
         "description": "Gets the tough yards when the team needs them most.",
+        "why": "Think the best ability is converting on 3rd-and-1 and punching it in at the goal line? Slide right.",
         "stats": {
             "short_yardage_conv_rate_z": 0.50,
             "goal_line_td_rate_z": 0.30,
@@ -496,7 +502,7 @@ if not advanced_mode:
         st.info("No bundles have stats in the enabled tiers. Try enabling more tiers.")
         st.stop()
 
-    st.sidebar.caption("Drag to weight what matters to you. 0 = ignore, 100 = max.")
+    st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize, left to ignore.")
 
     for bk, bundle in active_bundles.items():
         tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
