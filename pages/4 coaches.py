@@ -98,6 +98,7 @@ BUNDLES = {
     "decision_making": {
         "label": "⚡ Decision-making",
         "description": "Smart 4th-down calls and clock management.",
+        "why": "Think in-game decisions define a great head coach? Crank this up.",
         "stats": {
             "fourth_down_epa_z": 0.60,
             "timeout_efficiency_z": 0.40,
@@ -106,6 +107,7 @@ BUNDLES = {
     "situational": {
         "label": "💪 Situational performance",
         "description": "Comes through in close games, beats good teams, uses bye weeks well.",
+        "why": "Value coaches who win the games that matter most? Slide right.",
         "stats": {
             "close_game_win_pct_z": 0.40,
             "record_vs_winning_win_pct_z": 0.40,
@@ -115,6 +117,7 @@ BUNDLES = {
     "discipline": {
         "label": "🎯 Discipline",
         "description": "Team avoids unforced errors. Low pre-snap penalties.",
+        "why": "Think well-coached teams don't beat themselves? Slide right.",
         "stats": {
             "pre_snap_penalty_rate_z": 1.0,
         },
@@ -122,6 +125,7 @@ BUNDLES = {
     "efficiency": {
         "label": "📊 Efficiency vs. expectations",
         "description": "Beats the spread and cashes in red zone trips.",
+        "why": "Want coaches who outperform what Vegas expects? Slide right.",
         "stats": {
             "ats_win_pct_z": 0.60,
             "rz_td_rate_z": 0.40,
@@ -480,7 +484,7 @@ if not advanced_mode:
         st.info("No bundles have stats in the enabled tiers. Try enabling more tiers.")
         st.stop()
 
-    st.sidebar.caption("Drag to weight what matters to you. 0 = ignore, 100 = max.")
+    st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize, left to ignore.")
 
     for bk, bundle in active_bundles.items():
         tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
