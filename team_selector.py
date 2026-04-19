@@ -101,10 +101,22 @@ def get_team_and_season():
 
 def filter_by_team_and_season(df, team, season, team_col="recent_team", season_col="season_year"):
     """Filter a league-wide dataframe to a specific team and season.
-    Handles historical team abbreviation changes."""
+    Handles historical team abbreviation changes and column name variations."""
     # Normalize team column in data
     if team_col in df.columns:
         df[team_col] = df[team_col].apply(normalize_team)
+
+    # Handle season column — try season_year first, then season
+    if season_col not in df.columns:
+        if "season_year" in df.columns:
+            season_col = "season_year"
+        elif "season" in df.columns:
+            season_col = "season"
+        else:
+            # No season column — return all rows for this team
+            if team_col in df.columns:
+                return df[df[team_col] == team].copy()
+            return df.copy()
 
     mask = (df[season_col] == season)
     if team_col in df.columns:
