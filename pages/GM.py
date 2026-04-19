@@ -98,6 +98,7 @@ BUNDLES = {
     "drafting": {
         "label": "🎯 Drafting",
         "description": "Hits on picks, finds Day 3 gems, nails the first round. Quality rewards Pro Bowlers and All-Pros.",
+        "why": "Think the draft is where franchises are built? Crank this up.",
         "stats": {
             "draft_hit_rate_z": 0.25,
             "draft_quality_score_z": 0.30,
@@ -108,6 +109,7 @@ BUNDLES = {
     "free_agency": {
         "label": "💰 Free agency",
         "description": "Signs guys who actually play. Gets value for the money.",
+        "why": "Value GMs who find contributors in free agency without overpaying? Slide right.",
         "stats": {
             "fa_hit_rate_z": 0.60,
             "fa_value_efficiency_z": 0.40,
@@ -116,6 +118,7 @@ BUNDLES = {
     "trades": {
         "label": "🔄 Trades",
         "description": "Comes out ahead in swaps. Active on the phones.",
+        "why": "Think the best GMs win trades and aren't afraid to make moves? Slide right.",
         "stats": {
             "trade_surplus_z": 0.70,
             "trade_activity_z": 0.30,
@@ -124,6 +127,7 @@ BUNDLES = {
     "roster_building": {
         "label": "🧱 Roster building",
         "description": "Re-signs own draft picks. Mines UDFAs that stick.",
+        "why": "Value GMs who develop and retain homegrown talent? Slide right.",
         "stats": {
             "core_retention_z": 0.60,
             "udfa_hit_rate_z": 0.40,
@@ -482,7 +486,7 @@ if not advanced_mode:
         st.info("No bundles have stats in the enabled tiers. Try enabling more tiers.")
         st.stop()
 
-    st.sidebar.caption("Drag to weight what matters to you. 0 = ignore, 100 = max.")
+    st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize, left to ignore.")
 
     for bk, bundle in active_bundles.items():
         tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
