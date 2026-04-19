@@ -9,14 +9,19 @@ import polars as pl
 import streamlit as st
 import plotly.graph_objects as go
 from scipy.stats import norm
+from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
 from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
 
-st.set_page_config(page_title="Lions TE Rater", page_icon="🦁", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="TE Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
+
+# ── Team & Season selector ────────────────────────────────────
+selected_team, selected_season = get_team_and_season()
+team_name = NFL_TEAMS.get(selected_team, selected_team)
 
 POSITION_GROUP = "te"
 PAGE_URL = "https://lions-rater.streamlit.app/TE"
-DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_wr_te_with_z.parquet"
+DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "league_te_all_seasons.parquet"
 METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "wr_te_stat_metadata.json"
 
 @st.cache_data
@@ -137,6 +142,12 @@ if "te_tiers_enabled" not in st.session_state: st.session_state.te_tiers_enabled
 try: df = load_te_data()
 except FileNotFoundError: st.error(f"Couldn't find TE data at {DATA_PATH}."); st.stop()
 
+# Filter to selected team and season
+df = filter_by_team_and_season(df, selected_team, selected_season, team_col="recent_team", season_col="season_year")
+if len(df) == 0:
+    st.warning(f"No {team_name} tight ends found for {selected_season}.")
+    st.stop()
+
 meta = load_te_metadata()
 stat_tiers = meta.get("stat_tiers", {}); stat_labels = meta.get("stat_labels", {}); stat_methodology = meta.get("stat_methodology", {})
 
@@ -147,9 +158,9 @@ if "algo" in st.query_params and st.session_state.te_loaded_algo is None:
 # ══════════════════════════════════════════════════════════════
 # PAGE
 # ══════════════════════════════════════════════════════════════
-st.title("🦁 Lions tight ends")
+st.title(f"🏈 {team_name} tight ends")
 st.markdown("What makes a great TE? **You decide.** Use the sliders on the left to tell us what you value most, and the rankings update instantly.")
-st.caption("2024 regular season · Compared to all 86 TEs league-wide with 200+ offensive snaps")
+st.caption(f"{selected_season} regular season · Compared to all 86 TEs league-wide with 200+ offensive snaps")
 
 st.sidebar.header("What matters to you?")
 st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize it, or all the way left to ignore it.")
