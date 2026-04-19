@@ -107,8 +107,8 @@ def build_radar_figure(player, stat_labels, stat_methodology):
     fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100], tickvals=[25, 50, 75, 100], ticktext=["25", "50", "75", "100"], tickfont=dict(size=9, color="#888"), gridcolor="#ddd"), angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"), bgcolor="rgba(0,0,0,0)"), showlegend=False, margin=dict(l=60, r=60, t=20, b=20), height=380, paper_bgcolor="rgba(0,0,0,0)")
     return fig
 
-TIER_LABELS = {1: "Tier 1 — Counted", 2: "Tier 2 — Contextualized", 3: "Tier 3 — Adjusted", 4: "Tier 4 — Inferred"}
-TIER_DESCRIPTIONS = {1: "Pure recorded facts.", 2: "Counts divided by opportunity.", 3: "Compared against a modeled baseline.", 4: "Inferred from patterns. Use with skepticism."}
+TIER_LABELS = {1: "Counting stats", 2: "Rate stats", 3: "Modeled stats", 4: "Estimated stats"}
+TIER_DESCRIPTIONS = {1: "Raw totals — sacks, tackles, yards, touchdowns.", 2: "Per-game and per-snap averages that adjust for playing time.", 3: "Stats adjusted for expected performance based on a model.", 4: "Inferred from limited data — least reliable. Use with caution."}
 def tier_badge(tier): return {1: "🟢", 2: "🔵", 3: "🟡", 4: "🟠"}.get(tier, "⚪")
 
 def filter_bundles_by_tier(bundles, stat_tiers, enabled_tiers):
@@ -123,18 +123,17 @@ def bundle_tier_summary(bundle_stats, stat_tiers):
     for z in bundle_stats: t = stat_tiers.get(z, 2); counts[t] = counts.get(t, 0) + 1
     return " ".join(f"{tier_badge(t)}×{c}" for t, c in sorted(counts.items()))
 
-def score_label(score):
-    if pd.isna(score): return "—"
-    if score >= 1.0: return "well above group"
-    if score >= 0.4: return "above group"
-    if score >= -0.4: return "about average"
-    if score >= -1.0: return "below group"
-    return "well below group"
+def format_percentile(pct):
+    if pct is None or pd.isna(pct): return "—"
+    if pct >= 99: return "top 1%"
+    if pct >= 50: return f"top {100 - int(pct)}%"
+    return f"bottom {int(pct)}%"
 
 def format_score(score):
     if pd.isna(score): return "—"
     sign = "+" if score >= 0 else ""
-    return f"{sign}{score:.2f} ({score_label(score)})"
+    pct = zscore_to_percentile(score)
+    return f"{sign}{score:.2f} ({format_percentile(pct)})"
 
 def sample_size_badge(snaps):
     if pd.isna(snaps): return ""
@@ -179,7 +178,7 @@ if "upvoted_ids" not in st.session_state: st.session_state.upvoted_ids = set()
 if "ol_tiers_enabled" not in st.session_state: st.session_state.ol_tiers_enabled = [1, 2]
 
 st.title("🦁 Lions Offensive Line Rater")
-st.markdown("**Build your own algorithm.** Drag the sliders to weight what you value, and watch the Lions starting five re-rank in real time. _No 'best lineman' — just **your** best lineman._")
+st.markdown("What makes a great player? **You decide.** Drag the sliders to weight what you value, and watch the Lions starting five re-rank in real time. _No 'best lineman' — just **your** best lineman._")
 st.caption("2024 regular season • Z-scores vs all 153 starting OL league-wide • Position-specific run gap attribution")
 
 try: df = load_ol_data()
@@ -192,18 +191,18 @@ if "algo" in st.query_params and st.session_state.ol_loaded_algo is None:
     linked = get_algorithm_by_slug(st.query_params["algo"])
     if linked and linked.get("position_group") == POSITION_GROUP: apply_algo_weights(linked, BUNDLES); st.rerun()
 
-st.sidebar.header("Filters")
+st.sidebar.header("What matters to you?")
 st.sidebar.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 advanced_mode = st.sidebar.toggle("🔬 Advanced mode", value=False, help="Show individual stat sliders.")
-st.sidebar.header("What do you value?")
+st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize, left to ignore.")
 
 if st.session_state.ol_loaded_algo:
     la = st.session_state.ol_loaded_algo
     st.sidebar.info(f"Loaded: **{la['name']}** by {la['author']}\n\n_{la.get('description', '')}_")
     if st.sidebar.button("Clear loaded algorithm"): st.session_state.ol_loaded_algo = None
 
-st.markdown("### How speculative do you want to get?")
-st.caption("Each stat is labeled by how much trust it asks from you.")
+st.markdown("### Which stats should count?")
+st.caption("Check more boxes to include more types of stats. More boxes = more data, but less certainty.")
 tier_cols = st.columns(4)
 new_enabled = []
 for i, tier in enumerate([1, 2, 3, 4]):
@@ -241,7 +240,7 @@ else:
         if w > 0: effective_weights[z_col] = w
     bundle_weights = {bk: 0 for bk in BUNDLES}
 
-st.markdown("### Who's in the pool?")
+
 st.caption("Lions 2024 starting offensive linemen. Z-scores computed against all 153 qualified starting OL league-wide. Position-specific gap attribution for run blocking.")
 ol = df.copy()
 if len(ol) == 0: st.warning("No OL found."); st.stop()
@@ -262,7 +261,7 @@ if len(ranked) > 0:
     top_score = top["score"]; top_snaps = top.get("off_snaps", 0)
     badge = sample_size_badge(top_snaps); sign = "+" if top_score >= 0 else ""
     pos_part = f" ({top_pos})" if top_pos else ""
-    st.markdown(f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;margin-bottom:8px;font-size:1.1rem;'><span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span> &nbsp;·&nbsp; <strong>{top_name}</strong>{pos_part} {badge} &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span> <span style='opacity:0.85;'>({score_label(top_score)})</span></div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;margin-bottom:8px;font-size:1.1rem;'><span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span> &nbsp;·&nbsp; <strong>{top_name}</strong>{pos_part} {badge} &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span> <span style='opacity:0.85;'>({format_percentile(zscore_to_percentile(top_score))})</span></div>", unsafe_allow_html=True)
     warn = sample_size_caption(top_snaps)
     if warn: st.warning(warn)
 
@@ -275,10 +274,10 @@ display_df = pd.DataFrame({
     "Games": ranked.get("games_played", pd.Series([0]*len(ranked))).fillna(0).astype(int),
     "Snaps": ranked.get("off_snaps", pd.Series([0]*len(ranked))).fillna(0).astype(int),
     "Penalties": ranked.get("penalties_total", pd.Series([0]*len(ranked))).fillna(0).astype(int),
-    "Score": ranked["score"].apply(format_score),
+    "Your score": ranked["score"].apply(format_score),
 })
 st.dataframe(display_df, use_container_width=True, hide_index=True)
-with st.expander("ℹ️ How is this score calculated?"): st.markdown(SCORE_EXPLAINER)
+with st.expander("ℹ️ How is the score calculated?"): st.markdown(SCORE_EXPLAINER)
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.subheader("Player detail")
@@ -302,7 +301,7 @@ with c1:
             bw = bundle_weights.get(bk, 0)
             if bw == 0: continue
             contribution = sum(player.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(player.get(z)) and total_weight > 0)
-            bundle_rows.append({"Bundle": bundle["label"], "Your weight": f"{bw}", "Contribution": f"{contribution:+.2f}"})
+            bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
         if bundle_rows: st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
         else: st.caption("No bundles weighted.")
         with st.expander("🔬 See the underlying stats"):
@@ -318,7 +317,7 @@ with c1:
         for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
             raw_col = RAW_COL_MAP.get(z_col); z = player.get(z_col); raw = player.get(raw_col) if raw_col else None
             w = effective_weights.get(z_col, 0); contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
-            rows.append({"Tier": tier_badge(stat_tiers.get(z_col, 2)), "Stat": stat_labels.get(z_col, z_col), "Raw": f"{raw:.3f}" if pd.notna(raw) else "—", "Z-score": f"{z:+.2f}" if pd.notna(z) else "—", "Weight": f"{w}", "Contribution": f"{contrib:+.2f}"})
+            rows.append({"Tier": tier_badge(stat_tiers.get(z_col, 2)), "Stat": stat_labels.get(z_col, z_col), "Raw": f"{raw:.3f}" if pd.notna(raw) else "—", "Z-score": f"{z:+.2f}" if pd.notna(z) else "—", "Weight": f"{w}", "Points added": f"{contrib:+.2f}"})
         if rows: st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 with c2:
