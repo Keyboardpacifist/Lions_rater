@@ -9,14 +9,19 @@ import polars as pl
 import streamlit as st
 import plotly.graph_objects as go
 from scipy.stats import norm
+from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
 from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
 
-st.set_page_config(page_title="NFL QB Rater", page_icon="🦁", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="QB Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
+
+# ── Team & Season selector ────────────────────────────────────
+selected_team, selected_season = get_team_and_season()
+team_name = NFL_TEAMS.get(selected_team, selected_team)
 
 POSITION_GROUP = "qb"
 PAGE_URL = "https://lions-rater.streamlit.app/QB"
-DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_qbs_2024_with_z.parquet"
+DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "league_qb_all_seasons.parquet"
 METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "qb_stat_metadata.json"
 
 @st.cache_data
@@ -174,6 +179,12 @@ if "qb_tiers_enabled" not in st.session_state: st.session_state.qb_tiers_enabled
 try: df = load_qb_data()
 except FileNotFoundError: st.error(f"Couldn't find QB data at {DATA_PATH}."); st.stop()
 
+# Filter to selected team and season
+df = filter_by_team_and_season(df, selected_team, selected_season, team_col="recent_team", season_col="season_year")
+if len(df) == 0:
+    st.warning(f"No {team_name} quarterbacks found for {selected_season}.")
+    st.stop()
+
 meta = load_qb_metadata()
 stat_tiers = meta.get("stat_tiers", {}); stat_labels = meta.get("stat_labels", {}); stat_methodology = meta.get("stat_methodology", {})
 
@@ -185,9 +196,9 @@ if "algo" in st.query_params and st.session_state.qb_loaded_algo is None:
 # ══════════════════════════════════════════════════════════════
 # PAGE HEADER
 # ══════════════════════════════════════════════════════════════
-st.title("🦁 NFL quarterbacks")
+st.title(f"🏈 {team_name} quarterbacks")
 st.markdown("What makes a great QB? **You decide.** Use the sliders on the left to tell us what you value most, and the rankings update instantly.")
-st.caption("2024 regular season · Compared to all 39 QBs league-wide with 200+ pass attempts")
+st.caption(f"{selected_season} regular season · Compared to all 39 QBs league-wide with 200+ pass attempts")
 
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR
