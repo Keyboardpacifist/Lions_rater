@@ -66,7 +66,7 @@ def get_team_and_season():
     if "selected_team" not in st.session_state:
         st.session_state.selected_team = "DET"
     if "selected_season" not in st.session_state:
-        st.session_state.selected_season = 2024
+        st.session_state.selected_season = 2025
 
     team_options = sorted(NFL_TEAMS.keys())
     team_labels = [f"{abbr} — {NFL_TEAMS[abbr]}" for abbr in team_options]
