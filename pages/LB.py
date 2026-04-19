@@ -204,17 +204,24 @@ if st.session_state.lb_loaded_algo:
 # ══════════════════════════════════════════════════════════════
 st.markdown("### Which stats should count?")
 st.markdown("Check more boxes to include more types of stats. More boxes = more data, but less certainty.")
+available_tiers = set(stat_tiers.values()) if stat_tiers else {1, 2}
 tier_cols = st.columns(4)
 new_enabled = []
 for i, tier in enumerate([1, 2, 3, 4]):
     with tier_cols[i]:
-        checked = st.checkbox(
-            f"{tier_badge(tier)} {TIER_LABELS[tier]}",
-            value=(tier in st.session_state.lb_tiers_enabled),
-            help=TIER_DESCRIPTIONS[tier],
-            key=f"lb_tier_checkbox_{tier}",
-        )
-        if checked: new_enabled.append(tier)
+        has_stats = tier in available_tiers
+        if has_stats:
+            checked = st.checkbox(
+                f"{tier_badge(tier)} {TIER_LABELS[tier]}",
+                value=(tier in st.session_state.lb_tiers_enabled),
+                help=TIER_DESCRIPTIONS[tier],
+                key=f"lb_tier_checkbox_{tier}",
+            )
+            if checked:
+                new_enabled.append(tier)
+        else:
+            st.markdown(f"<span style='opacity:0.35'>{tier_badge(tier)} {TIER_LABELS[tier]}</span>", unsafe_allow_html=True)
+            st.caption("No stats available")
 st.session_state.lb_tiers_enabled = new_enabled
 if not new_enabled:
     st.warning("Check at least one box above to include some stats.")
