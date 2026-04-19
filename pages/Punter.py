@@ -1,5 +1,5 @@
 """
-Lions OC Rater — Offensive Coordinators
+Lions DC Rater — Defensive Coordinators
 Career default with 2024-only toggle. League-wide.
 """
 import json
@@ -11,21 +11,21 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
 
-st.set_page_config(page_title="NFL OC Rater", page_icon="🦁", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="NFL DC Rater", page_icon="🦁", layout="wide", initial_sidebar_state="expanded")
 inject_css()
 
-POSITION_GROUP = "oc"
-PAGE_URL = "https://lions-rater.streamlit.app/OC"
-DATA_PATH_CAREER = Path(__file__).resolve().parent.parent / "data" / "master_ocs_with_z.parquet"
-DATA_PATH_2024 = Path(__file__).resolve().parent.parent / "data" / "master_ocs_2024_with_z.parquet"
-METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "oc_stat_metadata.json"
+POSITION_GROUP = "dc"
+PAGE_URL = "https://lions-rater.streamlit.app/DC"
+DATA_PATH_CAREER = Path(__file__).resolve().parent.parent / "data" / "master_dcs_with_z.parquet"
+DATA_PATH_2024 = Path(__file__).resolve().parent.parent / "data" / "master_dcs_2024_with_z.parquet"
+METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "dc_stat_metadata.json"
 
 @st.cache_data
-def load_oc_career(): return pl.read_parquet(DATA_PATH_CAREER).to_pandas()
+def load_dc_career(): return pl.read_parquet(DATA_PATH_CAREER).to_pandas()
 @st.cache_data
-def load_oc_2024(): return pl.read_parquet(DATA_PATH_2024).to_pandas()
+def load_dc_2024(): return pl.read_parquet(DATA_PATH_2024).to_pandas()
 @st.cache_data
-def load_oc_metadata():
+def load_dc_metadata():
     if not METADATA_PATH.exists(): return {}
     with open(METADATA_PATH) as f: return json.load(f)
 
@@ -35,20 +35,20 @@ RAW_COL_MAP = {
     "explosive_pass_rate_z": "explosive_pass_rate", "explosive_rush_rate_z": "explosive_rush_rate",
     "third_down_rate_z": "third_down_rate", "red_zone_td_rate_z": "red_zone_td_rate",
     "win_pct_z": "win_pct",
-    "off_cap_pct_z": "off_cap_pct", "off_draft_capital_z": "off_draft_capital",
+    "def_cap_pct_z": "def_cap_pct", "def_draft_capital_z": "def_draft_capital",
 }
 
 BUNDLES = {
-    "efficiency": {"label": "📊 Offensive efficiency", "description": "Overall EPA per play, passing and rushing EPA. The core measure of offensive production.", "why": "Think raw offensive output is what defines a great OC? Crank this up.", "stats": {"epa_per_play_z": 0.40, "pass_epa_per_play_z": 0.30, "rush_epa_per_play_z": 0.30}},
-    "execution": {"label": "🎯 Situational execution", "description": "Third down conversions and red zone TD rate. Measures playcalling in critical moments.", "why": "Value coordinators who convert when it matters most? Slide right.", "stats": {"third_down_rate_z": 0.50, "red_zone_td_rate_z": 0.50}},
-    "explosiveness": {"label": "💥 Big play ability", "description": "Explosive pass plays (20+ yds) and explosive rush plays (10+ yds). Creates game-breaking moments.", "why": "Want offenses that hit home runs, not just move the chains? Slide right.", "stats": {"explosive_pass_rate_z": 0.55, "explosive_rush_rate_z": 0.45}},
+    "efficiency": {"label": "🛡️ Defensive efficiency", "description": "EPA allowed per play. Lower = better. Inverted so positive z = good defense.", "why": "Think overall defensive production is what defines a great DC? Crank this up.", "stats": {"epa_per_play_z": 0.40, "pass_epa_per_play_z": 0.30, "rush_epa_per_play_z": 0.30}},
+    "execution": {"label": "🎯 Situational defense", "description": "Third down stops and red zone defense. Prevents conversions in critical moments.", "why": "Value defenses that get off the field on 3rd down and bend but don't break? Slide right.", "stats": {"third_down_rate_z": 0.50, "red_zone_td_rate_z": 0.50}},
+    "explosiveness": {"label": "🔒 Explosive prevention", "description": "Prevents big plays — 20+ yard passes and 10+ yard runs. Keeps offense in front of the sticks.", "why": "Think preventing chunk plays is more important than overall EPA? Slide right.", "stats": {"explosive_pass_rate_z": 0.55, "explosive_rush_rate_z": 0.45}},
     "winning": {"label": "🏆 Winning", "description": "Team win percentage during coordinator tenure. The ultimate measure, but the least isolatable.", "why": "Think wins are all that matter, regardless of how? Slide right.", "stats": {"win_pct_z": 1.00}},
 }
 DEFAULT_BUNDLE_WEIGHTS = {"efficiency": 60, "execution": 50, "explosiveness": 40, "winning": 30}
 
 RADAR_STATS = ["epa_per_play_z", "pass_epa_per_play_z", "rush_epa_per_play_z", "success_rate_z", "explosive_pass_rate_z", "explosive_rush_rate_z", "third_down_rate_z", "red_zone_td_rate_z", "win_pct_z"]
 RADAR_INVERT = set()
-RADAR_LABEL_OVERRIDES = {"epa_per_play_z": "Off EPA", "pass_epa_per_play_z": "Pass EPA", "rush_epa_per_play_z": "Rush EPA", "success_rate_z": "Success rate", "explosive_pass_rate_z": "Explosive pass", "explosive_rush_rate_z": "Explosive rush", "third_down_rate_z": "3rd down", "red_zone_td_rate_z": "Red zone", "win_pct_z": "Win %"}
+RADAR_LABEL_OVERRIDES = {"epa_per_play_z": "Def EPA", "pass_epa_per_play_z": "Pass D", "rush_epa_per_play_z": "Rush D", "success_rate_z": "Opp success", "explosive_pass_rate_z": "No big pass", "explosive_rush_rate_z": "No big rush", "third_down_rate_z": "3rd down D", "red_zone_td_rate_z": "Red zone D", "win_pct_z": "Win %"}
 
 def zscore_to_percentile(z):
     if pd.isna(z): return None
@@ -101,40 +101,41 @@ def sample_size_badge(seasons):
     return ""
 
 SCORE_EXPLAINER = """
-**What this number means.** Weighted average of z-scores — 0 is league-average OC, +1 is one SD above, −1 is one SD below.
+**What this number means.** Weighted average of z-scores — 0 is league-average DC, +1 is one SD above, −1 is one SD below.
 
 **How to read it:** `+1.0` or higher → well above average • `+0.4` to `+1.0` → above average • `−0.4` to `+0.4` → roughly average • `−1.0` or lower → well below average
 
-**Talent caveat.** These stats measure the offense's output, not the coordinator in isolation. A great QB inflates OC numbers. A bad offensive line deflates them. The scores reflect the whole unit's performance under this coordinator's playcalling.
+**All defensive stats are inverted** — lower EPA allowed, fewer explosives allowed, lower conversion rates = better. Positive z-score always means good defense.
+
+**Talent caveat.** These stats measure the defense's output, not the coordinator in isolation. Elite edge rushers and shutdown corners inflate DC numbers. The scores reflect the whole unit's performance under this coordinator's scheme.
 
 **Career vs 2024.** Career mode averages across all seasons (2016-2024). 2024-only shows single-season performance. Career is more stable; 2024 is more current.
 """
 
-if "oc_loaded_algo" not in st.session_state: st.session_state.oc_loaded_algo = None
+if "dc_loaded_algo" not in st.session_state: st.session_state.dc_loaded_algo = None
 if "upvoted_ids" not in st.session_state: st.session_state.upvoted_ids = set()
-if "oc_tiers_enabled" not in st.session_state: st.session_state.oc_tiers_enabled = [1, 2]
+if "dc_tiers_enabled" not in st.session_state: st.session_state.dc_tiers_enabled = [1, 2]
 
-st.title("🦁 NFL Offensive Coordinator Rater")
-st.markdown("What makes a great player? **You decide.** Drag the sliders to weight what you value, and watch NFL offensive coordinators re-rank in real time.")
+st.title("🦁 NFL Defensive Coordinator Rater")
+st.markdown("What makes a great player? **You decide.** Drag the sliders to weight what you value, and watch NFL defensive coordinators re-rank in real time.")
 
-# Career vs 2024 toggle
 view_mode = st.radio("View mode", ["Career (2016-2024)", "2024 season only"], horizontal=True, index=0)
 is_career = view_mode.startswith("Career")
 
 if is_career:
-    st.caption("Career averages 2016-2024 • Z-scores vs all OCs with 2+ seasons • League-wide")
+    st.caption("Career averages 2016-2024 • Z-scores vs all DCs with 2+ seasons • League-wide • All defensive stats inverted (positive = good)")
 else:
-    st.caption("2024 regular season only • Z-scores vs all 2024 OCs • League-wide")
+    st.caption("2024 regular season only • Z-scores vs all 2024 DCs • League-wide • All defensive stats inverted")
 
 try:
     if is_career:
-        df = load_oc_career()
+        df = load_dc_career()
     else:
-        df = load_oc_2024()
+        df = load_dc_2024()
 except FileNotFoundError:
-    st.error("Couldn't find OC data."); st.stop()
+    st.error("Couldn't find DC data."); st.stop()
 
-meta = load_oc_metadata()
+meta = load_dc_metadata()
 stat_tiers = meta.get("stat_tiers", {}); stat_labels = meta.get("stat_labels", {}); stat_methodology = meta.get("stat_methodology", {})
 
 st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize, left to ignore.")
@@ -146,9 +147,9 @@ tier_cols = st.columns(4)
 new_enabled = []
 for i, tier in enumerate([1, 2, 3, 4]):
     with tier_cols[i]:
-        checked = st.checkbox(f"{tier_badge(tier)} {TIER_LABELS[tier]}", value=(tier in st.session_state.oc_tiers_enabled), help=TIER_DESCRIPTIONS[tier], key=f"oc_tier_checkbox_{tier}")
+        checked = st.checkbox(f"{tier_badge(tier)} {TIER_LABELS[tier]}", value=(tier in st.session_state.dc_tiers_enabled), help=TIER_DESCRIPTIONS[tier], key=f"dc_tier_checkbox_{tier}")
         if checked: new_enabled.append(tier)
-st.session_state.oc_tiers_enabled = new_enabled
+st.session_state.dc_tiers_enabled = new_enabled
 if not new_enabled: st.warning("Enable at least one tier."); st.stop()
 active_bundles = filter_bundles_by_tier(BUNDLES, stat_tiers, new_enabled)
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
@@ -161,8 +162,8 @@ if not advanced_mode:
         tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
         st.sidebar.markdown(f"**{bundle['label']}**")
         st.sidebar.markdown(f"<div class='bundle-desc'>{bundle['description']}<br><small>{tier_summary}</small></div>", unsafe_allow_html=True)
-        if f"oc_bundle_{bk}" not in st.session_state: st.session_state[f"oc_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
-        bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"oc_bundle_{bk}", label_visibility="collapsed", help=bundle.get("why", ""))
+        if f"dc_bundle_{bk}" not in st.session_state: st.session_state[f"dc_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
+        bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"dc_bundle_{bk}", label_visibility="collapsed", help=bundle.get("why", ""))
         st.sidebar.caption(f"_↑ {bundle.get('why', '')}_")
     for bk in BUNDLES:
         if bk not in bundle_weights: bundle_weights[bk] = 0
@@ -174,21 +175,21 @@ else:
         tier = stat_tiers.get(z_col, 2); label = stat_labels.get(z_col, z_col); meth = stat_methodology.get(z_col, {}); help_parts = []
         if meth.get("what"): help_parts.append(f"What: {meth['what']}")
         if meth.get("limits"): help_parts.append(f"Limits: {meth['limits']}")
-        w = st.sidebar.slider(f"{tier_badge(tier)} {label}", 0, 100, 50, 5, key=f"adv_oc_{z_col}", help="\n\n".join(help_parts) if help_parts else None)
+        w = st.sidebar.slider(f"{tier_badge(tier)} {label}", 0, 100, 50, 5, key=f"adv_dc_{z_col}", help="\n\n".join(help_parts) if help_parts else None)
         if w > 0: effective_weights[z_col] = w
     bundle_weights = {bk: 0 for bk in BUNDLES}
 
-ocs = df.copy()
-if len(ocs) == 0: st.warning("No OCs found."); st.stop()
-ocs = score_players(ocs, effective_weights)
+dcs = df.copy()
+if len(dcs) == 0: st.warning("No DCs found."); st.stop()
+dcs = score_players(dcs, effective_weights)
 total_weight = sum(effective_weights.values())
 if total_weight == 0: st.info("All weights are zero — drag some sliders.")
-ocs = ocs.sort_values("score", ascending=False).reset_index(drop=True)
-ocs.index = ocs.index + 1
+dcs = dcs.sort_values("score", ascending=False).reset_index(drop=True)
+dcs.index = dcs.index + 1
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.subheader("Ranking")
-ranked = ocs.copy()
+ranked = dcs.copy()
 
 if len(ranked) > 0:
     top = ranked.iloc[0]
@@ -207,9 +208,9 @@ if is_career:
         "Teams": ranked.get("teams", ranked.get("team", "—")),
         "Seasons": ranked.get("seasons", pd.Series([1]*len(ranked))).fillna(1).astype(int),
         "W-L": ranked.apply(lambda r: f"{int(r.get('total_wins', 0))}-{int(r.get('total_losses', 0))}", axis=1),
-        "EPA/play": ranked.get("epa_per_play", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:+.3f}" if pd.notna(x) else "—"),
-        "💰 Cap %": ranked.get("off_cap_pct", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—"),
-        "💰 Draft $": ranked.get("off_draft_capital", pd.Series([0]*len(ranked))).apply(lambda x: f"{int(x):,}" if pd.notna(x) else "—"),
+        "EPA allowed": ranked.get("epa_per_play", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:+.3f}" if pd.notna(x) else "—"),
+        "💰 Cap %": ranked.get("def_cap_pct", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—"),
+        "💰 Draft $": ranked.get("def_draft_capital", pd.Series([0]*len(ranked))).apply(lambda x: f"{int(x):,}" if pd.notna(x) else "—"),
         "Your score": ranked["score"].apply(format_score),
     })
 else:
@@ -217,7 +218,7 @@ else:
         "Rank": ranked.index,
         "Coordinator": ranked.get("coordinator", ranked.get("player_name", "—")),
         "Team": ranked.get("team", "—"),
-        "EPA/play": ranked.get("epa_per_play", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:+.3f}" if pd.notna(x) else "—"),
+        "EPA allowed": ranked.get("epa_per_play", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:+.3f}" if pd.notna(x) else "—"),
         "3rd down": ranked.get("third_down_rate", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—"),
         "Red zone": ranked.get("red_zone_td_rate", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—"),
         "Your score": ranked["score"].apply(format_score),
@@ -242,12 +243,12 @@ with c1:
         st.caption(f"**{teams}** · 2024 season")
 
     # Investment context — display only, not scored
-    cap_pct = player.get("off_cap_pct")
-    draft_cap = player.get("off_draft_capital")
+    cap_pct = player.get("def_cap_pct")
+    draft_cap = player.get("def_draft_capital")
     if pd.notna(cap_pct) or pd.notna(draft_cap):
         cap_str = f"{cap_pct:.1%}" if pd.notna(cap_pct) else "—"
         draft_str = f"{int(draft_cap):,}" if pd.notna(draft_cap) else "—"
-        st.markdown(f"**💰 Roster investment:** {cap_str} of cap on offense · {draft_str} draft capital")
+        st.markdown(f"**💰 Roster investment:** {cap_str} of cap on defense · {draft_str} draft capital")
         st.caption("_Context only — not factored into the score. Helps you judge whether results came from talent or scheme._")
 
     st.markdown(f"**Your score:** {format_score(player['score'])}")
@@ -284,11 +285,11 @@ with c1:
         if rows: st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 with c2:
-    st.markdown("**OC profile** (percentiles vs. league OCs)")
+    st.markdown("**DC profile** (percentiles vs. league DCs)")
     fig = build_radar_figure(player, stat_labels, stat_methodology)
     if fig: st.plotly_chart(fig, use_container_width=True)
 
 community_section(position_group=POSITION_GROUP, bundles=BUNDLES, bundle_weights=bundle_weights, advanced_mode=advanced_mode, page_url=PAGE_URL)
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.caption("Data via [nflverse](https://github.com/nflverse) • 2016-2024 regular seasons • Coordinator tenures manually compiled • ⚠️ Stats reflect the entire offensive unit, not the coordinator in isolation • Fan project, not affiliated with the NFL.")
+st.caption("Data via [nflverse](https://github.com/nflverse) • 2016-2024 regular seasons • Coordinator tenures manually compiled • ⚠️ All defensive stats inverted — positive z = good defense • Stats reflect the entire defensive unit, not the coordinator in isolation • Fan project, not affiliated with the NFL.")
