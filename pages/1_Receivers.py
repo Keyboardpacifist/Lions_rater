@@ -1,38 +1,25 @@
 """
-Lions Receiver Rater — Receivers page (tier migration)
-======================================================
-Tier-based slider UI for WR/TE rankings, matching the OL page's structure.
+Lions Running Back Rater — RB page (tier migration)
+===================================================
+Tier-based slider UI for RB rankings, matching the Receivers and OL pages.
 
 What the tier system does:
-- Loads stat tiers and methodology from data/wr_stat_metadata.json.
+- Loads stat tiers and methodology from data/rb_stat_metadata.json.
 - Tier checkboxes at the top of the page let users filter which stats
   participate in scoring. Tier 4 off by default; there are no Tier 4
-  stats for receivers, so that checkbox is a no-op for now but we keep
-  it for consistency with OL.
+  stats for RBs, so that checkbox is a no-op for now but we keep
+  it for consistency with WR and OL.
 - When a tier is disabled, any stat in that tier is removed from every
   bundle. Bundles that end up empty disappear from the sidebar.
-- Advanced mode shows per-stat sliders with ℹ️ methodology popovers
-  (what/how/limits) for every stat.
+- Advanced mode shows per-stat sliders with methodology in help tooltips.
 - Leaderboard scores carry a label like "+0.47 (above group)".
 - "How is this score calculated?" expander below the leaderboard.
 
-What we preserved from the previous version:
-- Positions filter (WR/TE multiselect)
-- Minimum snaps filter
-- Advanced mode toggle
-- ?algo= deep link loading
-- Community save/browse/fork/upvote via community_section
-- Player Detail section with per-bundle and per-stat drill-down
-- Small-sample caution caption above the leaderboard
-- Footer with data credits
-
-Design notes:
-- Tier 1 raw counts (rec_yards_z etc.) are NOT added to any existing
-  bundle. Adding raw volume to a "Reliability" bundle would break the
-  bundle's meaning. Tier 1 stats are still accessible — they show up in
-  Advanced mode. Bundle mode keeps its clean original design.
-- Bundles carry a tier summary label like "🟢×0 🔵×3 🟡×1" so users can
-  see at a glance which tiers they're trusting when they drag a slider.
+Design note: Tier 1 raw counts (rush_yards_z, rush_tds_z, carries_z,
+receptions_z, rec_yards_z, rec_tds_z) are NOT added to any existing
+bundle. Adding raw volume to "Efficiency" or "Tackle breaking" would
+break the bundle's meaning. Tier 1 stats are still accessible — they
+show up in Advanced mode. Bundle mode keeps its clean original design.
 """
 
 import json
@@ -57,29 +44,29 @@ from lib_shared import (
 # Page config
 # ============================================================
 st.set_page_config(
-    page_title="Lions Receiver Rater",
+    page_title="Lions Running Back Rater",
     page_icon="🦁",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 inject_css()
 
-POSITION_GROUP = "receiver"
-PAGE_URL = "https://lions-rater.streamlit.app/Receivers"
-DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_with_z.parquet"
-METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "wr_stat_metadata.json"
+POSITION_GROUP = "rb"
+PAGE_URL = "https://lions-rater.streamlit.app/Running_backs"
+DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_rbs_with_z.parquet"
+METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "rb_stat_metadata.json"
 
 
 # ============================================================
 # Data loading
 # ============================================================
 @st.cache_data
-def load_receivers_data():
+def load_rb_data():
     return pl.read_parquet(DATA_PATH).to_pandas()
 
 
 @st.cache_data
-def load_receivers_metadata():
+def load_rb_metadata():
     if not METADATA_PATH.exists():
         return {}
     with open(METADATA_PATH) as f:
@@ -87,98 +74,122 @@ def load_receivers_metadata():
 
 
 # ============================================================
-# Stat catalog — raw column names for Advanced mode display
+# Stat catalog — raw column names for Player Detail display
 # ============================================================
 RAW_COL_MAP = {
-    "rec_yards_z": "rec_yards",
+    "rush_yards_z": "rush_yards",
+    "rush_tds_z": "rush_tds",
+    "carries_z": "carries",
     "receptions_z": "receptions",
+    "rec_yards_z": "rec_yards",
     "rec_tds_z": "rec_tds",
-    "targets_z": "targets",
-    "yards_per_target_z": "yards_per_target",
-    "epa_per_target_z": "epa_per_target",
-    "success_rate_z": "success_rate",
-    "catch_rate_z": "catch_rate",
-    "avg_cpoe_z": "avg_cpoe",
-    "first_down_rate_z": "first_down_rate",
+    "yards_per_carry_z": "yards_per_carry",
+    "rush_success_rate_z": "rush_success_rate",
+    "carries_per_game_z": "carries_per_game",
+    "snap_share_z": "snap_share",
+    "touches_per_game_z": "touches_per_game",
+    "targets_per_game_z": "targets_per_game",
+    "explosive_run_rate_z": "explosive_run_rate",
+    "explosive_15_rate_z": "explosive_15_rate",
+    "rz_carry_share_z": "rz_carry_share",
+    "goal_line_td_rate_z": "goal_line_td_rate",
+    "short_yardage_conv_rate_z": "short_yardage_conv_rate",
+    "rec_yards_per_target_z": "rec_yards_per_target",
     "yac_per_reception_z": "yac_per_reception",
-    "yac_above_exp_z": "yac_above_exp",
-    "targets_per_snap_z": "targets_per_snap",
-    "yards_per_snap_z": "yards_per_snap",
-    "avg_separation_z": "avg_separation",
+    "broken_tackles_per_att_z": "broken_tackles_per_att",
+    "yards_before_contact_per_att_z": "yards_before_contact_per_att",
+    "yards_after_contact_per_att_z": "yards_after_contact_per_att",
+    "epa_per_rush_z": "epa_per_rush",
+    "rec_epa_per_target_z": "rec_epa_per_target",
+    "ryoe_per_att_z": "ryoe_per_att",
 }
 
 
 # ============================================================
-# Bundles
+# Bundles — Tier 2/3 organized, unchanged from previous version
 # ============================================================
 BUNDLES = {
-    "reliability": {
-        "label": "🎯 Reliability",
-        "description": "Catches what's thrown his way and keeps drives alive.",
+    "efficiency": {
+        "label": "⚡ Efficiency",
+        "description": "Productive on a per-carry basis. Doesn't waste touches.",
         "stats": {
-            "catch_rate_z": 0.30,
-            "avg_cpoe_z": 0.20,
-            "success_rate_z": 0.30,
-            "first_down_rate_z": 0.20,
+            "yards_per_carry_z": 0.25,
+            "epa_per_rush_z": 0.35,
+            "rush_success_rate_z": 0.20,
+            "ryoe_per_att_z": 0.20,
+        },
+    },
+    "tackle_breaking": {
+        "label": "💪 Tackle breaking",
+        "description": "Makes defenders miss and grinds out yards after contact.",
+        "stats": {
+            "broken_tackles_per_att_z": 0.40,
+            "yards_after_contact_per_att_z": 0.45,
+            "yards_before_contact_per_att_z": 0.15,
         },
     },
     "explosive": {
         "label": "💥 Explosive plays",
-        "description": "Turns targets into chunk plays. Big gains, not just dump-offs.",
+        "description": "Hits the home run. Big-play threat every carry.",
         "stats": {
-            "yards_per_target_z": 0.50,
-            "yac_above_exp_z": 0.30,
-            "yards_per_snap_z": 0.20,
-        },
-    },
-    "deep_threat": {
-        "label": "🔥 Field stretcher",
-        "description": "Takes the top off the defense. The 'go deep' guy.",
-        "stats": {
-            "yards_per_target_z": 0.40,
-            "avg_separation_z": 0.30,
-            "yards_per_snap_z": 0.30,
+            "explosive_run_rate_z": 0.50,
+            "explosive_15_rate_z": 0.50,
         },
     },
     "volume": {
         "label": "📊 Volume & usage",
-        "description": "How much of the offense runs through him.",
+        "description": "Workhorse. The offense runs through him.",
         "stats": {
-            "targets_per_snap_z": 0.50,
-            "yards_per_snap_z": 0.50,
+            "carries_per_game_z": 0.35,
+            "snap_share_z": 0.30,
+            "touches_per_game_z": 0.35,
         },
     },
-    "after_catch": {
-        "label": "🏃 After the catch",
-        "description": "What happens once he's got the ball in his hands.",
+    "receiving": {
+        "label": "🤲 Receiving back",
+        "description": "Dual threat out of the backfield as a pass catcher.",
         "stats": {
-            "yac_per_reception_z": 0.50,
-            "yac_above_exp_z": 0.50,
+            "rec_yards_per_target_z": 0.25,
+            "yac_per_reception_z": 0.20,
+            "targets_per_game_z": 0.30,
+            "rec_epa_per_target_z": 0.25,
+        },
+    },
+    "short_yardage": {
+        "label": "🎯 Short yardage & goal line",
+        "description": "Gets the tough yards when the team needs them most.",
+        "stats": {
+            "short_yardage_conv_rate_z": 0.50,
+            "goal_line_td_rate_z": 0.30,
+            "rz_carry_share_z": 0.20,
         },
     },
 }
 
 DEFAULT_BUNDLE_WEIGHTS = {
-    "reliability": 60,
-    "explosive": 50,
-    "deep_threat": 30,
+    "efficiency": 70,
+    "tackle_breaking": 50,
+    "explosive": 40,
     "volume": 60,
-    "after_catch": 30,
+    "receiving": 30,
+    "short_yardage": 30,
 }
 
 
 # ============================================================
 # Radar chart config — 8 headline stats, fixed across users
 # ============================================================
+# Mix of Tier 2 rates and Tier 3 modeled stats. Excludes Tier 1 raw
+# counts — those skew the polygon based on volume, not skill profile.
 RADAR_STATS = [
-    "yards_per_target_z",      # efficiency
-    "catch_rate_z",            # reliability
-    "first_down_rate_z",       # chain mover
-    "yac_per_reception_z",     # after catch
-    "yards_per_snap_z",        # volume × efficiency
-    "epa_per_target_z",        # modeled efficiency
-    "avg_cpoe_z",              # catches vs expected
-    "avg_separation_z",        # NGS separation
+    "yards_per_carry_z",              # efficiency
+    "rush_success_rate_z",            # consistency
+    "broken_tackles_per_att_z",       # elusiveness
+    "yards_after_contact_per_att_z",  # toughness
+    "explosive_run_rate_z",           # big play ability
+    "epa_per_rush_z",                 # modeled efficiency
+    "ryoe_per_att_z",                 # rushing over expected
+    "rec_yards_per_target_z",         # receiving threat
 ]
 
 
@@ -333,9 +344,9 @@ def sample_size_caption(pct: float) -> str:
     if pd.isna(pct):
         return ""
     if pct < 20:
-        return f"⚠️ Severe small sample: {pct:.0f}% of group leader's snaps. Treat as directional only."
+        return f"⚠️ Severe small sample: {pct:.0f}% of group leader's carries. Treat as directional only."
     if pct < 50:
-        return f"⚠️ Small sample: {pct:.0f}% of group leader's snaps. Score may be noisy."
+        return f"⚠️ Small sample: {pct:.0f}% of group leader's carries. Score may be noisy."
     return ""
 
 
@@ -352,40 +363,40 @@ weights control how much each bundle contributes.
 - `−1.0` or lower → well below average
 
 **What this is not.** It's not a PFF-style 0-100 grade. It's a
-**comparative** number telling you how Lions receivers stack up against
-the top WR/TE population in the league, under the methodology *you* chose.
+**comparative** number telling you how Lions running backs stack up
+against the top 32 RBs in the league, under the methodology *you* chose.
 
-**League population:** z-scores are computed against the top 64 WRs and
-top 32 TEs by offensive snaps (min 6 games played). Every Lions receiver
-with at least one offensive snap is visible, but players with very few
-targets will have noisy scores — read extreme values on low-volume players
-as "small sample, not skill."
+**League population:** z-scores are computed against the top 32 RBs by
+offensive snaps (min 6 games played). Every Lions RB with at least one
+offensive snap is visible, but players with very few carries will have
+noisy scores — read extreme values on low-volume players as "small
+sample, not skill."
 """
 
 
 # ============================================================
 # Session state
 # ============================================================
-if "rec_loaded_algo" not in st.session_state:
-    st.session_state.rec_loaded_algo = None
+if "rb_loaded_algo" not in st.session_state:
+    st.session_state.rb_loaded_algo = None
 if "upvoted_ids" not in st.session_state:
     st.session_state.upvoted_ids = set()
-if "rec_tiers_enabled" not in st.session_state:
-    st.session_state.rec_tiers_enabled = [1, 2, 3]  # Tier 4 off by default
+if "rb_tiers_enabled" not in st.session_state:
+    st.session_state.rb_tiers_enabled = [1, 2, 3]  # Tier 4 off by default
 
 
 # ============================================================
 # Header
 # ============================================================
-st.title("🦁 Lions Receiver Rater")
+st.title("🦁 Lions Running Back Rater")
 st.markdown(
-    "What makes a great player? **You decide.** Drag the sliders to weight what you value, "
-    "and watch the Lions receivers re-rank in real time. "
-    "_No 'best receiver' — just **your** best receiver._"
+    "What makes a great player? **You decide.** Drag the sliders to weight what you "
+    "value, and watch the Lions running backs re-rank in real time. "
+    "_No 'best back' — just **your** best back._"
 )
 st.caption(
-    "2024 regular season • Compared against top 64 WR + top 32 TE by snaps • "
-    "Every Lions receiver visible"
+    "2024 regular season • Compared against top 32 RBs by snaps • "
+    "Every Lions RB visible"
 )
 
 
@@ -393,12 +404,12 @@ st.caption(
 # Load data
 # ============================================================
 try:
-    df = load_receivers_data()
+    df = load_rb_data()
 except FileNotFoundError:
-    st.error("Couldn't find the receivers data file.")
+    st.error("Couldn't find the running backs data file.")
     st.stop()
 
-meta = load_receivers_metadata()
+meta = load_rb_metadata()
 stat_tiers = meta.get("stat_tiers", {})
 stat_labels = meta.get("stat_labels", {})
 stat_methodology = meta.get("stat_methodology", {})
@@ -407,9 +418,9 @@ stat_methodology = meta.get("stat_methodology", {})
 # ============================================================
 # ?algo= deep link
 # ============================================================
-if "algo" in st.query_params and st.session_state.rec_loaded_algo is None:
+if "algo" in st.query_params and st.session_state.rb_loaded_algo is None:
     linked = get_algorithm_by_slug(st.query_params["algo"])
-    if linked and linked.get("position_group", "receiver") == POSITION_GROUP:
+    if linked and linked.get("position_group") == POSITION_GROUP:
         apply_algo_weights(linked, BUNDLES)
         st.rerun()
 
@@ -419,30 +430,27 @@ if "algo" in st.query_params and st.session_state.rec_loaded_algo is None:
 # ============================================================
 st.sidebar.header("What matters to you?")
 
-positions = st.sidebar.multiselect(
-    "Positions", options=["WR", "TE"], default=["WR", "TE"]
-)
-min_snaps = st.sidebar.slider(
-    "Minimum offensive snaps", 0, 1000, 100, step=25,
-    help="Hide players who barely played. Set to 0 to see everyone.",
+min_carries = st.sidebar.slider(
+    "Minimum carries", 0, 300, 20, step=5,
+    help="Hide backs who barely touched the ball.",
 )
 
 st.sidebar.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 advanced_mode = st.sidebar.toggle(
     "🔬 Advanced mode", value=False,
-    help="Show individual stat sliders with methodology popovers instead of plain-English bundles.",
+    help="Show individual stat sliders with methodology tooltips instead of plain-English bundles.",
 )
 
 st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize, left to ignore.")
 
-if st.session_state.rec_loaded_algo:
-    la = st.session_state.rec_loaded_algo
+if st.session_state.rb_loaded_algo:
+    la = st.session_state.rb_loaded_algo
     st.sidebar.info(
         f"Loaded: **{la['name']}** by {la['author']}\n\n"
         f"_{la.get('description', '')}_"
     )
     if st.sidebar.button("Clear loaded algorithm"):
-        st.session_state.rec_loaded_algo = None
+        st.session_state.rb_loaded_algo = None
 
 
 # ============================================================
@@ -459,20 +467,19 @@ for i, tier in enumerate([1, 2, 3, 4]):
     with tier_cols[i]:
         checked = st.checkbox(
             f"{tier_badge(tier)} {TIER_LABELS[tier]}",
-            value=(tier in st.session_state.rec_tiers_enabled),
+            value=(tier in st.session_state.rb_tiers_enabled),
             help=TIER_DESCRIPTIONS[tier],
-            key=f"rec_tier_checkbox_{tier}",
+            key=f"rb_tier_checkbox_{tier}",
         )
         if checked:
             new_enabled.append(tier)
 
-st.session_state.rec_tiers_enabled = new_enabled
+st.session_state.rb_tiers_enabled = new_enabled
 
 if not new_enabled:
     st.warning("Enable at least one tier to see ratings.")
     st.stop()
 
-# Filter bundles to only those with stats in enabled tiers
 active_bundles = filter_bundles_by_tier(BUNDLES, stat_tiers, new_enabled)
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
@@ -499,12 +506,12 @@ if not advanced_mode:
             f"<small>{tier_summary}</small></div>",
             unsafe_allow_html=True,
         )
-        if f"rec_bundle_{bk}" not in st.session_state:
-            st.session_state[f"rec_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
+        if f"rb_bundle_{bk}" not in st.session_state:
+            st.session_state[f"rb_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
         bundle_weights[bk] = st.sidebar.slider(
             bundle["label"], 0, 100,
             step=5,
-            key=f"rec_bundle_{bk}",
+            key=f"rb_bundle_{bk}",
             label_visibility="collapsed",
         )
 
@@ -550,7 +557,7 @@ else:
         w = st.sidebar.slider(
             f"{tier_badge(tier)} {label}",
             min_value=0, max_value=100, value=50, step=5,
-            key=f"adv_rec_{z_col}",
+            key=f"adv_rb_{z_col}",
             help=help_text,
         )
         if w > 0:
@@ -564,11 +571,10 @@ else:
 # ============================================================
 # Filter & score
 # ============================================================
-filtered = df[df["position"].isin(positions)].copy()
-filtered = filtered[filtered["off_snaps"].fillna(0) >= min_snaps]
+filtered = df[df["carries"].fillna(0) >= min_carries].copy()
 
 if len(filtered) == 0:
-    st.warning("No players match the current filters. Try lowering the snap threshold.")
+    st.warning("No backs match the current filters. Try lowering the carry threshold.")
     st.stop()
 
 filtered = score_players(filtered, effective_weights)
@@ -580,10 +586,10 @@ if total_weight == 0:
 filtered = filtered.sort_values("score", ascending=False).reset_index(drop=True)
 filtered.index = filtered.index + 1
 
-# Compute sample size as % of group leader's snaps
-max_snaps = filtered["off_snaps"].fillna(0).max()
-if max_snaps > 0:
-    filtered["sample_pct"] = (filtered["off_snaps"].fillna(0) / max_snaps) * 100
+# Compute sample size as % of group leader's carries
+max_carries = filtered["carries"].fillna(0).max()
+if max_carries > 0:
+    filtered["sample_pct"] = (filtered["carries"].fillna(0) / max_carries) * 100
 else:
     filtered["sample_pct"] = 0
 
@@ -595,18 +601,17 @@ st.subheader("Ranking")
 
 # Hide-small-samples checkbox
 hide_small = st.checkbox(
-    "Hide players with severe small samples (<20% of group leader's snaps)",
+    "Hide players with severe small samples (<20% of group leader's carries)",
     value=False,
-    key="rec_hide_small",
+    key="rb_hide_small",
     help="Hides red-flagged players. Yellow-flagged players still show with a caution.",
 )
 
-# Apply the filter (but keep the original for max_snaps calculation already done)
 ranked = filtered.copy()
 if hide_small:
     ranked = ranked[ranked["sample_pct"] >= 20].copy()
     if len(ranked) == 0:
-        st.warning("All players are below 20% sample size. Uncheck the filter to see them.")
+        st.warning("All backs are below 20% sample size. Uncheck the filter to see them.")
         st.stop()
     ranked = ranked.sort_values("score", ascending=False).reset_index(drop=True)
     ranked.index = ranked.index + 1
@@ -615,7 +620,6 @@ if hide_small:
 if len(ranked) > 0:
     top = ranked.iloc[0]
     top_name = top["player_display_name"]
-    top_pos = top.get("position", "")
     top_score = top["score"]
     top_pct = top.get("sample_pct", 100)
     badge = sample_size_badge(top_pct)
@@ -624,7 +628,7 @@ if len(ranked) > 0:
         f"<div style='background:#0076B6;color:white;padding:14px 20px;"
         f"border-radius:8px;margin-bottom:8px;font-size:1.1rem;'>"
         f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span>"
-        f" &nbsp;·&nbsp; <strong>{top_name}</strong> ({top_pos}) {badge}"
+        f" &nbsp;·&nbsp; <strong>{top_name}</strong> {badge}"
         f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span>"
         f" <span style='opacity:0.85;'>({format_percentile(zscore_to_percentile(top_score))})</span>"
         f"</div>",
@@ -635,21 +639,21 @@ if len(ranked) > 0:
         st.warning(warn)
 
 st.caption(
-    "⚠️ Players with very few targets have noisy scores — extreme values "
-    "reflect small sample sizes, not skill. Use the 'Minimum offensive snaps' "
-    "filter in the sidebar to hide low-volume players if desired. "
-    "🔴 = severe small sample (<20% of group leader's snaps), 🟡 = caution (20–50%)."
+    "⚠️ Backs with very few carries have noisy scores — extreme values "
+    "reflect small sample sizes, not skill. Use the 'Minimum carries' "
+    "filter in the sidebar to hide low-volume backs if desired. "
+    "🔴 = severe small sample (<20% of group leader's carries), 🟡 = caution (20–50%)."
 )
 
 display_df = pd.DataFrame({
     "Rank": ranked.index,
     "": ranked["sample_pct"].apply(sample_size_badge),
     "Player": ranked["player_display_name"],
-    "Pos": ranked["position"],
-    "Snaps": ranked["off_snaps"].fillna(0).astype(int),
-    "Targets": ranked["targets"].fillna(0).astype(int),
-    "Yards": ranked["rec_yards"].fillna(0).astype(int),
-    "TDs": ranked["rec_tds"].fillna(0).astype(int),
+    "Carries": ranked["carries"].fillna(0).astype(int),
+    "Rush yds": ranked["rush_yards"].fillna(0).astype(int),
+    "Rush TDs": ranked["rush_tds"].fillna(0).astype(int),
+    "Rec": ranked["receptions"].fillna(0).astype(int),
+    "Rec yds": ranked["rec_yards"].fillna(0).astype(int),
     "Your score": ranked["score"].apply(format_score),
 })
 st.dataframe(
@@ -669,7 +673,7 @@ st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.subheader("Player detail")
 
 selected = st.selectbox(
-    "Pick a player to see how their score breaks down",
+    "Pick a back to see how their score breaks down",
     options=ranked["player_display_name"].tolist(),
     index=0,
 )
@@ -683,12 +687,13 @@ if warn:
 
 c1, c2 = st.columns([1, 1])
 with c1:
-    pos = player.get("position", "")
+    # Player heading
     st.markdown(f"### {selected}")
-    st.caption(f"**{pos}** · {int(player.get('off_snaps') or 0)} snaps · "
-               f"{int(player.get('targets') or 0)} targets · "
-               f"{int(player.get('rec_yards') or 0)} yards · "
-               f"{int(player.get('rec_tds') or 0)} TDs")
+    st.caption(f"{int(player.get('carries') or 0)} carries · "
+               f"{int(player.get('rush_yards') or 0)} rush yds · "
+               f"{int(player.get('rush_tds') or 0)} rush TDs · "
+               f"{int(player.get('receptions') or 0)} rec · "
+               f"{int(player.get('rec_yards') or 0)} rec yds")
     st.markdown(f"**Your score:** {format_score(player['score'])}")
     st.markdown("---")
     st.markdown("**How your score breaks down**")
@@ -770,7 +775,7 @@ with c2:
         st.caption("No radar data available for this player.")
     st.caption(
         "Each axis shows where this player ranks among the league reference "
-        "population (top 64 WR + top 32 TE). 50 = league median, 84 = +1 SD, "
+        "population (top 32 RBs). 50 = league median, 84 = +1 SD, "
         "97 = +2 SD. Hover any data point for the stat description."
     )
 
