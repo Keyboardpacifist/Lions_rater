@@ -8,14 +8,19 @@ import polars as pl
 import streamlit as st
 import plotly.graph_objects as go
 from scipy.stats import norm
+from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
 from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
 
-st.set_page_config(page_title="Lions Punter Rater", page_icon="🦁", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Lions Punter Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
+
+# ── Team & Season selector ────────────────────────────────────
+selected_team, selected_season = get_team_and_season()
+team_name = NFL_TEAMS.get(selected_team, selected_team)
 
 POSITION_GROUP = "punter"
 PAGE_URL = "https://lions-rater.streamlit.app/Punter"
-DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_lions_punters_with_z.parquet"
+DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "league_p_all_seasons.parquet"
 METADATA_PATH = Path(__file__).resolve().parent.parent / "data" / "punter_stat_metadata.json"
 
 @st.cache_data
@@ -106,10 +111,16 @@ if "punter_tiers_enabled" not in st.session_state: st.session_state.punter_tiers
 
 st.title("🦁 Lions Punter Rater")
 st.markdown("What makes a great player? **You decide.** Drag the sliders to weight what you value.")
-st.caption("2024 regular season • Z-scores vs all punters league-wide (20+ attempts)")
+st.caption(f"{selected_season} regular season • Z-scores vs all punters league-wide (20+ attempts)")
 
 try: df = load_punter_data()
 except FileNotFoundError: st.error(f"Couldn't find punter data at {DATA_PATH}."); st.stop()
+
+# Filter to selected team and season
+df = filter_by_team_and_season(df, selected_team, selected_season, team_col="recent_team", season_col="season_year")
+if len(df) == 0:
+    st.warning(f"No {team_name} punters found for {selected_season}.")
+    st.stop()
 
 meta = load_punter_metadata()
 stat_tiers = meta.get("stat_tiers", {}); stat_labels = meta.get("stat_labels", {}); stat_methodology = meta.get("stat_methodology", {})
