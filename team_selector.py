@@ -49,7 +49,7 @@ TEAM_ALIASES = {
     "WSH": "WAS",
 }
 
-AVAILABLE_SEASONS = list(range(2024, 2015, -1))
+AVAILABLE_SEASONS = list(range(2025, 2015, -1))
 
 
 def normalize_team(abbr):
