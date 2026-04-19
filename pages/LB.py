@@ -1,5 +1,6 @@
 """
 Lions LB Rater — 2024 season
+Monkey-proofed UI: every control explains WHAT it does and WHY you'd use it.
 """
 import json
 from pathlib import Path
@@ -26,28 +27,101 @@ def load_lb_metadata():
     with open(METADATA_PATH) as f: return json.load(f)
 
 RAW_COL_MAP = {
-    "sacks_per_game_z": "sacks_per_game", "qb_hits_per_game_z": "qb_hits_per_game",
-    "pressure_rate_z": "pressure_rate", "tfl_per_game_z": "tfl_per_game",
     "solo_tackle_rate_z": "solo_tackle_rate", "tackles_per_snap_z": "tackles_per_snap",
+    "tfl_per_game_z": "tfl_per_game", "sacks_per_game_z": "sacks_per_game",
+    "qb_hits_per_game_z": "qb_hits_per_game",
     "forced_fumbles_per_game_z": "forced_fumbles_per_game",
     "passes_defended_per_game_z": "passes_defended_per_game",
     "interceptions_per_game_z": "interceptions_per_game",
 }
 
 BUNDLES = {
-    "pass_rush": {"label": "🔥 Pass rush", "description": "Gets to the QB. Sacks, hits, and total pressures.", "stats": {"sacks_per_game_z": 0.35, "qb_hits_per_game_z": 0.30, "pressure_rate_z": 0.35}},
-    "run_defense": {"label": "🛡️ Run defense", "description": "Tackles, penetrates, and stops the run.", "stats": {"tfl_per_game_z": 0.40, "solo_tackle_rate_z": 0.30, "tackles_per_snap_z": 0.30}},
-    "playmaking": {"label": "💥 Playmaking", "description": "Forces fumbles, bats passes, and picks off throws.", "stats": {"forced_fumbles_per_game_z": 0.40, "passes_defended_per_game_z": 0.35, "interceptions_per_game_z": 0.25}},
+    "tackling": {
+        "label": "🎯 Tackling",
+        "description": "Does he make tackles reliably? Solo tackle rate and tackles per snap.",
+        "why": "Think sure tackling is the foundation of great linebacker play? Crank this up.",
+        "stats": {"solo_tackle_rate_z": 0.50, "tackles_per_snap_z": 0.50},
+    },
+    "pass_rush": {
+        "label": "🔥 Blitzing",
+        "description": "Can he rush the passer? Sacks, QB hits, and TFLs.",
+        "why": "Value linebackers who can get to the QB on blitzes? Slide this right.",
+        "stats": {"sacks_per_game_z": 0.35, "qb_hits_per_game_z": 0.30, "tfl_per_game_z": 0.35},
+    },
+    "coverage": {
+        "label": "🛡️ Coverage & playmaking",
+        "description": "Does he create turnovers and break up passes? INTs, PDs, and forced fumbles.",
+        "why": "Want linebackers who can cover and create turnovers? Slide right.",
+        "stats": {"interceptions_per_game_z": 0.30, "passes_defended_per_game_z": 0.35, "forced_fumbles_per_game_z": 0.35},
+    },
 }
-DEFAULT_BUNDLE_WEIGHTS = {"pass_rush": 60, "run_defense": 40, "playmaking": 30}
+DEFAULT_BUNDLE_WEIGHTS = {"tackling": 50, "pass_rush": 40, "coverage": 40}
 
-RADAR_STATS = list(RAW_COL_MAP.keys())
+RADAR_STATS = ["solo_tackle_rate_z", "tackles_per_snap_z", "tfl_per_game_z", "sacks_per_game_z", "qb_hits_per_game_z", "forced_fumbles_per_game_z", "passes_defended_per_game_z", "interceptions_per_game_z"]
 RADAR_INVERT = set()
-RADAR_LABEL_OVERRIDES = {"sacks_per_game_z": "Sacks", "qb_hits_per_game_z": "QB hits", "pressure_rate_z": "Pressure", "tfl_per_game_z": "TFLs", "solo_tackle_rate_z": "Solo tackle %", "tackles_per_snap_z": "Tackles/snap", "forced_fumbles_per_game_z": "Forced fumbles", "passes_defended_per_game_z": "Pass defense", "interceptions_per_game_z": "Interceptions"}
+RADAR_LABEL_OVERRIDES = {"solo_tackle_rate_z": "Solo tackle %", "tackles_per_snap_z": "Tackles/snap", "tfl_per_game_z": "TFLs", "sacks_per_game_z": "Sacks", "qb_hits_per_game_z": "QB hits", "forced_fumbles_per_game_z": "Forced fumbles", "passes_defended_per_game_z": "Pass defense", "interceptions_per_game_z": "Interceptions"}
 
+
+# ── Score formatting ──────────────────────────────────────────
 def zscore_to_percentile(z):
     if pd.isna(z): return None
     return float(norm.cdf(z) * 100)
+
+def format_percentile(pct):
+    if pct is None or pd.isna(pct): return "—"
+    if pct >= 99: return "top 1%"
+    if pct >= 50: return f"top {100 - int(pct)}%"
+    return f"bottom {int(pct)}%"
+
+def format_score(score):
+    if pd.isna(score): return "—"
+    sign = "+" if score >= 0 else ""
+    pct = zscore_to_percentile(score)
+    pct_label = format_percentile(pct)
+    return f"{sign}{score:.2f} ({pct_label})"
+
+def sample_size_warning(snaps):
+    if pd.isna(snaps): return ""
+    if snaps < 300: return f"⚠️ Only {int(snaps)} snaps — small sample, treat with caution"
+    if snaps < 500: return f"⚠️ {int(snaps)} snaps — moderate sample"
+    return ""
+
+
+
+
+
+# ── Tier system ───────────────────────────────────────────────
+TIER_LABELS = {
+    1: "Counting stats",
+    2: "Rate stats",
+    3: "Modeled stats",
+    4: "Estimated stats",
+}
+TIER_DESCRIPTIONS = {
+    1: "Sacks, tackles, forced fumbles — raw totals per game.",
+    2: "Per-game and per-snap averages that adjust for playing time.",
+    3: "Stats adjusted for expected performance based on a model.",
+    4: "Inferred from limited data — least reliable. Use with caution.",
+}
+def tier_badge(tier): return {1: "🟢", 2: "🔵", 3: "🟡", 4: "🟠"}.get(tier, "⚪")
+
+def filter_bundles_by_tier(bundles, stat_tiers, enabled_tiers):
+    filtered = {}
+    for bk, bdef in bundles.items():
+        kept = {z: w for z, w in bdef["stats"].items() if stat_tiers.get(z, 2) in enabled_tiers}
+        if kept:
+            filtered[bk] = {k: v for k, v in bdef.items()}
+            filtered[bk]["stats"] = kept
+    return filtered
+
+def bundle_tier_summary(bundle_stats, stat_tiers):
+    counts = {}
+    for z in bundle_stats:
+        t = stat_tiers.get(z, 2)
+        counts[t] = counts.get(t, 0) + 1
+    return " ".join(f"{tier_badge(t)}×{c}" for t, c in sorted(counts.items()))
+
+
 
 def build_radar_figure(player, stat_labels, stat_methodology):
     axes, values, descriptions = [], [], []
@@ -55,201 +129,266 @@ def build_radar_figure(player, stat_labels, stat_methodology):
         if z_col not in player.index: continue
         z = player.get(z_col)
         if pd.isna(z): continue
+        if z_col in RADAR_INVERT: z = -z
         pct = zscore_to_percentile(z)
         label = RADAR_LABEL_OVERRIDES.get(z_col, stat_labels.get(z_col, z_col))
         desc = stat_methodology.get(z_col, {}).get("what", "")
         axes.append(label); values.append(pct); descriptions.append(desc)
     if not axes: return None
     fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(r=values+[values[0]], theta=axes+[axes[0]], customdata=descriptions+[descriptions[0]], fill="toself", fillcolor="rgba(31, 119, 180, 0.25)", line=dict(color="rgba(31, 119, 180, 0.9)", width=2), marker=dict(size=6, color="rgba(31, 119, 180, 1)"), hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<br><br><i>%{customdata}</i><extra></extra>"))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100], tickvals=[25, 50, 75, 100], ticktext=["25", "50", "75", "100"], tickfont=dict(size=9, color="#888"), gridcolor="#ddd"), angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"), bgcolor="rgba(0,0,0,0)"), showlegend=False, margin=dict(l=60, r=60, t=20, b=20), height=380, paper_bgcolor="rgba(0,0,0,0)")
+    fig.add_trace(go.Scatterpolar(
+        r=values + [values[0]], theta=axes + [axes[0]],
+        customdata=descriptions + [descriptions[0]],
+        fill="toself", fillcolor="rgba(31, 119, 180, 0.25)",
+        line=dict(color="rgba(31, 119, 180, 0.9)", width=2),
+        marker=dict(size=6, color="rgba(31, 119, 180, 1)"),
+        hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<br><br><i>%{customdata}</i><extra></extra>",
+    ))
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(visible=True, range=[0, 100], tickvals=[25, 50, 75, 100],
+                            ticktext=["25th", "50th", "75th", "100th"],
+                            tickfont=dict(size=9, color="#888"), gridcolor="#ddd"),
+            angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"),
+            bgcolor="rgba(0,0,0,0)",
+        ),
+        showlegend=False, margin=dict(l=60, r=60, t=20, b=20),
+        height=380, paper_bgcolor="rgba(0,0,0,0)",
+    )
     return fig
 
-TIER_LABELS = {1: "Tier 1 — Counted", 2: "Tier 2 — Contextualized", 3: "Tier 3 — Adjusted", 4: "Tier 4 — Inferred"}
-TIER_DESCRIPTIONS = {1: "Pure recorded facts.", 2: "Counts divided by opportunity.", 3: "Compared against a modeled baseline.", 4: "Inferred from patterns. Use with skepticism."}
-def tier_badge(tier): return {1: "🟢", 2: "🔵", 3: "🟡", 4: "🟠"}.get(tier, "⚪")
-def filter_bundles_by_tier(bundles, stat_tiers, enabled_tiers):
-    filtered = {}
-    for bk, bdef in bundles.items():
-        kept = {z: w for z, w in bdef["stats"].items() if stat_tiers.get(z, 2) in enabled_tiers}
-        if kept: filtered[bk] = {"label": bdef["label"], "description": bdef["description"], "stats": kept}
-    return filtered
-def bundle_tier_summary(bundle_stats, stat_tiers):
-    counts = {}
-    for z in bundle_stats: t = stat_tiers.get(z, 2); counts[t] = counts.get(t, 0) + 1
-    return " ".join(f"{tier_badge(t)}×{c}" for t, c in sorted(counts.items()))
-def score_label(score):
-    if pd.isna(score): return "—"
-    if score >= 1.0: return "well above group"
-    if score >= 0.4: return "above group"
-    if score >= -0.4: return "about average"
-    if score >= -1.0: return "below group"
-    return "well below group"
-def format_score(score):
-    if pd.isna(score): return "—"
-    sign = "+" if score >= 0 else ""
-    return f"{sign}{score:.2f} ({score_label(score)})"
-def sample_size_badge(snaps):
-    if pd.isna(snaps): return ""
-    if snaps < 300: return "🔴"
-    if snaps < 500: return "🟡"
-    return ""
-def sample_size_caption(snaps):
-    if pd.isna(snaps): return ""
-    if snaps < 300: return f"⚠️ Only {int(snaps)} defensive snaps. Small sample — treat as directional only."
-    if snaps < 500: return f"⚠️ {int(snaps)} defensive snaps. Moderate sample."
-    return ""
-
-SCORE_EXPLAINER = """
-**What this number means.** Weighted average of z-scores — 0 is league-average LB, +1 is one SD above, −1 is one SD below.
-
-**How to read it:** `+1.0` or higher → well above average • `+0.4` to `+1.0` → above average • `−0.4` to `+0.4` → roughly average • `−1.0` or lower → well below average
-
-**LB population:** 2024 regular season, z-scored against all LBs league-wide with 200+ defensive snaps.
-"""
 
 if "lb_loaded_algo" not in st.session_state: st.session_state.lb_loaded_algo = None
 if "upvoted_ids" not in st.session_state: st.session_state.upvoted_ids = set()
 if "lb_tiers_enabled" not in st.session_state: st.session_state.lb_tiers_enabled = [1, 2]
 
-st.title("🦁 Lions LB Rater")
-st.markdown("**Build your own algorithm.** Drag the sliders to weight what you value, and watch the Lions linebackers re-rank in real time.")
-st.caption("2024 regular season • Z-scores vs all LBs league-wide (200+ snaps)")
-
-try: df = load_lb_data()
-except FileNotFoundError: st.error(f"Couldn't find DE data at {DATA_PATH}."); st.stop()
+try:
+    df = load_lb_data()
+except FileNotFoundError:
+    st.error(f"Couldn't find data at {DATA_PATH}")
+    st.stop()
 
 meta = load_lb_metadata()
-stat_tiers = meta.get("stat_tiers", {}); stat_labels = meta.get("stat_labels", {}); stat_methodology = meta.get("stat_methodology", {})
+stat_tiers = meta.get("stat_tiers", {})
+stat_labels = meta.get("stat_labels", {})
+stat_methodology = meta.get("stat_methodology", {})
 
 if "algo" in st.query_params and st.session_state.lb_loaded_algo is None:
     linked = get_algorithm_by_slug(st.query_params["algo"])
-    if linked and linked.get("position_group") == POSITION_GROUP: apply_algo_weights(linked, BUNDLES); st.rerun()
+    if linked and linked.get("position_group") == POSITION_GROUP:
+        apply_algo_weights(linked, BUNDLES)
+        st.rerun()
 
-st.sidebar.header("Filters")
+# ══════════════════════════════════════════════════════════════
+# PAGE HEADER
+# ══════════════════════════════════════════════════════════════
+st.title("🦁 Lions linebackers")
+st.markdown("What makes a great linebacker? **You decide.** Use the sliders on the left to tell us what you value most, and the rankings update instantly.")
+st.caption("2024 regular season · Compared to all 147 LBs league-wide with 200+ snaps")
+
+# ══════════════════════════════════════════════════════════════
+# SIDEBAR
+# ══════════════════════════════════════════════════════════════
+st.sidebar.header("What matters to you?")
+st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize it, or all the way left to ignore it.")
 st.sidebar.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-advanced_mode = st.sidebar.toggle("🔬 Advanced mode", value=False)
-st.sidebar.header("What do you value?")
 
 if st.session_state.lb_loaded_algo:
     la = st.session_state.lb_loaded_algo
     st.sidebar.info(f"Loaded: **{la['name']}** by {la['author']}\n\n_{la.get('description', '')}_")
-    if st.sidebar.button("Clear loaded algorithm"): st.session_state.lb_loaded_algo = None
+    if st.sidebar.button("Clear loaded algorithm"):
+        st.session_state.lb_loaded_algo = None
 
-st.markdown("### How speculative do you want to get?")
+# ══════════════════════════════════════════════════════════════
+# STAT TYPE CHECKBOXES
+# ══════════════════════════════════════════════════════════════
+st.markdown("### Which stats should count?")
+st.markdown("Check more boxes to include more types of stats. More boxes = more data, but less certainty.")
 tier_cols = st.columns(4)
 new_enabled = []
 for i, tier in enumerate([1, 2, 3, 4]):
     with tier_cols[i]:
-        checked = st.checkbox(f"{tier_badge(tier)} {TIER_LABELS[tier]}", value=(tier in st.session_state.lb_tiers_enabled), help=TIER_DESCRIPTIONS[tier], key=f"lb_tier_checkbox_{tier}")
+        checked = st.checkbox(
+            f"{tier_badge(tier)} {TIER_LABELS[tier]}",
+            value=(tier in st.session_state.lb_tiers_enabled),
+            help=TIER_DESCRIPTIONS[tier],
+            key=f"lb_tier_checkbox_{tier}",
+        )
         if checked: new_enabled.append(tier)
 st.session_state.lb_tiers_enabled = new_enabled
-if not new_enabled: st.warning("Enable at least one tier."); st.stop()
+if not new_enabled:
+    st.warning("Check at least one box above to include some stats.")
+    st.stop()
 active_bundles = filter_bundles_by_tier(BUNDLES, stat_tiers, new_enabled)
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-bundle_weights = {}; effective_weights = {}
-if not advanced_mode:
-    if not active_bundles: st.info("No bundles in enabled tiers."); st.stop()
-    st.sidebar.caption("Drag to weight what matters to you.")
-    for bk, bundle in active_bundles.items():
-        tier_summary = bundle_tier_summary(bundle["stats"], stat_tiers)
-        st.sidebar.markdown(f"**{bundle['label']}**")
-        st.sidebar.markdown(f"<div class='bundle-desc'>{bundle['description']}<br><small>{tier_summary}</small></div>", unsafe_allow_html=True)
-        if f"lb_bundle_{bk}" not in st.session_state: st.session_state[f"lb_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
-        bundle_weights[bk] = st.sidebar.slider(bundle["label"], 0, 100, step=5, key=f"lb_bundle_{bk}", label_visibility="collapsed")
-    for bk in BUNDLES:
-        if bk not in bundle_weights: bundle_weights[bk] = 0
-    effective_weights = compute_effective_weights(active_bundles, bundle_weights)
-else:
-    st.sidebar.caption("Direct control over every stat.")
-    all_enabled_stats = sorted([z for z, t in stat_tiers.items() if t in new_enabled], key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z)))
-    for z_col in all_enabled_stats:
-        tier = stat_tiers.get(z_col, 2); label = stat_labels.get(z_col, z_col); meth = stat_methodology.get(z_col, {}); help_parts = []
-        if meth.get("what"): help_parts.append(f"What: {meth['what']}")
-        if meth.get("how"): help_parts.append(f"How: {meth['how']}")
-        if meth.get("limits"): help_parts.append(f"Limits: {meth['limits']}")
-        w = st.sidebar.slider(f"{tier_badge(tier)} {label}", 0, 100, 50, 5, key=f"adv_lb_{z_col}", help="\n\n".join(help_parts) if help_parts else None)
-        if w > 0: effective_weights[z_col] = w
-    bundle_weights = {bk: 0 for bk in BUNDLES}
+# ══════════════════════════════════════════════════════════════
+# SIDEBAR SLIDERS
+# ══════════════════════════════════════════════════════════════
+advanced_mode = False
+bundle_weights = {}
+effective_weights = {}
 
-st.markdown("### Who's in the pool?")
-st.caption("All Lions LBs with 25+ defensive snaps in 2024. Z-scores computed against all LBs league-wide (200+ snaps).")
-lbs = df.copy()
-if len(lbs) == 0: st.warning("No LBs found."); st.stop()
-lbs = score_players(lbs, effective_weights)
+if not active_bundles:
+    st.info("No stat bundles available for the selected stat types.")
+    st.stop()
+
+for bk, bundle in active_bundles.items():
+    st.sidebar.markdown(f"**{bundle['label']}**")
+    st.sidebar.markdown(f"{bundle['description']}")
+    if f"lb_bundle_{bk}" not in st.session_state:
+        st.session_state[f"lb_bundle_{bk}"] = DEFAULT_BUNDLE_WEIGHTS.get(bk, 50)
+    bundle_weights[bk] = st.sidebar.slider(
+        bundle["label"], 0, 100, step=5,
+        key=f"lb_bundle_{bk}", label_visibility="collapsed",
+        help=bundle.get("why", ""),
+    )
+    st.sidebar.caption(f"_↑ {bundle.get('why', '')}_")
+
+for bk in BUNDLES:
+    if bk not in bundle_weights: bundle_weights[bk] = 0
+effective_weights = compute_effective_weights(active_bundles, bundle_weights)
+
+with st.sidebar.expander("Want more control? Adjust individual stats"):
+    advanced_mode = st.checkbox("Enable individual stat control", value=False, key="lb_advanced_toggle")
+    if advanced_mode:
+        st.caption("Set the weight of each individual stat. This overrides the bundle sliders above.")
+        effective_weights = {}
+        all_enabled_stats = sorted([z for z, t in stat_tiers.items() if t in new_enabled], key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z)))
+        for z_col in all_enabled_stats:
+            label = stat_labels.get(z_col, z_col)
+            meth = stat_methodology.get(z_col, {})
+            help_text = meth.get("what", "")
+            if meth.get("limits"): help_text += f"\n\nLimits: {meth['limits']}"
+            w = st.slider(f"{tier_badge(stat_tiers.get(z_col, 2))} {label}", 0, 100, 50, 5, key=f"adv_lb_{z_col}", help=help_text if help_text else None)
+            if w > 0: effective_weights[z_col] = w
+        bundle_weights = {bk: 0 for bk in BUNDLES}
+
+# ══════════════════════════════════════════════════════════════
+# COMPUTE SCORES & RANK
+# ══════════════════════════════════════════════════════════════
+players = df.copy()
+if len(players) == 0:
+    st.warning("No players found.")
+    st.stop()
+players = score_players(players, effective_weights)
 total_weight = sum(effective_weights.values())
-if total_weight == 0: st.info("All weights are zero — drag some sliders.")
-lbs = lbs.sort_values("score", ascending=False).reset_index(drop=True)
-lbs.index = lbs.index + 1
+if total_weight == 0:
+    st.info("All sliders are at zero — slide at least one to the right to see rankings.")
+players = players.sort_values("score", ascending=False).reset_index(drop=True)
+players.index = players.index + 1
 
+# ══════════════════════════════════════════════════════════════
+# RANKING TABLE
+# ══════════════════════════════════════════════════════════════
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.subheader("Ranking")
-ranked = lbs.copy()
+ranked = players.copy()
+
+st.markdown("""
+**How to read the score:** 0.00 = league average · Positive = above average · Negative = below average.
+The percentile shows where this player ranks among all qualifying LBs league-wide.
+""")
 
 if len(ranked) > 0:
     top = ranked.iloc[0]
-    top_name = top.get("player_name", "—"); top_score = top["score"]
-    top_snaps = top.get("def_snaps", 0); badge = sample_size_badge(top_snaps)
+    top_name = top.get("player_name", "—")
+    top_score = top["score"]
+    top_pct = format_percentile(zscore_to_percentile(top_score))
     sign = "+" if top_score >= 0 else ""
-    st.markdown(f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;margin-bottom:8px;font-size:1.1rem;'><span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span> &nbsp;·&nbsp; <strong>{top_name}</strong> {badge} &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span> <span style='opacity:0.85;'>({score_label(top_score)})</span></div>", unsafe_allow_html=True)
-    warn = sample_size_caption(top_snaps)
+    st.markdown(
+        f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;"
+        f"margin-bottom:8px;font-size:1.1rem;'>"
+        f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span>"
+        f" &nbsp;·&nbsp; <strong>{top_name}</strong>"
+        f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>"
+        f"{sign}{top_score:.2f}</span>"
+        f" <span style='opacity:0.85;'>({top_pct})</span></div>",
+        unsafe_allow_html=True,
+    )
+    warn = sample_size_warning(top.get("def_snaps", 0))
     if warn: st.warning(warn)
 
-st.caption("🔴 = <300 snaps, 🟡 = 300-499 snaps.")
 display_df = pd.DataFrame({
-    "Rank": ranked.index, "": ranked.get("def_snaps", pd.Series([0]*len(ranked))).apply(sample_size_badge),
+    "Rank": ranked.index,
     "Player": ranked["player_name"],
-    "Games": ranked.get("games", pd.Series([0]*len(ranked))).fillna(0).astype(int),
-    "Snaps": ranked.get("def_snaps", pd.Series([0]*len(ranked))).fillna(0).astype(int),
-    "Score": ranked["score"].apply(format_score),
+    "Games": ranked.get("games", pd.Series([0] * len(ranked))).fillna(0).astype(int),
+    "Snaps": ranked.get("def_snaps", pd.Series([0] * len(ranked))).apply(
+        lambda s: f"{int(s)} ⚠️" if pd.notna(s) and s < 300 else (f"{int(s)}" if pd.notna(s) else "—")
+    ),
+    "Your score": ranked["score"].apply(format_score),
 })
 st.dataframe(display_df, use_container_width=True, hide_index=True)
-with st.expander("ℹ️ How is this score calculated?"): st.markdown(SCORE_EXPLAINER)
+st.caption("⚠️ = under 300 snaps — small sample, treat with caution.")
 
+# ══════════════════════════════════════════════════════════════
+# PLAYER DETAIL
+# ══════════════════════════════════════════════════════════════
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.subheader("Player detail")
-selected = st.selectbox("Pick a LB to see their breakdown", options=ranked["player_name"].tolist(), index=0)
+selected = st.selectbox("Pick a player to see their full breakdown", options=ranked["player_name"].tolist(), index=0)
 player = ranked[ranked["player_name"] == selected].iloc[0]
-warn = sample_size_caption(player.get("def_snaps", 0))
+
+warn = sample_size_warning(player.get("def_snaps", 0))
 if warn: st.warning(warn)
 
 c1, c2 = st.columns([1, 1])
 with c1:
     st.markdown(f"### {selected}")
-    st.caption(f"{int(player.get('games') or 0)} games · {int(player.get('def_snaps') or 0)} snaps")
-    st.markdown(f"**Your score:** {format_score(player['score'])}")
-    st.markdown("---"); st.markdown("**How your score breaks down**")
+    st.caption(f"{int(player.get('games') or 0)} games · {int(player.get('def_snaps') or 0)} defensive snaps")
+
+    player_score = player["score"]
+    player_pct = format_percentile(zscore_to_percentile(player_score))
+    sign = "+" if player_score >= 0 else ""
+    st.markdown(f"**Your score: {sign}{player_score:.2f} ({player_pct})**")
+    st.markdown("_This score is based on your slider settings. Change the sliders and this number changes._")
+
+    st.markdown("---")
+    st.markdown("**Where the score comes from**")
+    st.markdown("Each row shows how much one skill contributed to the total, based on your slider weights.")
+
     if not advanced_mode:
         bundle_rows = []
         for bk, bundle in active_bundles.items():
             bw = bundle_weights.get(bk, 0)
             if bw == 0: continue
-            contribution = sum(player.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(player.get(z)) and total_weight > 0)
-            bundle_rows.append({"Bundle": bundle["label"], "Your weight": f"{bw}", "Contribution": f"{contribution:+.2f}"})
-        if bundle_rows: st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
-        with st.expander("🔬 See the underlying stats"):
-            stat_rows = []; shown = set()
+            contribution = sum(
+                player.get(z, 0) * (bw * internal / total_weight)
+                for z, internal in bundle["stats"].items()
+                if pd.notna(player.get(z)) and total_weight > 0
+            )
+            bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
+        if bundle_rows:
+            st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
+
+        with st.expander("See the individual stats behind each skill"):
+            stat_rows = []
+            shown = set()
             for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
             for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
-                raw_col = RAW_COL_MAP.get(z_col); z = player.get(z_col); raw = player.get(raw_col) if raw_col else None
-                stat_rows.append({"Tier": tier_badge(stat_tiers.get(z_col, 2)), "Stat": stat_labels.get(z_col, z_col), "Raw": f"{raw:.3f}" if pd.notna(raw) else "—", "Z-score": f"{z:+.2f}" if pd.notna(z) else "—"})
+                raw_col = RAW_COL_MAP.get(z_col)
+                z = player.get(z_col)
+                raw = player.get(raw_col) if raw_col else None
+                pct = zscore_to_percentile(z) if pd.notna(z) else None
+                stat_rows.append({"Stat": stat_labels.get(z_col, z_col), "Value": f"{raw:.3f}" if pd.notna(raw) else "—", "Percentile": f"{int(pct)}th" if pct is not None else "—"})
             st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
     else:
         rows = []
         for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
-            raw_col = RAW_COL_MAP.get(z_col); z = player.get(z_col); raw = player.get(raw_col) if raw_col else None
-            w = effective_weights.get(z_col, 0); contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
-            rows.append({"Tier": tier_badge(stat_tiers.get(z_col, 2)), "Stat": stat_labels.get(z_col, z_col), "Raw": f"{raw:.3f}" if pd.notna(raw) else "—", "Z-score": f"{z:+.2f}" if pd.notna(z) else "—", "Weight": f"{w}", "Contribution": f"{contrib:+.2f}"})
+            raw_col = RAW_COL_MAP.get(z_col)
+            z = player.get(z_col)
+            raw = player.get(raw_col) if raw_col else None
+            w = effective_weights.get(z_col, 0)
+            contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
+            pct = zscore_to_percentile(z) if pd.notna(z) else None
+            rows.append({"Stat": stat_labels.get(z_col, z_col), "Value": f"{raw:.3f}" if pd.notna(raw) else "—", "Percentile": f"{int(pct)}th" if pct is not None else "—", "Weight": f"{w}", "Points added": f"{contrib:+.2f}"})
         if rows: st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 with c2:
-    st.markdown("**LB profile** (percentiles vs. league LBs)")
+    st.markdown("**Percentile profile vs. all league linebackers**")
+    st.caption("50th = league average. Higher = better.")
     fig = build_radar_figure(player, stat_labels, stat_methodology)
     if fig: st.plotly_chart(fig, use_container_width=True)
-    else: st.caption("No radar data available.")
 
 community_section(position_group=POSITION_GROUP, bundles=BUNDLES, bundle_weights=bundle_weights, advanced_mode=advanced_mode, page_url=PAGE_URL)
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.caption("Data via [nflverse](https://github.com/nflverse) • 2024 regular season • Z-scored against 147 LBs with 200+ snaps • Fan project, not affiliated with the NFL or Detroit Lions.")
+st.caption("Data via [nflverse](https://github.com/nflverse) · 2024 regular season · Compared against 147 LBs with 200+ snaps · Fan project, not affiliated with the NFL or Detroit Lions.")
