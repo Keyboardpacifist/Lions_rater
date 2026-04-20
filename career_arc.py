@@ -154,6 +154,40 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
             lambda row: compute_composite_score(row, college_z_cols), axis=1)
 
     # ══════════════════════════════════════════════════════
+    # COMBINE DATA
+    # ══════════════════════════════════════════════════════
+    COLLEGE_DATA_DIR = Path(__file__).resolve().parent / "data" / "college"
+    combine_path = COLLEGE_DATA_DIR / "nfl_combine.parquet"
+    if combine_path.exists():
+        try:
+            combine_df = pd.read_parquet(combine_path)
+            last = player_name.split()[-1] if player_name else ""
+            first = player_name.split()[0] if player_name else ""
+            matches = combine_df[combine_df["player_name"].str.contains(last, na=False, case=False)]
+            tight = matches[matches["player_name"].str.contains(first, na=False, case=False)]
+            comb = tight.iloc[0] if len(tight) > 0 else (matches.iloc[0] if len(matches) == 1 else None)
+            if comb is not None:
+                parts = []
+                if pd.notna(comb.get("ht")): parts.append(f"Ht: {comb['ht']}")
+                if pd.notna(comb.get("wt")): parts.append(f"Wt: {int(comb['wt'])}")
+                if pd.notna(comb.get("forty")): parts.append(f"40: {comb['forty']:.2f}s")
+                if pd.notna(comb.get("bench")): parts.append(f"Bench: {int(comb['bench'])}")
+                if pd.notna(comb.get("vertical")): parts.append(f"Vert: {comb['vertical']}\"")
+                if pd.notna(comb.get("broad_jump")): parts.append(f"Broad: {int(comb['broad_jump'])}\"")
+                if pd.notna(comb.get("cone")): parts.append(f"3-cone: {comb['cone']:.2f}s")
+                if pd.notna(comb.get("shuttle")): parts.append(f"Shuttle: {comb['shuttle']:.2f}s")
+                if parts:
+                    draft_parts = []
+                    if pd.notna(comb.get("draft_round")): draft_parts.append(f"Rd {int(comb['draft_round'])}")
+                    if pd.notna(comb.get("draft_ovr")): draft_parts.append(f"Pick #{int(comb['draft_ovr'])}")
+                    if pd.notna(comb.get("draft_team")): draft_parts.append(f"→ {comb['draft_team']}")
+                    draft_str = f" | Draft: {' '.join(draft_parts)}" if draft_parts else ""
+                    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+                    st.caption(f"🏋️ **NFL Combine:** {' · '.join(parts)}{draft_str}")
+        except Exception:
+            pass
+
+    # ══════════════════════════════════════════════════════
     # NFL CAREER ARC
     # ══════════════════════════════════════════════════════
     if has_nfl:
