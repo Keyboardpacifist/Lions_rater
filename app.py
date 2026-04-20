@@ -351,6 +351,48 @@ else:
                     if rec_parts:
                         st.caption(f"Recruiting: {' · '.join(rec_parts)}")
 
+                # ── Pedigree score ────────────────────────
+                try:
+                    from pedigree import compute_pedigree, render_pedigree
+                    # Build college seasons data
+                    all_player_for_pedigree = df[df["player"] == name].sort_values(season_col)
+                    college_seasons_for_ped = []
+                    for _, prow in all_player_for_pedigree.iterrows():
+                        pz = [prow.get(c) for c in available_z if c in prow.index and pd.notna(prow.get(c))]
+                        college_seasons_for_ped.append({
+                            "season": int(prow[season_col]),
+                            "team": prow.get("team", ""),
+                            "composite_z": np.mean(pz) if pz else np.nan,
+                            "conference": prow.get("conference", ""),
+                        })
+
+                    rec_for_ped = None
+                    if rec is not None:
+                        rec_for_ped = {"stars": rec.get("stars"), "rating": rec.get("rating"), "ranking": rec.get("ranking")}
+
+                    # Check if player was drafted
+                    draft_for_ped = None
+                    try:
+                        draft_linkage = load_enrichment("college_to_nfl_draft_linkage.parquet")
+                        if len(draft_linkage) > 0:
+                            last_name = name.split()[-1] if name else ""
+                            draft_match = draft_linkage[draft_linkage["college_player"].str.contains(last_name, na=False, case=False)]
+                            if len(draft_match) > 0:
+                                dm = draft_match.iloc[0]
+                                draft_for_ped = {"round": dm.get("round"), "overall": dm.get("overall"), "nfl_team": dm.get("nfl_team")}
+                    except:
+                        pass
+
+                    ped_result = compute_pedigree(
+                        player_name=name,
+                        college_seasons_data=college_seasons_for_ped,
+                        recruiting_info=rec_for_ped,
+                        draft_info=draft_for_ped,
+                    )
+                    render_pedigree(ped_result, name)
+                except (ImportError, Exception):
+                    pass
+
                 pc1, pc2 = st.columns([1, 1])
 
                 with pc1:
