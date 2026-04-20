@@ -133,7 +133,7 @@ else:
     st.markdown(f"### {selected_school} — {selected_college_season}")
     st.caption(f"Every player z-scored against all FBS players at their position that season")
 
-    # ── Position configs ──────────────────────────────────
+    # ── Position configs with bundles ─────────────────────
     POSITION_FILES = {
         "QB": ("college_qb_all_seasons.parquet",
                ["completion_pct_z", "td_rate_z", "int_rate_z", "yards_per_attempt_z", "pass_tds_z", "rush_yards_total_z"],
@@ -156,6 +156,86 @@ else:
                 {"tackles_per_game_z": "Tackles/gm", "sacks_per_game_z": "Sacks/gm", "tfl_per_game_z": "TFL/gm",
                  "pd_per_game_z": "PD/gm", "int_per_game_z": "INT/gm", "pressure_rate_z": "Pressure rate"}),
     }
+
+    # ── Bundle definitions by position ────────────────────
+    COLLEGE_BUNDLES = {
+        "QB": {
+            "efficiency": {"label": "📊 Passing efficiency", "why": "Pure passing production per attempt",
+                          "stats": {"yards_per_attempt_z": 0.5, "td_rate_z": 0.3, "completion_pct_z": 0.2}},
+            "ball_security": {"label": "🛡️ Ball security", "why": "How well does he protect the football?",
+                             "stats": {"int_rate_z": 1.0}},
+            "production": {"label": "🏆 Volume production", "why": "Total output — yards and touchdowns",
+                          "stats": {"pass_tds_z": 0.5, "rush_yards_total_z": 0.5}},
+        },
+        "WR": {
+            "production": {"label": "🏆 Production", "why": "Total receiving output",
+                          "stats": {"rec_yards_total_z": 0.4, "rec_tds_total_z": 0.3, "receptions_total_z": 0.3}},
+            "efficiency": {"label": "📊 Efficiency", "why": "Quality per catch",
+                          "stats": {"yards_per_rec_z": 1.0}},
+        },
+        "TE": {
+            "production": {"label": "🏆 Production", "why": "Total receiving output",
+                          "stats": {"rec_yards_total_z": 0.4, "rec_tds_total_z": 0.3, "receptions_total_z": 0.3}},
+            "efficiency": {"label": "📊 Efficiency", "why": "Quality per catch",
+                          "stats": {"yards_per_rec_z": 1.0}},
+        },
+        "RB": {
+            "rushing": {"label": "🏃 Rushing", "why": "Ground game production and efficiency",
+                       "stats": {"rush_yards_total_z": 0.3, "rush_tds_total_z": 0.2, "yards_per_carry_z": 0.5}},
+            "versatility": {"label": "🎯 Versatility", "why": "Total offensive contribution including receiving",
+                           "stats": {"total_yards_z": 0.4, "receptions_total_z": 0.3, "total_tds_z": 0.3}},
+        },
+        "DEF": {
+            "pass_rush": {"label": "⚡ Pass rush", "why": "Ability to pressure the quarterback",
+                         "stats": {"sacks_per_game_z": 0.4, "tfl_per_game_z": 0.3, "pressure_rate_z": 0.3}},
+            "coverage": {"label": "🛡️ Coverage", "why": "Ball-hawking and pass defense",
+                        "stats": {"pd_per_game_z": 0.5, "int_per_game_z": 0.5}},
+            "tackling": {"label": "💪 Tackling", "why": "Run stopping and sure tackling",
+                        "stats": {"tackles_per_game_z": 1.0}},
+        },
+    }
+
+    # ── Sidebar: position selector + sliders ──────────────
+    st.sidebar.header("What matters to you?")
+    st.sidebar.caption("Pick a position group and adjust what you value")
+
+    active_pos = st.sidebar.selectbox("Position group", options=list(COLLEGE_BUNDLES.keys()),
+                                       index=0, key="college_pos_select")
+
+    bundles = COLLEGE_BUNDLES[active_pos]
+    bundle_weights = {}
+    st.sidebar.markdown("---")
+    for bk, bundle in bundles.items():
+        st.sidebar.markdown(f"**{bundle['label']}**")
+        st.sidebar.caption(f"_{bundle['why']}_")
+        if f"college_bundle_{active_pos}_{bk}" not in st.session_state:
+            st.session_state[f"college_bundle_{active_pos}_{bk}"] = 50
+        bundle_weights[bk] = st.sidebar.slider(
+            bundle["label"], 0, 100, step=5,
+            key=f"college_bundle_{active_pos}_{bk}",
+            label_visibility="collapsed",
+        )
+
+    # ── Compute effective weights from bundles ────────────
+    effective_weights = {}
+    for bk, bundle in bundles.items():
+        bw = bundle_weights.get(bk, 0)
+        if bw == 0: continue
+        for stat, internal_w in bundle["stats"].items():
+            effective_weights[stat] = effective_weights.get(stat, 0) + bw * internal_w
+
+    # ── Scoring function ─────────────────────────────────
+    def score_college_players(df, weights):
+        total_w = sum(weights.values())
+        if total_w == 0:
+            df["your_score"] = 0.0
+            return df
+        score = pd.Series(0.0, index=df.index)
+        for stat, w in weights.items():
+            if stat in df.columns:
+                score += df[stat].fillna(0) * (w / total_w)
+        df["your_score"] = score
+        return df
 
     # ── Helper: find recruiting info for a player ─────────
     def get_recruiting_info(player_name):
@@ -282,19 +362,31 @@ else:
         available_z = [c for c in z_cols if c in filtered.columns]
         if available_z:
             filtered["composite_z"] = filtered[available_z].mean(axis=1)
+
+        # Apply slider weights if this is the active position
+        is_active = (pos_name == active_pos)
+        if is_active and effective_weights:
+            filtered = score_college_players(filtered, effective_weights)
+            filtered = filtered.sort_values("your_score", ascending=False)
+            score_col = "your_score"
+            score_label_text = "Your score"
+        else:
             filtered = filtered.sort_values("composite_z", ascending=False)
+            score_col = "composite_z"
+            score_label_text = "Score"
 
         pos_display = {"QB": "Quarterbacks", "WR": "Wide Receivers", "TE": "Tight Ends",
                        "RB": "Running Backs", "DEF": "Defense"}[pos_name]
         pos_col = "pos_group" if pos_name == "DEF" and "pos_group" in filtered.columns else None
 
-        st.markdown(f"#### {pos_display}")
+        active_marker = " ← your sliders" if is_active else ""
+        st.markdown(f"#### {pos_display}{active_marker}")
 
         # ── Summary table ─────────────────────────────────
         display_rows = []
         for _, row in filtered.iterrows():
             name = row.get("player", "—")
-            comp = row.get("composite_z", np.nan)
+            comp = row.get(score_col, np.nan)
             pct = zscore_to_percentile(comp)
 
             entry = {"Player": name}
@@ -307,10 +399,10 @@ else:
                 entry["Stars"] = star_display(rec["stars"])
             
             if pd.notna(comp):
-                entry["Score"] = f"{'+' if comp >= 0 else ''}{comp:.2f}"
+                entry[score_label_text] = f"{'+' if comp >= 0 else ''}{comp:.2f}"
                 entry["Pctl"] = format_percentile(pct)
             else:
-                entry["Score"] = "—"
+                entry[score_label_text] = "—"
                 entry["Pctl"] = "—"
 
             for z_col, label in labels.items():
