@@ -322,3 +322,133 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
         st.caption(f"Each point is one college season vs. all FBS {position_label}. 0.00 = league average.")
     else:
         st.caption(f"Each point is one NFL season vs. all NFL {position_label}. 0.00 = league average.")
+
+    # ══════════════════════════════════════════════════════════
+    # COLLEGE PROFILE SECTION
+    # ══════════════════════════════════════════════════════════
+    if has_college and len(college_history) > 0:
+        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+        st.markdown("### College profile")
+        st.caption(f"Z-scored against all FBS {position_label} each season")
+
+        college_season_col = "season" if "season" in college_history.columns else "season_year"
+        college_seasons_list = sorted(college_history[college_season_col].unique())
+
+        # Season selector for college radar
+        if len(college_seasons_list) > 1:
+            selected_college_season = st.selectbox(
+                "College season",
+                options=college_seasons_list,
+                index=len(college_seasons_list) - 1,  # default to most recent
+                format_func=lambda s: f"{int(s)} — {college_history[college_history[college_season_col] == s]['team'].iloc[0]}",
+                key=f"college_season_{player_name}",
+            )
+        else:
+            selected_college_season = college_seasons_list[0]
+
+        college_row = college_history[college_history[college_season_col] == selected_college_season].iloc[0]
+        college_team = college_row.get("team", "")
+        college_conf = college_row.get("conference", "")
+
+        # Two columns: stat table + radar
+        cc1, cc2 = st.columns([1, 1])
+
+        with cc1:
+            st.markdown(f"**{player_name}** — {int(selected_college_season)} {college_team}")
+            if college_conf:
+                st.caption(f"{college_conf}")
+
+            # Build stat table from college z-scores
+            try:
+                from college_data import COLLEGE_Z_COLS, COLLEGE_STAT_LABELS
+                cz_cols = COLLEGE_Z_COLS.get(pg, [])
+            except ImportError:
+                cz_cols = college_z_cols
+
+            college_stat_rows = []
+            for z_col in cz_cols:
+                if z_col not in college_row.index:
+                    continue
+                z = college_row.get(z_col)
+                if pd.isna(z):
+                    continue
+                # Get raw value (strip _z suffix)
+                raw_col = z_col.replace("_z", "")
+                raw = college_row.get(raw_col)
+
+                try:
+                    label = COLLEGE_STAT_LABELS.get(z_col, z_col.replace("_z", "").replace("_", " ").title())
+                except:
+                    label = z_col.replace("_z", "").replace("_", " ").title()
+
+                pct = zscore_to_percentile(z)
+                pct_str = f"{int(pct)}th" if pct is not None else "—"
+
+                college_stat_rows.append({
+                    "Stat": label,
+                    "Value": f"{raw:.2f}" if pd.notna(raw) else "—",
+                    "Z-score": f"{z:+.2f}",
+                    "Percentile": pct_str,
+                })
+
+            if college_stat_rows:
+                st.dataframe(pd.DataFrame(college_stat_rows), use_container_width=True, hide_index=True)
+
+            # Composite score
+            comp = compute_composite_score(college_row, college_z_cols)
+            if pd.notna(comp):
+                comp_pct = zscore_to_percentile(comp)
+                sign = "+" if comp >= 0 else ""
+                pct_label = f"top {100 - int(comp_pct)}%" if comp_pct >= 50 else f"bottom {int(comp_pct)}%"
+                st.markdown(f"**College composite: {sign}{comp:.2f}** ({pct_label} of FBS {position_label})")
+
+        with cc2:
+            st.markdown(f"**College percentile profile** vs. FBS {position_label}")
+            st.caption("50th = FBS average. Higher = better.")
+
+            # Build college radar
+            radar_axes = []
+            radar_values = []
+            for z_col in cz_cols:
+                if z_col not in college_row.index:
+                    continue
+                z = college_row.get(z_col)
+                if pd.isna(z):
+                    continue
+                pct = zscore_to_percentile(z)
+                try:
+                    label = COLLEGE_STAT_LABELS.get(z_col, z_col.replace("_z", "").replace("_", " ").title())
+                except:
+                    label = z_col.replace("_z", "").replace("_", " ").title()
+                radar_axes.append(label)
+                radar_values.append(pct)
+
+            if len(radar_axes) >= 3:
+                radar_fig = go.Figure()
+                radar_fig.add_trace(go.Scatterpolar(
+                    r=radar_values + [radar_values[0]],
+                    theta=radar_axes + [radar_axes[0]],
+                    fill="toself",
+                    fillcolor="rgba(218, 165, 32, 0.25)",
+                    line=dict(color="rgba(184, 134, 11, 0.9)", width=2),
+                    marker=dict(size=6, color="rgba(184, 134, 11, 1)"),
+                    hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<extra></extra>",
+                ))
+                radar_fig.update_layout(
+                    polar=dict(
+                        radialaxis=dict(visible=True, range=[0, 100],
+                                        tickvals=[25, 50, 75, 100],
+                                        ticktext=["25th", "50th", "75th", "100th"],
+                                        tickfont=dict(size=9, color="#888"),
+                                        gridcolor="#ddd"),
+                        angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"),
+                        bgcolor="rgba(0,0,0,0)",
+                    ),
+                    showlegend=False,
+                    margin=dict(l=60, r=60, t=20, b=20),
+                    height=350,
+                    paper_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(radar_fig, use_container_width=True)
+            else:
+                st.caption("Not enough stats for radar chart.")
