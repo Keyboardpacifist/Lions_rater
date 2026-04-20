@@ -268,7 +268,36 @@ def compute_pedigree(player_name, college_seasons_data=None, recruiting_info=Non
             weight_total += w
 
     base_score = (weighted_sum / weight_total) if weight_total > 0 else None
-    total_score = min(100, base_score + bonus) if base_score is not None else None
+
+    # ── VALIDATION DEPTH PENALTY ──────────────────────────
+    # A player with only recruiting data hasn't proven anything yet.
+    # Cap the pedigree score based on how many checkpoints are filled.
+    # 1 checkpoint: max 35 (promising but unproven)
+    # 2 checkpoints: max 55 (some validation)
+    # 3 checkpoints: max 70 (solid validation)
+    # 4 checkpoints: max 82 (well validated)
+    # 5+ checkpoints: max 100 (fully validated)
+    available = sum(1 for _, s in checkpoints if s is not None)
+    depth_caps = {1: 35, 2: 55, 3: 70, 4: 82, 5: 92, 6: 97, 7: 100}
+    depth_cap = depth_caps.get(available, 100)
+
+    if base_score is not None:
+        capped_score = min(base_score, depth_cap)
+        total_score = min(100, capped_score + bonus)
+    else:
+        total_score = None
+
+    # ── DEPTH LABEL ───────────────────────────────────────
+    depth_labels = {
+        1: "Unproven — recruiting only",
+        2: "Early validation",
+        3: "Building case",
+        4: "Well validated",
+        5: "Strongly validated",
+        6: "Fully validated",
+        7: "Complete pedigree",
+    }
+    depth_label = depth_labels.get(available, "")
 
     return {
         "checkpoints": checkpoints,
@@ -276,8 +305,10 @@ def compute_pedigree(player_name, college_seasons_data=None, recruiting_info=Non
         "base_score": base_score,
         "total_score": total_score,
         "label": pedigree_label(total_score),
+        "depth_label": depth_label,
+        "depth_cap": depth_cap,
         "color": pedigree_color(total_score),
-        "available_checkpoints": sum(1 for _, s in checkpoints if s is not None),
+        "available_checkpoints": available,
         "total_checkpoints": len(checkpoints),
     }
 
@@ -306,7 +337,11 @@ def render_pedigree(pedigree_result, player_name):
         f"{f' · +{bonus} confirmation bonus' if bonus > 0 else ''})</span></div>",
         unsafe_allow_html=True,
     )
-    st.caption("_Pedigree measures how consistently this player's quality has been validated — from recruiting, through college production, to draft capital and NFL performance. Higher = more checkpoints confirm the player is legit._")
+    depth_label = pedigree_result.get("depth_label", "")
+    depth_cap = pedigree_result.get("depth_cap", 100)
+    if depth_label:
+        cap_note = f" Score capped at {depth_cap} until more checkpoints are filled." if depth_cap < 100 else ""
+        st.caption(f"_{depth_label}.{cap_note} Pedigree measures how consistently independent evaluators have validated this player's quality._")
 
     # Checkpoint breakdown
     with st.expander("Pedigree breakdown"):
