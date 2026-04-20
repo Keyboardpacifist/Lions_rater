@@ -269,10 +269,26 @@ else:
         return matches if len(matches) > 0 else None
 
     # ── Helper: find transfer info ────────────────────────
-    def get_transfer_info(player_name):
+    def get_transfer_info(player_name, school=None):
         if len(transfers_df) == 0: return None
-        last = player_name.split()[-1] if player_name else ""
-        matches = transfers_df[transfers_df["name"].str.contains(last, na=False, case=False)]
+        if not player_name: return None
+        name_parts = player_name.split()
+        if len(name_parts) < 2: return None
+        first = name_parts[0]
+        last = name_parts[-1]
+        # Match on both first and last name
+        matches = transfers_df[
+            (transfers_df["name"].str.contains(last, na=False, case=False)) &
+            (transfers_df["name"].str.contains(first, na=False, case=False))
+        ]
+        # If school provided, further filter by origin or destination
+        if school and len(matches) > 1:
+            school_matches = matches[
+                (matches["origin"].str.contains(school, na=False, case=False)) |
+                (matches["destination"].str.contains(school, na=False, case=False))
+            ]
+            if len(school_matches) > 0:
+                matches = school_matches
         if len(matches) > 0: return matches
         return None
 
@@ -625,15 +641,19 @@ else:
                         st.dataframe(pd.DataFrame(t_rows), use_container_width=True, hide_index=True)
 
                     # Portal info
-                    portal = get_transfer_info(name)
+                    portal = get_transfer_info(name, selected_school)
                     if portal is not None and len(portal) > 0:
+                        portal_lines = []
                         for _, prow in portal.iterrows():
                             origin = prow.get("origin", "")
                             dest = prow.get("destination", "")
+                            season = prow.get("season", "")
                             if pd.notna(origin) and pd.notna(dest) and dest:
-                                st.caption(f"Portal: {origin} → {dest}")
+                                portal_lines.append(f"{int(season)}: {origin} → {dest}" if pd.notna(season) else f"{origin} → {dest}")
                             elif pd.notna(origin):
-                                st.caption(f"Entered portal from {origin}")
+                                portal_lines.append(f"{int(season)}: Entered portal from {origin}" if pd.notna(season) else f"Entered portal from {origin}")
+                        if portal_lines:
+                            st.caption(f"Portal: {' · '.join(portal_lines)}")
 
                 with pc2:
                     # ── Radar chart ───────────────────────
