@@ -160,12 +160,37 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
     combine_path = COLLEGE_DATA_DIR / "nfl_combine.parquet"
     if combine_path.exists():
         try:
-            combine_df = pd.read_parquet(combine_path)
-            last = player_name.split()[-1] if player_name else ""
-            first = player_name.split()[0] if player_name else ""
-            matches = combine_df[combine_df["player_name"].str.contains(last, na=False, case=False)]
-            tight = matches[matches["player_name"].str.contains(first, na=False, case=False)]
-            comb = tight.iloc[0] if len(tight) > 0 else (matches.iloc[0] if len(matches) == 1 else None)
+            @st.cache_data
+            def _load_combine():
+                return pd.read_parquet(str(combine_path))
+            combine_df = _load_combine()
+
+            comb = None
+            if player_name:
+                # Try exact match first
+                exact = combine_df[combine_df["player_name"].str.lower() == player_name.lower()]
+                if len(exact) == 1:
+                    comb = exact.iloc[0]
+                elif len(exact) > 1:
+                    comb = exact.iloc[0]
+                else:
+                    # Try first + last name contains
+                    name_parts = player_name.split()
+                    if len(name_parts) >= 2:
+                        first = name_parts[0]
+                        last = name_parts[-1]
+                        matches = combine_df[
+                            (combine_df["player_name"].str.contains(last, na=False, case=False)) &
+                            (combine_df["player_name"].str.contains(first, na=False, case=False))
+                        ]
+                        if len(matches) > 0:
+                            comb = matches.iloc[0]
+                        else:
+                            # Last name only, single match
+                            last_only = combine_df[combine_df["player_name"].str.contains(last, na=False, case=False)]
+                            if len(last_only) == 1:
+                                comb = last_only.iloc[0]
+
             if comb is not None:
                 parts = []
                 if pd.notna(comb.get("ht")): parts.append(f"Ht: {comb['ht']}")
