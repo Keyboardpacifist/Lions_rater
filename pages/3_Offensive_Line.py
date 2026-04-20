@@ -345,7 +345,15 @@ with c2:
     else: st.caption("No radar data available.")
     st.caption("Each axis shows where this lineman ranks among all 153 qualified starting OL league-wide. 50 = median. Inverted stats (sacks, penalties) are flipped so higher = better on all axes.")
 
-community_section(position_group=POSITION_GROUP, bundles=BUNDLES, bundle_weights=bundle_weights, advanced_mode=advanced_mode, page_url=PAGE_URL)
+career_arc_section(
+    player=player,
+    league_parquet_path=DATA_PATH,
+    z_score_cols=list(RAW_COL_MAP.keys()),
+    stat_labels=stat_labels,
+    id_col="player_id",
+    name_col="full_name",
+    position_label="offensive linemen",
+)
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.caption("Data via [nflverse](https://github.com/nflverse) • Depth charts via ESPN • Play-by-play via nflfastR • Snap counts via PFR • 2024 regular season • Position-specific gap attribution • Fan project, not affiliated with the NFL or Detroit Lions.")
