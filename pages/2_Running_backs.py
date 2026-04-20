@@ -32,6 +32,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
+from career_arc import career_arc_section
 from lib_shared import (
     apply_algo_weights,
     community_section,
@@ -800,12 +801,14 @@ with c2:
 # ============================================================
 # Community algorithms
 # ============================================================
-community_section(
-    position_group=POSITION_GROUP,
-    bundles=BUNDLES,
-    bundle_weights=bundle_weights,
-    advanced_mode=advanced_mode,
-    page_url=PAGE_URL,
+career_arc_section(
+    player=player,
+    league_parquet_path=DATA_PATH,
+    z_score_cols=list(RAW_COL_MAP.keys()),
+    stat_labels=stat_labels,
+    id_col="player_id",
+    name_col="player_display_name",
+    position_label="running backs",
 )
 
 
