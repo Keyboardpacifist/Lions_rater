@@ -115,6 +115,7 @@ else:
     usage_df = load_enrichment("college_usage.parquet")
     adjusted_df = load_enrichment("college_adjusted_metrics.parquet")
     transfers_df = load_enrichment("college_transfers.parquet")
+    combine_df = load_enrichment("nfl_combine.parquet")
 
     # ── School + season selector ──────────────────────────
     schools = get_school_list()
@@ -275,6 +276,38 @@ else:
         if len(matches) > 0: return matches
         return None
 
+    # ── Helper: find combine info ─────────────────────────
+    def get_combine_info(player_name, school=None):
+        if len(combine_df) == 0: return None
+        last = player_name.split()[-1] if player_name else ""
+        first = player_name.split()[0] if player_name else ""
+        matches = combine_df[combine_df["player_name"].str.contains(last, na=False, case=False)]
+        if school:
+            school_matches = matches[matches["school"].str.contains(school.split()[0] if school else "", na=False, case=False)]
+            if len(school_matches) > 0:
+                matches = school_matches
+        # Tighten with first name
+        tight = matches[matches["player_name"].str.contains(first, na=False, case=False)]
+        if len(tight) > 0:
+            return tight.iloc[0]
+        if len(matches) == 1:
+            return matches.iloc[0]
+        return None
+
+    def format_combine_display(comb):
+        """Format combine data as a readable string."""
+        if comb is None: return None
+        parts = []
+        if pd.notna(comb.get("ht")): parts.append(f"Ht: {comb['ht']}")
+        if pd.notna(comb.get("wt")): parts.append(f"Wt: {int(comb['wt'])}")
+        if pd.notna(comb.get("forty")): parts.append(f"40: {comb['forty']:.2f}s")
+        if pd.notna(comb.get("bench")): parts.append(f"Bench: {int(comb['bench'])}")
+        if pd.notna(comb.get("vertical")): parts.append(f"Vert: {comb['vertical']}\"")
+        if pd.notna(comb.get("broad_jump")): parts.append(f"Broad: {int(comb['broad_jump'])}\"")
+        if pd.notna(comb.get("cone")): parts.append(f"3-cone: {comb['cone']:.2f}s")
+        if pd.notna(comb.get("shuttle")): parts.append(f"Shuttle: {comb['shuttle']:.2f}s")
+        return " · ".join(parts) if parts else None
+
     # ── Helper: build career line chart ───────────────────
     def build_career_chart(player_name, df, season_col, z_cols, labels, unique_key=""):
         """Build career line chart with metric dropdown."""
@@ -397,6 +430,13 @@ else:
             rec = get_recruiting_info(name)
             if rec is not None and pd.notna(rec.get("stars")):
                 entry["Stars"] = star_display(rec["stars"])
+
+            # Add combine highlights
+            comb = get_combine_info(name, selected_school)
+            if comb is not None:
+                if pd.notna(comb.get("ht")): entry["Ht"] = comb["ht"]
+                if pd.notna(comb.get("wt")): entry["Wt"] = int(comb["wt"])
+                if pd.notna(comb.get("forty")): entry["40"] = f"{comb['forty']:.2f}"
             
             if pd.notna(comp):
                 entry[score_label_text] = f"{'+' if comp >= 0 else ''}{comp:.2f}"
@@ -442,6 +482,20 @@ else:
                     if pd.notna(rec.get("city")) and pd.notna(rec.get("state")): rec_parts.append(f"{rec['city']}, {rec['state']}")
                     if rec_parts:
                         st.caption(f"Recruiting: {' · '.join(rec_parts)}")
+
+                # ── Combine data ─────────────────────────
+                comb = get_combine_info(name, selected_school)
+                comb_display = format_combine_display(comb)
+                if comb_display:
+                    draft_info_parts = []
+                    if comb is not None and pd.notna(comb.get("draft_round")):
+                        draft_info_parts.append(f"Rd {int(comb['draft_round'])}")
+                    if comb is not None and pd.notna(comb.get("draft_ovr")):
+                        draft_info_parts.append(f"Pick #{int(comb['draft_ovr'])}")
+                    if comb is not None and pd.notna(comb.get("draft_team")):
+                        draft_info_parts.append(f"→ {comb['draft_team']}")
+                    draft_str = f" | Draft: {' '.join(draft_info_parts)}" if draft_info_parts else ""
+                    st.caption(f"🏋️ Combine: {comb_display}{draft_str}")
 
                 # ── Pedigree score ────────────────────────
                 try:
