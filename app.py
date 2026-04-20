@@ -196,7 +196,7 @@ else:
         return None
 
     # ── Helper: build career line chart ───────────────────
-    def build_career_chart(player_name, df, season_col, z_cols, labels):
+    def build_career_chart(player_name, df, season_col, z_cols, labels, unique_key=""):
         """Build career line chart with metric dropdown."""
         all_player = df[df["player"] == player_name].sort_values(season_col)
         if len(all_player) < 2: return
@@ -216,7 +216,7 @@ else:
                 metric_options[label] = all_player[z_col].tolist()
 
         selected_metric = st.selectbox("Metric", options=list(metric_options.keys()),
-                                        index=0, key=f"college_metric_{player_name}",
+                                        index=0, key=f"college_metric_{player_name}_{unique_key}",
                                         label_visibility="collapsed")
 
         values = metric_options[selected_metric]
@@ -390,8 +390,8 @@ else:
                         draft_info=draft_for_ped,
                     )
                     render_pedigree(ped_result, name)
-                except (ImportError, Exception):
-                    pass
+                except (ImportError, Exception) as e:
+                    st.caption(f"_Pedigree error: {e}_")
 
                 pc1, pc2 = st.columns([1, 1])
 
@@ -512,7 +512,7 @@ else:
                 all_player_career = df[df["player"] == name].sort_values(season_col)
                 if len(all_player_career) >= 2:
                     st.markdown("**College career arc**")
-                    build_career_chart(name, df, season_col, z_cols, labels)
+                    build_career_chart(name, df, season_col, z_cols, labels, unique_key=f"{pos_name}_{name}")
                     st.caption("Each point = one season vs. all FBS players at this position. 0.00 = FBS average.")
 
     st.divider()
