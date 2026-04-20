@@ -217,7 +217,15 @@ with c2:
     fig = build_radar_figure(player, stat_labels, stat_methodology)
     if fig: st.plotly_chart(fig, use_container_width=True)
 
-community_section(position_group=POSITION_GROUP, bundles=BUNDLES, bundle_weights=bundle_weights, advanced_mode=False, page_url=PAGE_URL)
+career_arc_section(
+    player=player,
+    league_parquet_path=DATA_PATH,
+    z_score_cols=list(RAW_COL_MAP.keys()),
+    stat_labels=stat_labels,
+    id_col="player_id",
+    name_col="player_display_name",
+    position_label="kickers",
+)
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.caption("Data via [nflverse](https://github.com/nflverse) • 2024 regular season • Z-scored against 38 kickers with 10+ FG attempts • Fan project, not affiliated with the NFL or Detroit Lions.")
