@@ -100,6 +100,10 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
 
     history = find_player_history(league_df, player_id, player_name, id_col=id_col, name_col=name_col)
 
+    # Debug: show what we found
+    season_col_check = "season_year" if "season_year" in league_df.columns else "season"
+    st.caption(f"_Debug: searched for ID={player_id}, name={player_name} in {len(league_df)} rows across {sorted(league_df[season_col_check].unique())} — found {len(history)} seasons_")
+
     if len(history) == 0:
         st.caption(f"No multi-season data found for {player_name}.")
         return
