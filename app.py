@@ -701,19 +701,15 @@ else:
                     st.caption("Each point = one season vs. all FBS players at this position. 0.00 = FBS average.")
 
                 # ── Statistical comps + college-to-pro prediction ─
-                # DISABLED FOR PERFORMANCE — re-enable after adding caching
-                # try:
-                #     from comps import render_college_comps, render_college_to_pro
-                #     render_college_comps(row, df, z_cols, pos_display.lower(), name)
-                #     pg_map = {"quarterbacks": "qb", "wide receivers": "wr", "tight ends": "te",
-                #               "running backs": "rb", "defense": "de"}
-                #     pg_code = pg_map.get(pos_display.lower(), pos_name.lower())
-                #     if pos_col and pd.notna(row.get(pos_col)):
-                #         def_pg_map = {"EDGE": "de", "DL": "dt", "LB": "lb", "CB": "cb", "DB": "s"}
-                #         pg_code = def_pg_map.get(row[pos_col], pg_code)
-                #     render_college_to_pro(row, df, z_cols, pg_code, pos_display.lower(), name)
-                # except (ImportError, Exception) as e:
-                #     pass
+                try:
+                    from comps import render_college_comps, render_college_to_pro
+                    pos_map_comps = {"QB": "qb", "WR": "wr", "TE": "te", "RB": "rb"}
+                    comp_pos = pos_map_comps.get(pos_name)
+                    if comp_pos:
+                        render_college_comps(name, selected_school, selected_college_season, comp_pos, pos_display.lower())
+                        render_college_to_pro(name, selected_school, selected_college_season, comp_pos, pos_display.lower())
+                except (ImportError, Exception):
+                    pass
 
     st.divider()
     st.caption("College data via CollegeFootballData.com · Recruiting, usage, and adjusted metrics via CFBD API · Z-scored against all FBS players per position per season")
