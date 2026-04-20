@@ -700,6 +700,24 @@ else:
                     build_career_chart(name, df, season_col, z_cols, labels, unique_key=f"{pos_name}_{name}")
                     st.caption("Each point = one season vs. all FBS players at this position. 0.00 = FBS average.")
 
+                # ── Statistical comps + college-to-pro prediction ─
+                try:
+                    from comps import render_college_comps, render_college_to_pro
+                    # Use the selected season row for comps
+                    render_college_comps(row, df, z_cols, pos_display.lower(), name)
+
+                    # College-to-pro prediction (map position display to position group code)
+                    pg_map = {"quarterbacks": "qb", "wide receivers": "wr", "tight ends": "te",
+                              "running backs": "rb", "defense": "de"}
+                    pg_code = pg_map.get(pos_display.lower(), pos_name.lower())
+                    # For defense, try to use pos_group if available
+                    if pos_col and pd.notna(row.get(pos_col)):
+                        def_pg_map = {"EDGE": "de", "DL": "dt", "LB": "lb", "CB": "cb", "DB": "s"}
+                        pg_code = def_pg_map.get(row[pos_col], pg_code)
+                    render_college_to_pro(row, df, z_cols, pg_code, pos_display.lower(), name)
+                except (ImportError, Exception) as e:
+                    pass
+
     st.divider()
     st.caption("College data via CollegeFootballData.com · Recruiting, usage, and adjusted metrics via CFBD API · Z-scored against all FBS players per position per season")
 
