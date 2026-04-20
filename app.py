@@ -1,11 +1,13 @@
 """
 NFL Rater — Landing page with NFL / College toggle
+Enriched college profiles with recruiting, usage, adjusted metrics, transfers.
 """
 import streamlit as st
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from scipy.stats import norm
+import plotly.graph_objects as go
 
 st.set_page_config(page_title="NFL Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 
@@ -25,8 +27,7 @@ st.markdown("---")
 # ══════════════════════════════════════════════════════════════
 if mode == "NFL":
     from team_selector import get_team_and_season, NFL_TEAMS
-    
-    # Hide the title we already showed and use team selector for dropdowns only
+
     if "selected_team" not in st.session_state:
         st.session_state.selected_team = "DET"
     if "selected_season" not in st.session_state:
@@ -35,7 +36,6 @@ if mode == "NFL":
     team_options = sorted(NFL_TEAMS.keys())
     team_labels = [f"{abbr} — {NFL_TEAMS[abbr]}" for abbr in team_options]
     current_idx = team_options.index(st.session_state.selected_team) if st.session_state.selected_team in team_options else 0
-
     AVAILABLE_SEASONS = list(range(2025, 2015, -1))
 
     col_team, col_season, col_spacer = st.columns([2, 1, 3])
@@ -51,31 +51,17 @@ if mode == "NFL":
     st.session_state.selected_season = selected_season
     team_name = NFL_TEAMS.get(selected_team, selected_team)
 
-    st.markdown(
-        f"Pick a position from the sidebar to see how the **{selected_season} {team_name}** "
-        f"stack up against every player in the league."
-    )
-
+    st.markdown(f"Pick a position from the sidebar to see how the **{selected_season} {team_name}** "
+                f"stack up against every player in the league.")
     st.divider()
-
     st.markdown("### Pick a position")
-    st.markdown(
-        """
-**Offense:** QB · WR · TE · RB · OL
-
-**Defense:** DE · DT · LB · CB · S
-
-**Special teams:** Kicker · Punter
-
-**Front office:** Coaches · OC · DC · GM
-"""
-    )
-
+    st.markdown("**Offense:** QB · WR · TE · RB · OL\n\n**Defense:** DE · DT · LB · CB · S\n\n"
+                "**Special teams:** Kicker · Punter\n\n**Front office:** Coaches · OC · DC · GM")
     st.divider()
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("### Our ethos")
-        st.markdown("Every stat on every page has its formula, its data source, and its known weaknesses on display. If something can't be measured honestly from the data we have, we say so.")
+        st.markdown("Every stat on every page has its formula, its data source, and its known weaknesses on display.")
     with col2:
         st.markdown("### Why this exists")
         st.markdown("Free data, open methodology, community-built. No grade is final, no stat is beyond questioning.")
@@ -84,6 +70,7 @@ if mode == "NFL":
 # COLLEGE MODE
 # ══════════════════════════════════════════════════════════════
 else:
+    # ── Helpers ───────────────────────────────────────────
     def zscore_to_percentile(z):
         if pd.isna(z): return None
         return float(norm.cdf(z) * 100)
@@ -94,7 +81,11 @@ else:
         if pct >= 50: return f"top {100 - int(pct)}%"
         return f"bottom {int(pct)}%"
 
-    # Load all college data to get school list
+    def star_display(stars):
+        if pd.isna(stars) or stars is None: return ""
+        return "⭐" * int(stars)
+
+    # ── Cached data loaders ───────────────────────────────
     @st.cache_data
     def get_school_list():
         schools = set()
@@ -113,6 +104,19 @@ else:
         if not path.exists(): return pd.DataFrame()
         return pd.read_parquet(path)
 
+    @st.cache_data
+    def load_enrichment(fname):
+        path = COLLEGE_DATA_DIR / fname
+        if not path.exists(): return pd.DataFrame()
+        return pd.read_parquet(path)
+
+    # ── Load enrichment data ──────────────────────────────
+    recruiting_df = load_enrichment("college_recruiting.parquet")
+    usage_df = load_enrichment("college_usage.parquet")
+    adjusted_df = load_enrichment("college_adjusted_metrics.parquet")
+    transfers_df = load_enrichment("college_transfers.parquet")
+
+    # ── School + season selector ──────────────────────────
     schools = get_school_list()
     COLLEGE_SEASONS = list(range(2025, 2013, -1))
 
@@ -129,53 +133,164 @@ else:
     st.markdown(f"### {selected_school} — {selected_college_season}")
     st.caption(f"Every player z-scored against all FBS players at their position that season")
 
-    # ── Load and filter data ──────────────────────────────
+    # ── Position configs ──────────────────────────────────
     POSITION_FILES = {
-        "QB": ("college_qb_all_seasons.parquet", ["completion_pct_z", "td_rate_z", "int_rate_z", "yards_per_attempt_z", "pass_tds_z", "rush_yards_total_z"],
-               {"completion_pct_z": "Comp %", "td_rate_z": "TD rate", "int_rate_z": "INT rate", "yards_per_attempt_z": "Yds/att", "pass_tds_z": "Pass TDs", "rush_yards_total_z": "Rush yds"},
-               {"int_rate_z"}),
-        "WR": ("college_wr_all_seasons.parquet", ["rec_yards_total_z", "rec_tds_total_z", "receptions_total_z", "yards_per_rec_z"],
-               {"rec_yards_total_z": "Rec yds", "rec_tds_total_z": "Rec TDs", "receptions_total_z": "Receptions", "yards_per_rec_z": "Yds/rec"},
-               set()),
-        "TE": ("college_te_all_seasons.parquet", ["rec_yards_total_z", "rec_tds_total_z", "receptions_total_z", "yards_per_rec_z"],
-               {"rec_yards_total_z": "Rec yds", "rec_tds_total_z": "Rec TDs", "receptions_total_z": "Receptions", "yards_per_rec_z": "Yds/rec"},
-               set()),
-        "RB": ("college_rb_all_seasons.parquet", ["rush_yards_total_z", "rush_tds_total_z", "yards_per_carry_z", "total_yards_z", "receptions_total_z"],
-               {"rush_yards_total_z": "Rush yds", "rush_tds_total_z": "Rush TDs", "yards_per_carry_z": "Yds/carry", "total_yards_z": "Total yds", "receptions_total_z": "Receptions"},
-               set()),
-        "DEF": ("college_def_all_seasons.parquet", ["tackles_per_game_z", "sacks_per_game_z", "tfl_per_game_z", "pd_per_game_z", "int_per_game_z", "pressure_rate_z"],
-                {"tackles_per_game_z": "Tackles/gm", "sacks_per_game_z": "Sacks/gm", "tfl_per_game_z": "TFL/gm", "pd_per_game_z": "PD/gm", "int_per_game_z": "INT/gm", "pressure_rate_z": "Pressure rate"},
-                set()),
+        "QB": ("college_qb_all_seasons.parquet",
+               ["completion_pct_z", "td_rate_z", "int_rate_z", "yards_per_attempt_z", "pass_tds_z", "rush_yards_total_z"],
+               {"completion_pct_z": "Comp %", "td_rate_z": "TD rate", "int_rate_z": "INT rate",
+                "yards_per_attempt_z": "Yds/att", "pass_tds_z": "Pass TDs", "rush_yards_total_z": "Rush yds"}),
+        "WR": ("college_wr_all_seasons.parquet",
+               ["rec_yards_total_z", "rec_tds_total_z", "receptions_total_z", "yards_per_rec_z"],
+               {"rec_yards_total_z": "Rec yds", "rec_tds_total_z": "Rec TDs",
+                "receptions_total_z": "Receptions", "yards_per_rec_z": "Yds/rec"}),
+        "TE": ("college_te_all_seasons.parquet",
+               ["rec_yards_total_z", "rec_tds_total_z", "receptions_total_z", "yards_per_rec_z"],
+               {"rec_yards_total_z": "Rec yds", "rec_tds_total_z": "Rec TDs",
+                "receptions_total_z": "Receptions", "yards_per_rec_z": "Yds/rec"}),
+        "RB": ("college_rb_all_seasons.parquet",
+               ["rush_yards_total_z", "rush_tds_total_z", "yards_per_carry_z", "total_yards_z", "receptions_total_z"],
+               {"rush_yards_total_z": "Rush yds", "rush_tds_total_z": "Rush TDs",
+                "yards_per_carry_z": "Yds/carry", "total_yards_z": "Total yds", "receptions_total_z": "Receptions"}),
+        "DEF": ("college_def_all_seasons.parquet",
+                ["tackles_per_game_z", "sacks_per_game_z", "tfl_per_game_z", "pd_per_game_z", "int_per_game_z", "pressure_rate_z"],
+                {"tackles_per_game_z": "Tackles/gm", "sacks_per_game_z": "Sacks/gm", "tfl_per_game_z": "TFL/gm",
+                 "pd_per_game_z": "PD/gm", "int_per_game_z": "INT/gm", "pressure_rate_z": "Pressure rate"}),
     }
 
-    for pos_name, (fname, z_cols, labels, invert) in POSITION_FILES.items():
+    # ── Helper: find recruiting info for a player ─────────
+    def get_recruiting_info(player_name):
+        if len(recruiting_df) == 0: return None
+        last = player_name.split()[-1] if player_name else ""
+        matches = recruiting_df[recruiting_df["name"].str.contains(last, na=False, case=False)]
+        if len(matches) == 1: return matches.iloc[0]
+        # Try tighter match
+        first = player_name.split()[0] if player_name else ""
+        tight = matches[matches["name"].str.contains(first, na=False, case=False)]
+        if len(tight) == 1: return tight.iloc[0]
+        if len(tight) > 0: return tight.iloc[0]
+        if len(matches) > 0: return matches.iloc[0]
+        return None
+
+    # ── Helper: find usage info ───────────────────────────
+    def get_usage_info(player_name, team, season):
+        if len(usage_df) == 0: return None
+        last = player_name.split()[-1] if player_name else ""
+        matches = usage_df[(usage_df["name"].str.contains(last, na=False, case=False)) &
+                           (usage_df["team"] == team) & (usage_df["season"] == season)]
+        return matches.iloc[0] if len(matches) > 0 else None
+
+    # ── Helper: find adjusted metrics ─────────────────────
+    def get_adjusted_info(player_name, team, season):
+        if len(adjusted_df) == 0: return None
+        last = player_name.split()[-1] if player_name else ""
+        matches = adjusted_df[(adjusted_df["name"].str.contains(last, na=False, case=False)) &
+                              (adjusted_df["team"] == team) & (adjusted_df["season"] == season)]
+        return matches if len(matches) > 0 else None
+
+    # ── Helper: find transfer info ────────────────────────
+    def get_transfer_info(player_name):
+        if len(transfers_df) == 0: return None
+        last = player_name.split()[-1] if player_name else ""
+        matches = transfers_df[transfers_df["name"].str.contains(last, na=False, case=False)]
+        if len(matches) > 0: return matches
+        return None
+
+    # ── Helper: build career line chart ───────────────────
+    def build_career_chart(player_name, df, season_col, z_cols, labels):
+        """Build career line chart with metric dropdown."""
+        all_player = df[df["player"] == player_name].sort_values(season_col)
+        if len(all_player) < 2: return
+
+        # Compute composite for each season
+        available_z = [c for c in z_cols if c in all_player.columns]
+        all_player["composite_z"] = all_player[available_z].mean(axis=1)
+
+        seasons = [int(s) for s in all_player[season_col].tolist()]
+        teams = all_player["team"].tolist()
+
+        # Build metric options
+        metric_options = {"Composite score": all_player["composite_z"].tolist()}
+        for z_col in z_cols:
+            if z_col in all_player.columns and all_player[z_col].notna().any():
+                label = labels.get(z_col, z_col.replace("_z", ""))
+                metric_options[label] = all_player[z_col].tolist()
+
+        selected_metric = st.selectbox("Metric", options=list(metric_options.keys()),
+                                        index=0, key=f"college_metric_{player_name}",
+                                        label_visibility="collapsed")
+
+        values = metric_options[selected_metric]
+        percentiles = [zscore_to_percentile(v) if pd.notna(v) else None for v in values]
+
+        colors = []
+        for v in values:
+            if pd.isna(v): colors.append("#ccc")
+            elif v >= 1.0: colors.append("#B8860B")
+            elif v >= 0.0: colors.append("#DAA520")
+            elif v >= -1.0: colors.append("#CD853F")
+            else: colors.append("#A0522D")
+
+        hover_text = []
+        for s, v, p, t in zip(seasons, values, percentiles, teams):
+            if pd.notna(v):
+                pct_str = f"top {100 - int(p)}%" if p and p >= 50 else f"bottom {int(p)}%" if p else "—"
+                hover_text.append(f"<b>{s}</b> ({t})<br>{selected_metric}: {v:+.2f}<br>{pct_str} of FBS")
+            else:
+                hover_text.append(f"<b>{s}</b> ({t})<br>No data")
+
+        fig = go.Figure()
+        fig.add_hline(y=0, line_dash="dash", line_color="#888", line_width=1,
+                      annotation_text="FBS avg", annotation_position="bottom left",
+                      annotation_font_size=10, annotation_font_color="#888")
+
+        fig.add_trace(go.Scatter(
+            x=seasons, y=values, mode="lines+markers",
+            line=dict(color="#B8860B", width=3),
+            marker=dict(size=12, color=colors, line=dict(width=2, color="white")),
+            hovertext=hover_text, hoverinfo="text",
+        ))
+
+        all_valid = [v for v in values if pd.notna(v)]
+        if all_valid:
+            y_max = max(max(all_valid) + 0.5, 2.0)
+            y_min = min(min(all_valid) - 0.5, -2.0)
+            fig.add_hrect(y0=1.0, y1=y_max, fillcolor="rgba(184,134,11,0.05)", line_width=0)
+            fig.add_hrect(y0=-1.0, y1=y_min, fillcolor="rgba(160,82,45,0.05)", line_width=0)
+
+        fig.update_layout(
+            xaxis=dict(title="Season", tickmode="array", tickvals=seasons,
+                       ticktext=[str(s) for s in seasons], gridcolor="#eee"),
+            yaxis=dict(title=selected_metric, gridcolor="#eee",
+                       zeroline=True, zerolinecolor="#888", zerolinewidth=1),
+            height=300, margin=dict(l=50, r=20, t=20, b=50),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            showlegend=False,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ══════════════════════════════════════════════════════
+    # RENDER EACH POSITION GROUP
+    # ══════════════════════════════════════════════════════
+    for pos_name, (fname, z_cols, labels) in POSITION_FILES.items():
         df = load_college_position(fname)
-        if len(df) == 0:
-            continue
+        if len(df) == 0: continue
 
         season_col = "season" if "season" in df.columns else "season_year"
         filtered = df[(df["team"] == selected_school) & (df[season_col] == selected_college_season)].copy()
+        if len(filtered) == 0: continue
 
-        if len(filtered) == 0:
-            continue
-
-        # Compute composite score
         available_z = [c for c in z_cols if c in filtered.columns]
         if available_z:
             filtered["composite_z"] = filtered[available_z].mean(axis=1)
             filtered = filtered.sort_values("composite_z", ascending=False)
 
-        # Position header
-        if pos_name == "DEF":
-            pos_display = "Defense"
-            pos_col = "pos_group" if "pos_group" in filtered.columns else None
-        else:
-            pos_display = {"QB": "Quarterbacks", "WR": "Wide Receivers", "TE": "Tight Ends", "RB": "Running Backs"}[pos_name]
-            pos_col = None
+        pos_display = {"QB": "Quarterbacks", "WR": "Wide Receivers", "TE": "Tight Ends",
+                       "RB": "Running Backs", "DEF": "Defense"}[pos_name]
+        pos_col = "pos_group" if pos_name == "DEF" and "pos_group" in filtered.columns else None
 
         st.markdown(f"#### {pos_display}")
 
-        # Build display table
+        # ── Summary table ─────────────────────────────────
         display_rows = []
         for _, row in filtered.iterrows():
             name = row.get("player", "—")
@@ -183,19 +298,21 @@ else:
             pct = zscore_to_percentile(comp)
 
             entry = {"Player": name}
-
             if pos_col and pd.notna(row.get(pos_col)):
                 entry["Pos"] = row[pos_col]
 
+            # Add recruiting stars
+            rec = get_recruiting_info(name)
+            if rec is not None and pd.notna(rec.get("stars")):
+                entry["Stars"] = star_display(rec["stars"])
+            
             if pd.notna(comp):
-                sign = "+" if comp >= 0 else ""
-                entry["Score"] = f"{sign}{comp:.2f}"
-                entry["Percentile"] = format_percentile(pct)
+                entry["Score"] = f"{'+' if comp >= 0 else ''}{comp:.2f}"
+                entry["Pctl"] = format_percentile(pct)
             else:
                 entry["Score"] = "—"
-                entry["Percentile"] = "—"
+                entry["Pctl"] = "—"
 
-            # Add key raw stats
             for z_col, label in labels.items():
                 raw_col = z_col.replace("_z", "")
                 raw = row.get(raw_col)
@@ -206,25 +323,38 @@ else:
                         entry[label] = f"{raw:.1f}" if isinstance(raw, float) else str(int(raw))
                 else:
                     entry[label] = "—"
-
             display_rows.append(entry)
 
         if display_rows:
             st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
 
-        # Clickable player expanders with full profile
-        st.caption("Click a player below for their full z-score profile and radar chart")
+        # ── Player expanders ──────────────────────────────
         for _, row in filtered.iterrows():
             name = row.get("player", "—")
             comp = row.get("composite_z", np.nan)
             pos_tag = f" ({row[pos_col]})" if pos_col and pd.notna(row.get(pos_col)) else ""
             score_tag = f" · {comp:+.2f}" if pd.notna(comp) else ""
 
-            with st.expander(f"**{name}**{pos_tag}{score_tag}"):
+            # Recruiting badge
+            rec = get_recruiting_info(name)
+            stars_tag = f" {star_display(rec['stars'])}" if rec is not None and pd.notna(rec.get("stars")) else ""
+
+            with st.expander(f"**{name}**{pos_tag}{score_tag}{stars_tag}"):
+
+                # ── Recruiting header ─────────────────────
+                if rec is not None:
+                    rec_parts = []
+                    if pd.notna(rec.get("stars")): rec_parts.append(f"{star_display(rec['stars'])} ({int(rec['stars'])}-star)")
+                    if pd.notna(rec.get("ranking")): rec_parts.append(f"#{int(rec['ranking'])} nationally")
+                    if pd.notna(rec.get("rating")): rec_parts.append(f"rating: {rec['rating']:.4f}")
+                    if pd.notna(rec.get("city")) and pd.notna(rec.get("state")): rec_parts.append(f"{rec['city']}, {rec['state']}")
+                    if rec_parts:
+                        st.caption(f"Recruiting: {' · '.join(rec_parts)}")
+
                 pc1, pc2 = st.columns([1, 1])
 
                 with pc1:
-                    # Stat breakdown table
+                    # ── Stat table ────────────────────────
                     stat_rows = []
                     for z_col, label in labels.items():
                         if z_col not in row.index: continue
@@ -237,51 +367,69 @@ else:
                             "Stat": label,
                             "Value": f"{raw:.2f}" if pd.notna(raw) else "—",
                             "Z-score": f"{z:+.2f}",
-                            "Percentile": f"{int(p)}th" if p else "—",
+                            "Pctl": f"{int(p)}th" if p else "—",
                         })
                     if stat_rows:
                         st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
 
+                    # ── Usage data ────────────────────────
+                    usage = get_usage_info(name, selected_school, selected_college_season)
+                    if usage is not None:
+                        st.markdown("**Usage rates**")
+                        usage_items = []
+                        if pd.notna(usage.get("usage_overall")): usage_items.append(f"Overall: {usage['usage_overall']:.1%}")
+                        if pd.notna(usage.get("usage_pass")): usage_items.append(f"Pass: {usage['usage_pass']:.1%}")
+                        if pd.notna(usage.get("usage_rush")): usage_items.append(f"Rush: {usage['usage_rush']:.1%}")
+                        if pd.notna(usage.get("usage_third_down")): usage_items.append(f"3rd down: {usage['usage_third_down']:.1%}")
+                        if usage_items:
+                            st.caption(" · ".join(usage_items))
+
+                    # ── Adjusted metrics ──────────────────
+                    adj = get_adjusted_info(name, selected_school, selected_college_season)
+                    if adj is not None and len(adj) > 0:
+                        st.markdown("**Opponent-adjusted**")
+                        for _, arow in adj.iterrows():
+                            stype = arow.get("stat_type", "")
+                            wepa = arow.get("wepa")
+                            plays = arow.get("plays")
+                            if pd.notna(wepa):
+                                st.caption(f"{stype.title()} WEPA: {wepa:+.2f} ({int(plays)} plays)" if pd.notna(plays) else f"{stype.title()} WEPA: {wepa:+.2f}")
+
+                    # ── Composite score ───────────────────
                     if pd.notna(comp):
                         pct = zscore_to_percentile(comp)
-                        pct_label = format_percentile(pct)
-                        st.markdown(f"**Composite: {comp:+.2f}** ({pct_label} of FBS {pos_display.lower()})")
+                        st.markdown(f"**Composite: {comp:+.2f}** ({format_percentile(pct)} of FBS {pos_display.lower()})")
 
-                    # Multi-season history
-                    full_history = df[(df["player"] == name) & (df["team"] == selected_school)].sort_values(season_col)
-                    if len(full_history) > 1:
-                        st.markdown("**Season history**")
-                        hist_rows = []
-                        for _, hrow in full_history.iterrows():
-                            hz = [hrow.get(c) for c in available_z if c in hrow.index and pd.notna(hrow.get(c))]
-                            hcomp = np.mean(hz) if hz else np.nan
-                            hist_rows.append({
-                                "Season": int(hrow[season_col]),
-                                "Team": hrow.get("team", ""),
-                                "Score": f"{hcomp:+.2f}" if pd.notna(hcomp) else "—",
-                            })
-                        st.dataframe(pd.DataFrame(hist_rows), use_container_width=True, hide_index=True)
-
-                    # Check for transfer history (different teams)
-                    all_player = df[df["player"] == name].sort_values(season_col)
-                    unique_teams = all_player["team"].unique()
+                    # ── Transfer history ──────────────────
+                    all_player_data = df[df["player"] == name].sort_values(season_col)
+                    unique_teams = all_player_data["team"].unique()
                     if len(unique_teams) > 1:
                         st.markdown("**Transfer history**")
-                        transfer_rows = []
-                        for _, trow in all_player.iterrows():
+                        t_rows = []
+                        for _, trow in all_player_data.iterrows():
                             tz = [trow.get(c) for c in available_z if c in trow.index and pd.notna(trow.get(c))]
                             tcomp = np.mean(tz) if tz else np.nan
-                            transfer_rows.append({
+                            t_rows.append({
                                 "Season": int(trow[season_col]),
                                 "Team": trow.get("team", ""),
-                                "Conference": trow.get("conference", ""),
+                                "Conf": trow.get("conference", ""),
                                 "Score": f"{tcomp:+.2f}" if pd.notna(tcomp) else "—",
                             })
-                        st.dataframe(pd.DataFrame(transfer_rows), use_container_width=True, hide_index=True)
+                        st.dataframe(pd.DataFrame(t_rows), use_container_width=True, hide_index=True)
+
+                    # Portal info
+                    portal = get_transfer_info(name)
+                    if portal is not None and len(portal) > 0:
+                        for _, prow in portal.iterrows():
+                            origin = prow.get("origin", "")
+                            dest = prow.get("destination", "")
+                            if pd.notna(origin) and pd.notna(dest) and dest:
+                                st.caption(f"Portal: {origin} → {dest}")
+                            elif pd.notna(origin):
+                                st.caption(f"Entered portal from {origin}")
 
                 with pc2:
-                    # Radar chart
-                    import plotly.graph_objects as go
+                    # ── Radar chart ───────────────────────
                     radar_axes, radar_values = [], []
                     for z_col, label in labels.items():
                         if z_col not in row.index: continue
@@ -302,7 +450,7 @@ else:
                             fillcolor="rgba(218, 165, 32, 0.25)",
                             line=dict(color="rgba(184, 134, 11, 0.9)", width=2),
                             marker=dict(size=6, color="rgba(184, 134, 11, 1)"),
-                            hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<extra></extra>",
+                            hovertemplate="<b>%{theta}</b><br>%{r:.0f}th pctl<extra></extra>",
                         ))
                         rfig.update_layout(
                             polar=dict(
@@ -317,11 +465,16 @@ else:
                             height=320, paper_bgcolor="rgba(0,0,0,0)",
                         )
                         st.plotly_chart(rfig, use_container_width=True, key=f"radar_{pos_name}_{name}")
-                    else:
-                        st.caption("Not enough stats for radar chart.")
+
+                # ── Career line chart with metric dropdown ─
+                all_player_career = df[df["player"] == name].sort_values(season_col)
+                if len(all_player_career) >= 2:
+                    st.markdown("**College career arc**")
+                    build_career_chart(name, df, season_col, z_cols, labels)
+                    st.caption("Each point = one season vs. all FBS players at this position. 0.00 = FBS average.")
 
     st.divider()
-    st.caption("College data via CollegeFootballData.com (CC-BY-SA) · Z-scored against all FBS players at each position per season")
+    st.caption("College data via CollegeFootballData.com · Recruiting, usage, and adjusted metrics via CFBD API · Z-scored against all FBS players per position per season")
 
 st.divider()
 st.caption("Built with Streamlit · NFL data from nflverse · College data from CFBD · Open source on GitHub")
