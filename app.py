@@ -431,6 +431,16 @@ else:
             if rec is not None and pd.notna(rec.get("stars")):
                 entry["Stars"] = star_display(rec["stars"])
 
+            # Add draft eligibility
+            if rec is not None and pd.notna(rec.get("recruit_year")):
+                elig_year = int(rec["recruit_year"]) + 3
+                if elig_year <= 2025:
+                    entry["Elig"] = f"✅ {elig_year}"
+                elif elig_year == 2026:
+                    entry["Elig"] = f"🟡 {elig_year}"
+                else:
+                    entry["Elig"] = f"🔒 {elig_year}"
+
             # Add combine highlights
             comb = get_combine_info(name, selected_school)
             if comb is not None:
@@ -480,6 +490,15 @@ else:
                     if pd.notna(rec.get("ranking")): rec_parts.append(f"#{int(rec['ranking'])} nationally")
                     if pd.notna(rec.get("rating")): rec_parts.append(f"rating: {rec['rating']:.4f}")
                     if pd.notna(rec.get("city")) and pd.notna(rec.get("state")): rec_parts.append(f"{rec['city']}, {rec['state']}")
+                    # Draft eligibility
+                    if pd.notna(rec.get("recruit_year")):
+                        elig_year = int(rec["recruit_year"]) + 3
+                        if elig_year <= 2025:
+                            rec_parts.append(f"✅ Draft eligible ({elig_year})")
+                        elif elig_year == 2026:
+                            rec_parts.append(f"🟡 Eligible 2026")
+                        else:
+                            rec_parts.append(f"🔒 Eligible {elig_year}")
                     if rec_parts:
                         st.caption(f"Recruiting: {' · '.join(rec_parts)}")
 
