@@ -10,6 +10,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
+from career_arc import career_arc_section
 from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
 
 st.set_page_config(page_title="QB Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
