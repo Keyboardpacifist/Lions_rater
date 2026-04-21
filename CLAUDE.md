@@ -197,12 +197,33 @@ CONFIG = {
 
 ### Phase 3: Data Pipeline (weeks 3-4)
 
-- [ ] Write data pull scripts for ALL positions (not just WR and RB)
-- [ ] Unify into a single parameterized script: `python tools/data_pull.py --position QB --season 2025`
-- [ ] Add `make data-refresh` command
+- [x] Unified pipeline framework: `python tools/data_pull.py --position wr --seasons 2016-2025`
+- [x] WR position config (fully working, translated from `tools/wr_data_pull.py`)
+- [x] RB position config (stubbed from `tools/rb_data_pull.py`, needs testing)
+- [x] Disk-cached nflverse pulls (`.data_cache/`, 7-day TTL)
+- [x] Output validation: schema, z-score distributions, required columns
+- [x] Template for adding new positions (`tools/pipeline/positions/_template.py`)
+- [ ] Write position configs for remaining positions (QB, OL, DE, DT, LB, CB, S, K, P)
 - [ ] Move parquets to external storage (Git LFS, S3, or Supabase Storage)
 - [ ] Clean git history of duplicate parquet blobs (reduces repo from 30MB+ to ~5MB)
-- [ ] Add data validation: check schema, row counts, z-score distributions after pull
+
+**Pipeline architecture:**
+```
+tools/
+  data_pull.py                    # CLI: --position, --seasons, --dry-run
+  pipeline/
+    base.py                       # PositionConfig dataclass
+    sources.py                    # Cached nflverse data pulls
+    population.py                 # Snap filtering, top-N selection
+    zscore.py                     # Shared z-score engine
+    output.py                     # Validation + parquet/metadata writer
+    runner.py                     # Season-loop orchestrator
+    positions/
+      __init__.py                 # Registry: POSITIONS = {"wr": WR_CONFIG, ...}
+      wr.py                       # WR+TE config (working)
+      rb.py                       # RB config (stubbed)
+      _template.py                # Annotated template for new positions
+```
 
 ### Phase 4: Testing & CI (week 4+)
 

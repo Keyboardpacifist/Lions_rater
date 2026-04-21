@@ -37,17 +37,18 @@ lint-fix: install
 # ── Data ─────────────────────────────────────────────────────
 
 data-refresh: install
-	@echo "Available positions: wr, rb"
-	@echo "Usage: make data-refresh-wr  or  make data-refresh-rb"
+	@echo "Usage: $(VENV)/bin/python tools/data_pull.py --position POSITION --seasons SEASONS"
 	@echo ""
-	@echo "NOTE: Most positions do not have data pull scripts yet."
-	@echo "See CLAUDE.md Phase 3 for the plan to add them."
+	@echo "Examples:"
+	@echo "  $(VENV)/bin/python tools/data_pull.py --position wr --seasons 2024"
+	@echo "  $(VENV)/bin/python tools/data_pull.py --position wr --seasons 2016-2025"
+	@echo "  $(VENV)/bin/python tools/data_pull.py --position wr --seasons 2024 --dry-run"
 
 data-refresh-wr: install
-	$(PYTHON) tools/wr_data_pull.py
+	$(VENV)/bin/python tools/data_pull.py --position wr --seasons 2016-2025
 
 data-refresh-rb: install
-	$(PYTHON) tools/rb_data_pull.py
+	@echo "RB config is stubbed but not yet registered. See tools/pipeline/positions/rb.py"
 
 # ── Cleanup ──────────────────────────────────────────────────
 

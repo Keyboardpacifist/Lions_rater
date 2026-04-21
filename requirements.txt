@@ -6,3 +6,4 @@ supabase>=2.9
 polars>=1.0
 plotly>=5.0
 scipy>=1.11
+nflreadpy>=0.3
