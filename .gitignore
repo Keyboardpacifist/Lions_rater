@@ -37,6 +37,9 @@ htmlcov/
 .coverage
 coverage.xml
 
+# Data pipeline cache
+.data_cache/
+
 # Sensitive files — never commit these
 *.pdf
 *.csv

@@ -1,0 +1,14 @@
+"""
+Position config registry.
+
+To add a new position:
+1. Copy _template.py to {position}.py
+2. Fill in the config
+3. Add it to POSITIONS below
+"""
+from .wr import WR_CONFIG
+
+POSITIONS = {
+    "wr": WR_CONFIG,
+    # "rb": RB_CONFIG,  # Uncomment after filling in rb.py
+}
