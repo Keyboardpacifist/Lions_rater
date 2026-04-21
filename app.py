@@ -559,8 +559,50 @@ else:
                         draft_info_parts.append(f"Pick #{int(comb['draft_ovr'])}")
                     if comb is not None and pd.notna(comb.get("draft_team")):
                         draft_info_parts.append(f"→ {comb['draft_team']}")
-                    draft_str = f" | Draft: {' '.join(draft_info_parts)}" if draft_info_parts else ""
-                    st.caption(f"🏋️ Measurables: {comb_display}{draft_str}")
+                    draft_str = f"<div style='margin-top:4px;font-size:0.85rem;color:#888;'>{' '.join(draft_info_parts)}</div>" if draft_info_parts else ""
+
+                    # Build individual metric badges
+                    metric_badges = []
+                    badge_data = []
+                    if pd.notna(comb.get("ht")):
+                        badge_data.append(("Height", str(comb["ht"])))
+                    elif pd.notna(comb.get("height_in")):
+                        inches = int(comb["height_in"])
+                        badge_data.append(("Height", f"{inches // 12}-{inches % 12}"))
+                    if pd.notna(comb.get("wt")):
+                        badge_data.append(("Weight", f"{int(comb['wt'])} lbs"))
+                    elif pd.notna(comb.get("weight")):
+                        badge_data.append(("Weight", f"{int(comb['weight'])} lbs"))
+                    if pd.notna(comb.get("forty")):
+                        badge_data.append(("40-yard", f"{comb['forty']:.2f}s"))
+                    if pd.notna(comb.get("bench")):
+                        badge_data.append(("Bench", f"{int(comb['bench'])} reps"))
+                    if pd.notna(comb.get("vertical")):
+                        badge_data.append(("Vertical", f"{comb['vertical']}\""))
+                    if pd.notna(comb.get("broad_jump")):
+                        badge_data.append(("Broad", f"{int(comb['broad_jump'])}\""))
+                    if pd.notna(comb.get("cone")):
+                        badge_data.append(("3-cone", f"{comb['cone']:.2f}s"))
+                    if pd.notna(comb.get("shuttle")):
+                        badge_data.append(("Shuttle", f"{comb['shuttle']:.2f}s"))
+
+                    for label, val in badge_data:
+                        metric_badges.append(
+                            f"<div style='display:inline-block;background:#f0f2f6;border-radius:8px;"
+                            f"padding:6px 12px;margin:3px;text-align:center;'>"
+                            f"<div style='font-size:0.75rem;color:#888;text-transform:uppercase;letter-spacing:0.5px;'>{label}</div>"
+                            f"<div style='font-size:1.1rem;font-weight:bold;color:#1a1a2e;'>{val}</div>"
+                            f"</div>"
+                        )
+
+                    st.markdown(
+                        f"<div style='background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);"
+                        f"border-radius:10px;padding:12px 16px;margin:8px 0;'>"
+                        f"<div style='color:#e0e0e0;font-size:0.85rem;margin-bottom:6px;'>🏋️ <b>MEASURABLES</b></div>"
+                        f"<div style='display:flex;flex-wrap:wrap;gap:2px;'>{''.join(metric_badges)}</div>"
+                        f"{draft_str}</div>",
+                        unsafe_allow_html=True,
+                    )
 
                 # ── Pedigree score ────────────────────────
                 try:
