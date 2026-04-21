@@ -548,18 +548,10 @@ else:
                     if rec_parts:
                         st.caption(f"Recruiting: {' · '.join(rec_parts)}")
 
-                # ── Combine / Pro Day data ────────────────
+                # ── Workout measurables ───────────────────
                 comb = get_combine_info(name, selected_school)
                 comb_display = format_combine_display(comb)
                 if comb_display:
-                    # Determine source
-                    source = "NFL Combine"
-                    if comb is not None and pd.notna(comb.get("_workout_source")):
-                        source = comb["_workout_source"]
-                    elif comb is not None and pd.notna(comb.get("source")):
-                        source = "Pro Day" if comb["source"] == "pro_day" else "NFL Combine"
-                    source_icon = "🏋️" if source == "NFL Combine" else "🏟️"
-
                     draft_info_parts = []
                     if comb is not None and pd.notna(comb.get("draft_round")):
                         draft_info_parts.append(f"Rd {int(comb['draft_round'])}")
@@ -568,7 +560,7 @@ else:
                     if comb is not None and pd.notna(comb.get("draft_team")):
                         draft_info_parts.append(f"→ {comb['draft_team']}")
                     draft_str = f" | Draft: {' '.join(draft_info_parts)}" if draft_info_parts else ""
-                    st.caption(f"{source_icon} {source}: {comb_display}{draft_str}")
+                    st.caption(f"🏋️ Measurables: {comb_display}{draft_str}")
 
                 # ── Pedigree score ────────────────────────
                 try:
