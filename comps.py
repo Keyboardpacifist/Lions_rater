@@ -80,21 +80,25 @@ NFL_TIERS = [
 
 
 def compute_tier_probs(comps_df):
-    """Compute probability of each NFL outcome tier from comps."""
-    if "comp_nfl_avg_z" not in comps_df.columns:
+    """Compute probability of each NFL outcome tier from comps.
+    Uses best 2-season average (comp_nfl_best2_z) for fairer classification.
+    Only includes players with 3+ NFL seasons."""
+    # Prefer best2_z, fall back to avg_z
+    tier_col = "comp_nfl_best2_z" if "comp_nfl_best2_z" in comps_df.columns else "comp_nfl_avg_z"
+    if tier_col not in comps_df.columns:
         return None
-    nfl_comps = comps_df[comps_df["comp_nfl_avg_z"].notna()]
+    nfl_comps = comps_df[comps_df[tier_col].notna()]
     if len(nfl_comps) == 0:
         return None
 
     tiers = []
     for tier_name, z_min, z_max, icon, color in NFL_TIERS:
         if z_min is not None and z_max is not None:
-            mask = (nfl_comps["comp_nfl_avg_z"] >= z_min) & (nfl_comps["comp_nfl_avg_z"] < z_max)
+            mask = (nfl_comps[tier_col] >= z_min) & (nfl_comps[tier_col] < z_max)
         elif z_min is not None:
-            mask = nfl_comps["comp_nfl_avg_z"] >= z_min
+            mask = nfl_comps[tier_col] >= z_min
         else:
-            mask = nfl_comps["comp_nfl_avg_z"] < z_max
+            mask = nfl_comps[tier_col] < z_max
 
         count = mask.sum()
         pct = (count / len(nfl_comps)) * 100
