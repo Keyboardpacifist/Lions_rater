@@ -296,18 +296,21 @@ else:
     all_workouts_df = load_enrichment("nfl_all_workouts.parquet")
 
     def get_combine_info(player_name, school=None):
-        # Try official combine first
+        # Try official combine first — but only if it has actual measurables
         result = _lookup_workout(combine_df, player_name, school, "player_name", "school")
         if result is not None:
-            result_dict = result.to_dict() if not isinstance(result, dict) else result
-            result_dict["_source"] = "NFL Combine"
-            return result
-        # Fall back to all workouts (includes pro day)
+            has_data = any(pd.notna(result.get(c)) for c in ["forty", "bench", "vertical", "broad_jump", "cone", "shuttle"])
+            if has_data:
+                return result
+        # Fall back to all workouts (includes pro day with source column)
         if len(all_workouts_df) > 0:
             result = _lookup_workout(all_workouts_df, player_name, school, "player_name", "school")
             if result is not None:
                 return result
-        return None
+        # If combine had body measurements only, still return those
+        if result is None:
+            result = _lookup_workout(combine_df, player_name, school, "player_name", "school")
+        return result
 
     def _lookup_workout(df, player_name, school, name_col, school_col):
         if len(df) == 0: return None
