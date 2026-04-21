@@ -296,21 +296,33 @@ else:
     all_workouts_df = load_enrichment("nfl_all_workouts.parquet")
 
     def get_combine_info(player_name, school=None):
-        # Try official combine first — but only if it has actual measurables
-        result = _lookup_workout(combine_df, player_name, school, "player_name", "school")
-        if result is not None:
-            has_data = any(pd.notna(result.get(c)) for c in ["forty", "bench", "vertical", "broad_jump", "cone", "shuttle"])
-            if has_data:
-                return result
-        # Fall back to all workouts (includes pro day with source column)
+        # Check combine parquet for this player
+        combine_result = _lookup_workout(combine_df, player_name, school, "player_name", "school")
+        combine_had_drills = False
+        if combine_result is not None:
+            combine_had_drills = any(pd.notna(combine_result.get(c)) for c in ["forty", "bench", "vertical", "broad_jump", "cone", "shuttle"])
+
+        # Check all_workouts (has both combine + pro day with more coverage)
+        workouts_result = None
         if len(all_workouts_df) > 0:
-            result = _lookup_workout(all_workouts_df, player_name, school, "player_name", "school")
-            if result is not None:
-                return result
-        # If combine had body measurements only, still return those
-        if result is None:
-            result = _lookup_workout(combine_df, player_name, school, "player_name", "school")
-        return result
+            workouts_result = _lookup_workout(all_workouts_df, player_name, school, "player_name", "school")
+
+        # Pick the best result
+        if combine_had_drills:
+            # Combine had real drill data — use it, tag as combine
+            combine_result["_workout_source"] = "NFL Combine"
+            return combine_result
+        elif workouts_result is not None:
+            has_workout_drills = any(pd.notna(workouts_result.get(c)) for c in ["forty", "bench", "vertical", "broad_jump", "cone", "shuttle"])
+            if has_workout_drills:
+                # Combine didn't have drills but workouts file does — this is pro day data
+                workouts_result["_workout_source"] = "Pro Day"
+                return workouts_result
+        # Return combine for body measurements at least
+        if combine_result is not None:
+            combine_result["_workout_source"] = "NFL Combine"
+            return combine_result
+        return workouts_result
 
     def _lookup_workout(df, player_name, school, name_col, school_col):
         if len(df) == 0: return None
@@ -551,10 +563,10 @@ else:
                 if comb_display:
                     # Determine source
                     source = "NFL Combine"
-                    if comb is not None and pd.notna(comb.get("source")):
+                    if comb is not None and pd.notna(comb.get("_workout_source")):
+                        source = comb["_workout_source"]
+                    elif comb is not None and pd.notna(comb.get("source")):
                         source = "Pro Day" if comb["source"] == "pro_day" else "NFL Combine"
-                    elif comb is not None and pd.notna(comb.get("_source")):
-                        source = comb["_source"]
                     source_icon = "🏋️" if source == "NFL Combine" else "🏟️"
 
                     draft_info_parts = []
