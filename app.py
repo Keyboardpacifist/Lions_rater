@@ -1,4 +1,3 @@
-
 """
 NFL Rater — Landing page with NFL / College toggle
 Enriched college profiles with recruiting, usage, adjusted metrics, transfers.
