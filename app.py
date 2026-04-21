@@ -395,7 +395,7 @@ else:
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             showlegend=False,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"career_chart_{unique_key}")
 
     # ══════════════════════════════════════════════════════
     # RENDER EACH POSITION GROUP
