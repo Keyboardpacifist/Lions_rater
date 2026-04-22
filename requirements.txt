@@ -1,9 +1,9 @@
-streamlit>=1.39
-pandas>=2.2
-numpy>=2.0
+streamlit>=1.39,<2
+pandas>=2.2,<3
+numpy>=2.0,<3
 pyarrow>=18
 supabase>=2.9
-polars>=1.0
+polars>=1.0,<2
 plotly>=5.0
 scipy>=1.11
-nflreadpy>=0.3
+nflreadpy>=0.1.5
