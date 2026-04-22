@@ -154,63 +154,72 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
             lambda row: compute_composite_score(row, college_z_cols), axis=1)
 
     # ══════════════════════════════════════════════════════
-    # COMBINE DATA
+    # COMBINE / PRO DAY DATA
     # ══════════════════════════════════════════════════════
     COLLEGE_DATA_DIR = Path(__file__).resolve().parent / "data" / "college"
+
+    @st.cache_data
+    def _load_workout_file(path_str):
+        return pd.read_parquet(path_str)
+
+    def _find_workout(df, name, name_col="player_name"):
+        if len(df) == 0 or not name: return None
+        exact = df[df[name_col].str.lower() == name.lower()]
+        if len(exact) >= 1: return exact.iloc[0]
+        parts = name.split()
+        if len(parts) >= 2:
+            first, last = parts[0], parts[-1]
+            matches = df[
+                (df[name_col].str.contains(last, na=False, case=False)) &
+                (df[name_col].str.contains(first, na=False, case=False))
+            ]
+            if len(matches) > 0: return matches.iloc[0]
+            last_only = df[df[name_col].str.contains(last, na=False, case=False)]
+            if len(last_only) == 1: return last_only.iloc[0]
+        return None
+
+    comb = None
+    source_label = "NFL Combine"
     combine_path = COLLEGE_DATA_DIR / "nfl_combine.parquet"
+    workouts_path = COLLEGE_DATA_DIR / "nfl_all_workouts.parquet"
+
     if combine_path.exists():
         try:
-            @st.cache_data
-            def _load_combine():
-                return pd.read_parquet(str(combine_path))
-            combine_df = _load_combine()
+            comb = _find_workout(_load_workout_file(str(combine_path)), player_name)
+        except: pass
 
-            comb = None
-            if player_name:
-                # Try exact match first
-                exact = combine_df[combine_df["player_name"].str.lower() == player_name.lower()]
-                if len(exact) == 1:
-                    comb = exact.iloc[0]
-                elif len(exact) > 1:
-                    comb = exact.iloc[0]
-                else:
-                    # Try first + last name contains
-                    name_parts = player_name.split()
-                    if len(name_parts) >= 2:
-                        first = name_parts[0]
-                        last = name_parts[-1]
-                        matches = combine_df[
-                            (combine_df["player_name"].str.contains(last, na=False, case=False)) &
-                            (combine_df["player_name"].str.contains(first, na=False, case=False))
-                        ]
-                        if len(matches) > 0:
-                            comb = matches.iloc[0]
-                        else:
-                            # Last name only, single match
-                            last_only = combine_df[combine_df["player_name"].str.contains(last, na=False, case=False)]
-                            if len(last_only) == 1:
-                                comb = last_only.iloc[0]
+    if comb is None and workouts_path.exists():
+        try:
+            wk = _find_workout(_load_workout_file(str(workouts_path)), player_name)
+            if wk is not None:
+                comb = wk
+                if pd.notna(wk.get("source")) and wk["source"] == "pro_day":
+                    source_label = "Pro Day"
+        except: pass
 
-            if comb is not None:
-                parts = []
-                if pd.notna(comb.get("ht")): parts.append(f"Ht: {comb['ht']}")
-                if pd.notna(comb.get("wt")): parts.append(f"Wt: {int(comb['wt'])}")
-                if pd.notna(comb.get("forty")): parts.append(f"40: {comb['forty']:.2f}s")
-                if pd.notna(comb.get("bench")): parts.append(f"Bench: {int(comb['bench'])}")
-                if pd.notna(comb.get("vertical")): parts.append(f"Vert: {comb['vertical']}\"")
-                if pd.notna(comb.get("broad_jump")): parts.append(f"Broad: {int(comb['broad_jump'])}\"")
-                if pd.notna(comb.get("cone")): parts.append(f"3-cone: {comb['cone']:.2f}s")
-                if pd.notna(comb.get("shuttle")): parts.append(f"Shuttle: {comb['shuttle']:.2f}s")
-                if parts:
-                    draft_parts = []
-                    if pd.notna(comb.get("draft_round")): draft_parts.append(f"Rd {int(comb['draft_round'])}")
-                    if pd.notna(comb.get("draft_ovr")): draft_parts.append(f"Pick #{int(comb['draft_ovr'])}")
-                    if pd.notna(comb.get("draft_team")): draft_parts.append(f"→ {comb['draft_team']}")
-                    draft_str = f" | Draft: {' '.join(draft_parts)}" if draft_parts else ""
-                    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-                    st.caption(f"🏋️ **NFL Combine:** {' · '.join(parts)}{draft_str}")
-        except Exception:
-            pass
+    if comb is not None:
+        parts = []
+        if pd.notna(comb.get("ht")): parts.append(f"Ht: {comb['ht']}")
+        elif pd.notna(comb.get("height_in")):
+            inches = int(comb["height_in"])
+            parts.append(f"Ht: {inches // 12}-{inches % 12}")
+        if pd.notna(comb.get("wt")): parts.append(f"Wt: {int(comb['wt'])}")
+        elif pd.notna(comb.get("weight")): parts.append(f"Wt: {int(comb['weight'])}")
+        if pd.notna(comb.get("forty")): parts.append(f"40: {comb['forty']:.2f}s")
+        if pd.notna(comb.get("bench")): parts.append(f"Bench: {int(comb['bench'])}")
+        if pd.notna(comb.get("vertical")): parts.append(f"Vert: {comb['vertical']}\"")
+        if pd.notna(comb.get("broad_jump")): parts.append(f"Broad: {int(comb['broad_jump'])}\"")
+        if pd.notna(comb.get("cone")): parts.append(f"3-cone: {comb['cone']:.2f}s")
+        if pd.notna(comb.get("shuttle")): parts.append(f"Shuttle: {comb['shuttle']:.2f}s")
+        if parts:
+            source_icon = "🏋️" if source_label == "NFL Combine" else "🏟️"
+            draft_parts = []
+            if pd.notna(comb.get("draft_round")): draft_parts.append(f"Rd {int(comb['draft_round'])}")
+            if pd.notna(comb.get("draft_ovr")): draft_parts.append(f"Pick #{int(comb['draft_ovr'])}")
+            if pd.notna(comb.get("draft_team")): draft_parts.append(f"→ {comb['draft_team']}")
+            draft_str = f" | Draft: {' '.join(draft_parts)}" if draft_parts else ""
+            st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+            st.caption(f"{source_icon} **{source_label}:** {' · '.join(parts)}{draft_str}")
 
     # ══════════════════════════════════════════════════════
     # NFL CAREER ARC
@@ -225,10 +234,29 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
         nfl_teams = nfl_history[team_col].tolist()
 
         if len(nfl_seasons) >= 2:
-            fig = _build_line_chart(nfl_seasons, nfl_values, nfl_teams,
+            # Build metric options
+            nfl_metric_options = ["Composite score"]
+            nfl_metric_data = {"Composite score": nfl_values}
+
+            for z_col in z_score_cols:
+                if z_col in nfl_history.columns and nfl_history[z_col].notna().any():
+                    label = stat_labels.get(z_col, z_col.replace("_z", "").replace("_", " ").title())
+                    nfl_metric_options.append(label)
+                    nfl_metric_data[label] = nfl_history[z_col].tolist()
+
+            selected_nfl_metric = st.selectbox(
+                "Metric",
+                options=nfl_metric_options,
+                index=0,
+                key=f"nfl_career_metric_{player_name}",
+                label_visibility="collapsed",
+            )
+
+            chart_values = nfl_metric_data[selected_nfl_metric]
+            fig = _build_line_chart(nfl_seasons, chart_values, nfl_teams,
                                     "#0076B6", "NFL", f"NFL {position_label}")
             st.plotly_chart(fig, use_container_width=True)
-            st.caption(f"Each point is one NFL season vs. all NFL {position_label}. 0.00 = league average.")
+            st.caption(f"Each point is one NFL season's {selected_nfl_metric.lower()} vs. all NFL {position_label}. 0.00 = league average.")
         elif len(nfl_seasons) == 1:
             score = nfl_values[0]
             if pd.notna(score):
