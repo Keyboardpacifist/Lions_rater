@@ -383,7 +383,27 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
 
         if len(college_seasons) >= 2:
             st.markdown("**College career arc**")
-            fig = _build_line_chart(college_seasons, college_values, college_teams,
+
+            # Build metric options
+            col_metric_options = ["Composite score"]
+            col_metric_data = {"Composite score": college_values}
+
+            for z_col in college_z_cols:
+                if z_col in college_history.columns and college_history[z_col].notna().any():
+                    label = COLLEGE_STAT_LABELS.get(z_col, z_col.replace("_z", "").replace("_", " ").title())
+                    col_metric_options.append(label)
+                    col_metric_data[label] = college_history[z_col].tolist()
+
+            selected_col_metric = st.selectbox(
+                "College metric",
+                options=col_metric_options,
+                index=0,
+                key=f"college_career_metric_{player_name}",
+                label_visibility="collapsed",
+            )
+
+            chart_values = col_metric_data[selected_col_metric]
+            fig = _build_line_chart(college_seasons, chart_values, college_teams,
                                     "#B8860B", "College", f"FBS {position_label}")
             st.plotly_chart(fig, use_container_width=True)
-            st.caption(f"Each point is one college season vs. all FBS {position_label}. 0.00 = FBS average.")
+            st.caption(f"Each point is one college season's {selected_col_metric.lower()} vs. all FBS {position_label}. 0.00 = FBS average.")
