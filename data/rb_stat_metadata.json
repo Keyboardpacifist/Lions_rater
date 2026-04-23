@@ -1,4 +1,8 @@
 {
+  "position_group": "rb",
+  "season": "2016-2025",
+  "population": "Players with >= 100 RB total snaps, min 6 games",
+  "n_players": 841,
   "stat_tiers": {
     "rush_yards_z": 1,
     "rush_tds_z": 1,
@@ -8,7 +12,6 @@
     "rec_tds_z": 1,
     "yards_per_carry_z": 2,
     "rush_success_rate_z": 2,
-    "epa_per_rush_z": 2,
     "carries_per_game_z": 2,
     "snap_share_z": 2,
     "touches_per_game_z": 2,
@@ -20,87 +23,166 @@
     "short_yardage_conv_rate_z": 2,
     "rec_yards_per_target_z": 2,
     "yac_per_reception_z": 2,
-    "rec_epa_per_target_z": 2,
-    "yards_before_contact_per_att_z": 3,
-    "yards_after_contact_per_att_z": 3,
+    "broken_tackles_per_att_z": 2,
+    "yards_before_contact_per_att_z": 2,
+    "yards_after_contact_per_att_z": 2,
+    "epa_per_rush_z": 3,
+    "rec_epa_per_target_z": 3,
     "ryoe_per_att_z": 3
   },
   "stat_labels": {
-    "rush_yards_z": "Rushing yards",
-    "rush_tds_z": "Rushing TDs",
-    "carries_z": "Carries",
-    "receptions_z": "Receptions",
-    "rec_yards_z": "Receiving yards",
-    "rec_tds_z": "Receiving TDs",
+    "rush_yards_z": "Rushing yards (raw)",
+    "rush_tds_z": "Rushing TDs (raw)",
+    "carries_z": "Carries (raw)",
+    "receptions_z": "Receptions (raw)",
+    "rec_yards_z": "Receiving yards (raw)",
+    "rec_tds_z": "Receiving TDs (raw)",
     "yards_per_carry_z": "Yards per carry",
     "rush_success_rate_z": "Rush success rate",
-    "epa_per_rush_z": "EPA per rush",
     "carries_per_game_z": "Carries per game",
     "snap_share_z": "Snap share",
     "touches_per_game_z": "Touches per game",
     "targets_per_game_z": "Targets per game",
-    "explosive_run_rate_z": "Explosive run rate (10+ yds)",
-    "explosive_15_rate_z": "Big play rate (15+ yds)",
+    "explosive_run_rate_z": "Explosive run rate (10+ yd)",
+    "explosive_15_rate_z": "15+ yard run rate",
     "rz_carry_share_z": "Red zone carry share",
     "goal_line_td_rate_z": "Goal line TD rate",
-    "short_yardage_conv_rate_z": "Short yardage conversion rate",
+    "short_yardage_conv_rate_z": "Short-yardage conversion rate",
     "rec_yards_per_target_z": "Receiving yards per target",
     "yac_per_reception_z": "YAC per reception",
+    "broken_tackles_per_att_z": "Broken tackles per attempt",
+    "yards_before_contact_per_att_z": "Yards before contact per attempt",
+    "yards_after_contact_per_att_z": "Yards after contact per attempt",
+    "epa_per_rush_z": "EPA per rush",
     "rec_epa_per_target_z": "Receiving EPA per target",
-    "yards_before_contact_per_att_z": "Yards before contact per carry (PFR)",
-    "yards_after_contact_per_att_z": "Yards after contact per carry (PFR)",
-    "ryoe_per_att_z": "Rush yards over expected per carry"
+    "ryoe_per_att_z": "Rush yards over expected per attempt"
   },
   "stat_methodology": {
+    "rush_yards_z": {
+      "what": "Total raw rushing yards (full season, REG only).",
+      "how": "From nflverse load_player_stats(summary_level='week') summed per (player, team).",
+      "limits": "Volume stat \u2014 usage-driven."
+    },
+    "rush_tds_z": {
+      "what": "Total raw rushing touchdowns.",
+      "how": "From nflverse load_player_stats \u2014 correctly attributed even on lateral plays.",
+      "limits": "Small integer samples are noisy."
+    },
+    "carries_z": {
+      "what": "Total raw rushing attempts.",
+      "how": "From nflverse load_player_stats per (player, team) stint.",
+      "limits": "Pure opportunity \u2014 not a skill measure."
+    },
+    "receptions_z": {
+      "what": "Total raw receptions.",
+      "how": "From nflverse load_player_stats per stint.",
+      "limits": "Volume stat."
+    },
+    "rec_yards_z": {
+      "what": "Total raw receiving yards.",
+      "how": "From nflverse load_player_stats per stint.",
+      "limits": "Volume stat. Pass-catching role drives this."
+    },
+    "rec_tds_z": {
+      "what": "Total raw receiving touchdowns.",
+      "how": "From nflverse load_player_stats per stint.",
+      "limits": "Small integer samples are noisy."
+    },
     "yards_per_carry_z": {
-      "what": "Yards gained per carry",
-      "how": "Rush yards / carries.",
-      "limits": "OL quality matters significantly."
+      "what": "Average yards per rushing attempt.",
+      "how": "rush_yards / carries.",
+      "limits": "Inflated by long runs; one or two big gains can spike a low-volume back."
     },
     "rush_success_rate_z": {
-      "what": "% of carries with positive EPA",
-      "how": "Positive EPA carries / total carries.",
-      "limits": "Situational \u2014 3rd and short is easier to succeed on."
+      "what": "Percentage of rushes that produced a successful play by EPA standards.",
+      "how": "Mean of nflverse binary success flag across this player's carries (per stint).",
+      "limits": "Binary cutoff; doesn't differentiate near-misses from runaway successes."
     },
-    "epa_per_rush_z": {
-      "what": "EPA per rush attempt",
-      "how": "Rushing EPA / carries.",
-      "limits": "Influenced by OL and scheme."
+    "carries_per_game_z": {
+      "what": "Carries per game played.",
+      "how": "carries / games_played.",
+      "limits": "Pure usage \u2014 not skill."
+    },
+    "snap_share_z": {
+      "what": "Fraction of estimated team offensive snaps the player was on the field for.",
+      "how": "off_snaps / (games_played * 65). 65 is an approximate league-average snap count per offensive game.",
+      "limits": "Uses a constant denominator; teams with low- or high-snap offenses are normalized away."
+    },
+    "touches_per_game_z": {
+      "what": "Combined carries + receptions per game.",
+      "how": "(carries + receptions) / games_played.",
+      "limits": "Volume / role indicator."
+    },
+    "targets_per_game_z": {
+      "what": "Pass targets per game.",
+      "how": "targets / games_played.",
+      "limits": "Role-driven; pass-catching backs vs. early-down only."
     },
     "explosive_run_rate_z": {
-      "what": "Rate of 10+ yard runs",
-      "how": "Runs of 10+ yards / total carries.",
-      "limits": "One breakaway run can skew this."
+      "what": "Percentage of carries gaining 10+ yards.",
+      "how": "PBP plays gaining \u226510 yards / total carries.",
+      "limits": "Often scheme-aided; low-volume backs have noisy rates."
     },
     "explosive_15_rate_z": {
-      "what": "Rate of 15+ yard runs",
-      "how": "Runs of 15+ yards / total carries.",
-      "limits": "Very small sample \u2014 a few big plays dominate."
+      "what": "Percentage of carries gaining 15+ yards.",
+      "how": "Same as above with a 15-yard cutoff.",
+      "limits": "Same caveats; harder threshold = noisier."
+    },
+    "rz_carry_share_z": {
+      "what": "Share of the player's carries that came inside the opponent's 20.",
+      "how": "rz_carries / carries.",
+      "limits": "Usage signal: trust in scoring position."
     },
     "goal_line_td_rate_z": {
-      "what": "TD rate on goal line carries (inside 5)",
-      "how": "TDs / carries inside the 5.",
-      "limits": "Small sample. OL push matters."
+      "what": "TD rate on carries inside the 5.",
+      "how": "gl_tds / gl_attempts.",
+      "limits": "Tiny samples \u2014 extreme values for backs with few goal-line carries."
     },
     "short_yardage_conv_rate_z": {
-      "what": "Conversion rate on 3rd/4th and 2 or less",
-      "how": "First downs / short yardage carries.",
-      "limits": "Very small sample per player."
+      "what": "Conversion rate on 3rd/4th-and-2-or-shorter carries.",
+      "how": "sy_conversions / sy_attempts.",
+      "limits": "Small samples; counted as a first down only when the run gained one."
+    },
+    "rec_yards_per_target_z": {
+      "what": "Receiving yards per target.",
+      "how": "rec_yards / targets.",
+      "limits": "Penalizes drops as zeros."
+    },
+    "yac_per_reception_z": {
+      "what": "Average yards after the catch per reception.",
+      "how": "yac / receptions.",
+      "limits": "Credit shared with scheme and blockers."
+    },
+    "broken_tackles_per_att_z": {
+      "what": "Broken tackles per rushing attempt.",
+      "how": "PFR data: broken tackles total / PFR carries.",
+      "limits": "Subjective tracking by PFR; methodology can drift."
     },
     "yards_before_contact_per_att_z": {
-      "what": "Yards before first contact per carry",
-      "how": "PFR advanced rushing data.",
-      "limits": "Reflects OL blocking as much as RB vision."
+      "what": "Yards gained before being contacted, per attempt.",
+      "how": "PFR data: yards before contact / PFR carries.",
+      "limits": "More about offensive line + scheme than the runner."
     },
     "yards_after_contact_per_att_z": {
-      "what": "Yards gained after first contact per carry",
-      "how": "PFR advanced rushing data.",
-      "limits": "Best measure of individual RB power/elusiveness."
+      "what": "Yards gained after first contact, per attempt.",
+      "how": "PFR data: yards after contact / PFR carries.",
+      "limits": "Best single-stat playmaker measure for RBs."
+    },
+    "epa_per_rush_z": {
+      "what": "Expected Points Added per rush.",
+      "how": "Mean of nflverse EPA on this player's carries (per stint).",
+      "limits": "Depends on trusting the EPA model."
+    },
+    "rec_epa_per_target_z": {
+      "what": "Expected Points Added per target on receiving plays.",
+      "how": "Mean of nflverse EPA on the player's targets (per stint).",
+      "limits": "Same caveats as EPA generally."
     },
     "ryoe_per_att_z": {
-      "what": "Rush yards over expected per carry",
-      "how": "Approximated from EPA per rush.",
-      "limits": "Simplified model \u2014 proper RYOE requires an expected yards model."
+      "what": "Rush Yards Over Expected per attempt.",
+      "how": "NFL Next Gen Stats: actual rush yards \u2212 model-expected, per attempt.",
+      "limits": "Requires NGS tracking data; older seasons missing or partial."
     }
-  }
+  },
+  "invert_stats": []
 }

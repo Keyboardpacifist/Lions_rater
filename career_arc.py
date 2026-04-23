@@ -82,11 +82,10 @@ def _find_college_history(player_name, position_group):
 
 def _compute_starter_benchmark(league_df, season_col, value_col,
                                 snap_col="off_snaps", top_n=32):
-    """For each season in `league_df`, compute the mean of `value_col`
-    across the top-N rows (by snap count) — a "starter-tier" reference.
+    """For each season in `league_df`, mean of `value_col` across the
+    top-N rows by snap count — a "starter-tier" reference for NFL.
 
-    Returns a dict {season: benchmark_value}. Skips seasons that don't
-    have enough rows or have NaN values throughout.
+    Returns a dict {season: benchmark_value}.
     """
     if (season_col not in league_df.columns
             or value_col not in league_df.columns
@@ -101,6 +100,79 @@ def _compute_starter_benchmark(league_df, season_col, value_col,
             continue
         out[int(season)] = float(vals.mean())
     return out
+
+
+def _compute_median_benchmark(league_df, season_col, value_col,
+                                sort_col=None, top_n=None):
+    """For each season, the MEDIAN of `value_col`.
+
+    When `sort_col` + `top_n` are provided, the median is computed across
+    only the top-N players by `sort_col` (e.g., top 130 by carries =
+    "the starting pool"). Otherwise, median of all rows in the group.
+
+    Median is more robust than mean for college populations with
+    extreme variance between programs (Alabama → small school).
+    """
+    if season_col not in league_df.columns or value_col not in league_df.columns:
+        return {}
+    out = {}
+    for season, group in league_df.groupby(season_col):
+        if sort_col is not None and sort_col in group.columns and top_n is not None:
+            group = group.sort_values(sort_col, ascending=False).head(top_n)
+        vals = group[value_col].dropna()
+        if len(vals) == 0:
+            continue
+        out[int(season)] = float(vals.median())
+    return out
+
+
+# Per-position volume column for picking the "starting pool" of college
+# players. Top-N by this column ≈ "the player who starts at this position
+# for an FBS program."
+COLLEGE_VOLUME_COL = {
+    "wr": "receptions_total",
+    "te": "receptions_total",
+    "rb": "carries_total",
+    "qb": "pass_att",
+    # Defensive positions could be added when those college parquets land
+}
+
+# How many "starters" to take per season. ~130 FBS teams → roughly one
+# starter per team per position. WRs have 2-3 starters per team; if we
+# decide to widen the WR pool later, bump this.
+COLLEGE_STARTER_TOP_N = 130
+
+
+def _add_benchmark_trace(fig, benchmark_dict, label, season_anchor=0.5,
+                          show_in_legend=True, color="#666"):
+    """Overlay a dashed-diamond benchmark line on an existing figure.
+
+    `benchmark_dict` is {season: y_value}. Markers are placed at
+    x = season + season_anchor (0.5 centers them in the season slot
+    when ticks are integer; 0 if x-axis is integer-aligned).
+
+    Adds the trace in place; figure is returned for chaining.
+    """
+    if not benchmark_dict:
+        return fig
+    seasons = sorted(benchmark_dict.keys())
+    xs = [s + season_anchor for s in seasons]
+    ys = [benchmark_dict[s] for s in seasons]
+    hover = [
+        f"<b>{s} typical {label.lower()}</b><br>Composite: {benchmark_dict[s]:+.2f}"
+        for s in seasons
+    ]
+    fig.add_trace(go.Scatter(
+        x=xs, y=ys,
+        mode="lines+markers",
+        line=dict(color=color, width=2, dash="dot"),
+        marker=dict(size=8, color=color, symbol="diamond",
+                    line=dict(width=1, color="white")),
+        hovertext=hover, hoverinfo="text",
+        name=label,
+        showlegend=show_in_legend,
+    ))
+    return fig
 
 
 def _build_per_stint_chart(history_df, value_col, season_col, team_col,
@@ -247,14 +319,16 @@ def _build_per_stint_chart(history_df, value_col, season_col, team_col,
         showlegend=False,
     ))
 
-    # Starter-tier benchmark line — mean of top-N WRs (by snaps) per season.
-    # Spans the same season range as the player's career so the comparison is
-    # always against the relevant years.
+    # Starter-tier benchmark line — mean of top-N players by snaps per season.
+    # Population label is taken from the chart's `population_label` (e.g.,
+    # "NFL running backs"), so the legend and hover read correctly per position.
     if league_df is not None:
         bench = _compute_starter_benchmark(
             league_df, season_col=season_col, value_col=value_col,
             top_n=benchmark_top_n,
         )
+        # Strip the leading "NFL " from "NFL running backs" -> "running backs"
+        pos_text = population_label.replace("NFL ", "", 1) if population_label.startswith("NFL ") else population_label
         seasons_in_career = sorted(set(int(p["season"]) for p in points))
         bench_xs, bench_ys, bench_hover = [], [], []
         for s in seasons_in_career:
@@ -264,7 +338,7 @@ def _build_per_stint_chart(history_df, value_col, season_col, team_col,
             bench_ys.append(bench[s])
             bench_hover.append(
                 f"<b>{s} starter benchmark</b><br>"
-                f"Mean of top {benchmark_top_n} WRs by snaps<br>"
+                f"Mean of top {benchmark_top_n} {pos_text} by snaps<br>"
                 f"Composite: {bench[s]:+.2f}"
             )
         if bench_xs:
@@ -634,7 +708,7 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
             st.markdown(f"**College percentile profile** vs. FBS {position_label}")
             st.caption("50th = FBS average. Higher = better.")
 
-            radar_axes, radar_values = [], []
+            radar_axes, radar_values, radar_z_cols_used = [], [], []
             for z_col in cz_cols:
                 if z_col not in college_row.index: continue
                 z = college_row.get(z_col)
@@ -643,9 +717,41 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
                 label = COLLEGE_STAT_LABELS.get(z_col, z_col.replace("_z", "").replace("_", " ").title())
                 radar_axes.append(label)
                 radar_values.append(pct)
+                radar_z_cols_used.append(z_col)
+
+            # Build the "typical starting <position>" benchmark for THIS season
+            # using the same college parquet as the line chart.
+            radar_bench_pcts = []
+            radar_bench_raws = []  # raw stat values for hover
+            try:
+                from college_data import COLLEGE_PARQUET_MAP, COLLEGE_DATA_DIR as _CDD
+                full_path = Path(_CDD) / COLLEGE_PARQUET_MAP.get(pg, "")
+                if full_path.exists() and len(radar_z_cols_used) >= 3:
+                    full_college = pl.read_parquet(str(full_path)).to_pandas()
+                    season_pool = full_college[full_college[college_season_col] == selected_college_season]
+                    sort_col = COLLEGE_VOLUME_COL.get(pg)
+                    if sort_col and sort_col in season_pool.columns:
+                        starters = season_pool.sort_values(sort_col, ascending=False).head(COLLEGE_STARTER_TOP_N)
+                    else:
+                        starters = season_pool
+                    for z_col in radar_z_cols_used:
+                        if z_col in starters.columns:
+                            mean_z = starters[z_col].dropna().median()
+                            radar_bench_pcts.append(zscore_to_percentile(mean_z) if pd.notna(mean_z) else None)
+                            raw_col = z_col.replace("_z", "")
+                            if raw_col in starters.columns and starters[raw_col].notna().any():
+                                radar_bench_raws.append(float(starters[raw_col].median()))
+                            else:
+                                radar_bench_raws.append(None)
+                        else:
+                            radar_bench_pcts.append(None)
+                            radar_bench_raws.append(None)
+            except (ImportError, FileNotFoundError, KeyError):
+                pass
 
             if len(radar_axes) >= 3:
                 radar_fig = go.Figure()
+                # Player polygon FIRST so the benchmark layers on top
                 radar_fig.add_trace(go.Scatterpolar(
                     r=radar_values + [radar_values[0]],
                     theta=radar_axes + [radar_axes[0]],
@@ -653,8 +759,35 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
                     fillcolor="rgba(218, 165, 32, 0.25)",
                     line=dict(color="rgba(184, 134, 11, 0.9)", width=2),
                     marker=dict(size=6, color="rgba(184, 134, 11, 1)"),
+                    name="This player",
                     hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<extra></extra>",
                 ))
+
+                bench_label = (
+                    f"Typical starting {position_label[:-1]}"
+                    if position_label.endswith("s") else f"Typical starting {position_label}"
+                )
+                if any(p is not None for p in radar_bench_pcts):
+                    bv_clean = [p if p is not None else 50 for p in radar_bench_pcts]
+                    bench_hover = []
+                    for ax, pct, raw in zip(radar_axes, bv_clean, radar_bench_raws):
+                        raw_str = f"median: {raw:.2f} · " if raw is not None else ""
+                        bench_hover.append(
+                            f"<b>{ax}</b><br>{bench_label}<br>{raw_str}{pct:.0f}th percentile"
+                        )
+                    bench_hover.append(bench_hover[0])
+                    radar_fig.add_trace(go.Scatterpolar(
+                        r=bv_clean + [bv_clean[0]],
+                        theta=radar_axes + [radar_axes[0]],
+                        mode="lines+markers",
+                        line=dict(color="rgba(102, 102, 102, 0.9)", width=2, dash="dot"),
+                        marker=dict(size=10, color="rgba(102, 102, 102, 0.95)",
+                                    symbol="diamond", line=dict(width=2, color="white")),
+                        name=bench_label,
+                        hovertext=bench_hover,
+                        hoverinfo="text",
+                    ))
+
                 radar_fig.update_layout(
                     polar=dict(
                         radialaxis=dict(visible=True, range=[0, 100],
@@ -664,7 +797,11 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
                         angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"),
                         bgcolor="rgba(0,0,0,0)",
                     ),
-                    showlegend=False, margin=dict(l=60, r=60, t=20, b=20),
+                    showlegend=any(p is not None for p in radar_bench_pcts),
+                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01,
+                                bgcolor="rgba(255,255,255,0.7)", bordercolor="#ccc",
+                                borderwidth=1, font=dict(size=10)),
+                    margin=dict(l=60, r=60, t=20, b=20),
                     height=350, paper_bgcolor="rgba(0,0,0,0)",
                 )
                 st.plotly_chart(radar_fig, use_container_width=True)
@@ -700,5 +837,56 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
             chart_values = col_metric_data[selected_col_metric]
             fig = _build_line_chart(college_seasons, chart_values, college_teams,
                                     "#B8860B", "College", f"FBS {position_label}")
+
+            # "Typical starter" benchmark — median of the top-N players by
+            # the position's volume column (carries for RB, receptions for
+            # WR/TE, pass_att for QB). Filtering to top-N first weeds out
+            # walk-ons and third-stringers; median resists outliers within
+            # that pool.
+            value_col_for_bench = "composite_z"
+            if selected_col_metric != "Composite score":
+                for z_col in college_z_cols:
+                    label = COLLEGE_STAT_LABELS.get(
+                        z_col, z_col.replace("_z", "").replace("_", " ").title())
+                    if label == selected_col_metric:
+                        value_col_for_bench = z_col
+                        break
+
+            try:
+                from college_data import COLLEGE_PARQUET_MAP, COLLEGE_DATA_DIR as _CDD
+                full_path = Path(_CDD) / COLLEGE_PARQUET_MAP.get(pg, "")
+                if full_path.exists():
+                    full_college = pl.read_parquet(str(full_path)).to_pandas()
+                    if value_col_for_bench == "composite_z":
+                        full_college["composite_z"] = full_college.apply(
+                            lambda row: compute_composite_score(row, college_z_cols), axis=1)
+                    bench = _compute_median_benchmark(
+                        full_college,
+                        season_col=college_season_col,
+                        value_col=value_col_for_bench,
+                        sort_col=COLLEGE_VOLUME_COL.get(pg),
+                        top_n=COLLEGE_STARTER_TOP_N,
+                    )
+                else:
+                    bench = {}
+            except (ImportError, FileNotFoundError, KeyError):
+                bench = {}
+
+            seasons_in_career = set(college_seasons)
+            bench = {s: v for s, v in bench.items() if s in seasons_in_career}
+            starter_label = f"Typical starting {position_label.rstrip('s').rstrip(' ').lower()}"
+            if position_label.endswith("s"):
+                # "running backs" -> "running back"
+                starter_label = f"Typical starting {position_label[:-1]}"
+            if bench:
+                _add_benchmark_trace(fig, bench, label=starter_label, season_anchor=0)
+                fig.update_layout(showlegend=True,
+                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01,
+                                bgcolor="rgba(255,255,255,0.7)",
+                                bordercolor="#ccc", borderwidth=1, font=dict(size=10)))
             st.plotly_chart(fig, use_container_width=True)
-            st.caption(f"Each point is one college season's {selected_col_metric.lower()} vs. all FBS {position_label}. 0.00 = FBS average.")
+            cap_extra = (
+                f" · Dashed gray = {starter_label.lower()} (median of top {COLLEGE_STARTER_TOP_N} by volume per season)."
+                if bench else ""
+            )
+            st.caption(f"Each point is one college season's {selected_col_metric.lower()} vs. all FBS {position_label}. 0.00 = FBS average.{cap_extra}")

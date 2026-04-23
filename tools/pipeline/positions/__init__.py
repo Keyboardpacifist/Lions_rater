@@ -6,9 +6,10 @@ To add a new position:
 2. Fill in the config
 3. Add it to POSITIONS below
 """
+from .rb import RB_CONFIG
 from .wr import WR_CONFIG
 
 POSITIONS = {
     "wr": WR_CONFIG,
-    # "rb": RB_CONFIG,  # Uncomment after filling in rb.py
+    "rb": RB_CONFIG,
 }
