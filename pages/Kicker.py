@@ -49,12 +49,36 @@ RADAR_STATS = list(RAW_COL_MAP.keys())
 RADAR_INVERT = set()
 RADAR_LABEL_OVERRIDES = {"fg_pct_z": "FG %", "fg_40_pct_z": "40+ yd %", "fg_over_expected_z": "Over expected", "fg_epa_z": "FG EPA", "clutch_pct_z": "Clutch %", "clutch_epa_z": "Clutch EPA", "xp_pct_z": "XP %"}
 
+def format_percentile(pct):
+    if pct is None or pd.isna(pct): return "—"
+    if pct >= 99: return "top 1%"
+    if pct >= 50: return f"top {100 - int(pct)}%"
+    return f"bottom {int(pct)}%"
+
 def zscore_to_percentile(z):
     if pd.isna(z): return None
     return float(norm.cdf(z) * 100)
 
-def build_radar_figure(player, stat_labels, stat_methodology):
-    axes, values, descriptions = [], [], []
+_RADAR_RAW_FORMATTERS = {
+    "fg_pct_z": ("FG%", lambda v: f"{v*100:.1f}%"),
+    "fg_40_pct_z": ("40+%", lambda v: f"{v*100:.1f}%"),
+    "fg_over_expected_z": ("FG over exp", lambda v: f"{v:+.2f}"),
+    "fg_epa_z": ("FG EPA", lambda v: f"{v:+.2f}"),
+    "clutch_pct_z": ("clutch %", lambda v: f"{v*100:.1f}%"),
+    "clutch_epa_z": ("clutch EPA", lambda v: f"{v:+.2f}"),
+    "xp_pct_z": ("XP%", lambda v: f"{v*100:.1f}%"),
+}
+
+def _format_radar_raw(z_col, raw_value):
+    if raw_value is None or pd.isna(raw_value): return ""
+    spec = _RADAR_RAW_FORMATTERS.get(z_col)
+    if spec is None: return f"{raw_value:.2f}"
+    label, fmt = spec
+    return f"{label}: {fmt(raw_value)}"
+
+
+def build_radar_figure(player, stat_labels, stat_methodology, benchmark=None, benchmark_raw=None, benchmark_label="League kicker avg"):
+    axes, values, descriptions, bench_values, bench_raw_strs = [], [], [], [], []
     for z_col in RADAR_STATS:
         if z_col not in player.index: continue
         z = player.get(z_col)
@@ -63,10 +87,20 @@ def build_radar_figure(player, stat_labels, stat_methodology):
         label = RADAR_LABEL_OVERRIDES.get(z_col, stat_labels.get(z_col, z_col))
         desc = stat_methodology.get(z_col, {}).get("what", "")
         axes.append(label); values.append(pct); descriptions.append(desc)
+        if benchmark is not None:
+            bz = benchmark.get(z_col)
+            bench_values.append(zscore_to_percentile(bz) if bz is not None and pd.notna(bz) else None)
+            raw_v = benchmark_raw.get(z_col) if benchmark_raw else None
+            bench_raw_strs.append(_format_radar_raw(z_col, raw_v))
     if not axes: return None
     fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(r=values+[values[0]], theta=axes+[axes[0]], customdata=descriptions+[descriptions[0]], fill="toself", fillcolor="rgba(31, 119, 180, 0.25)", line=dict(color="rgba(31, 119, 180, 0.9)", width=2), marker=dict(size=6, color="rgba(31, 119, 180, 1)"), hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<br><br><i>%{customdata}</i><extra></extra>"))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100], tickvals=[25, 50, 75, 100], ticktext=["25", "50", "75", "100"], tickfont=dict(size=9, color="#888"), gridcolor="#ddd"), angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"), bgcolor="rgba(0,0,0,0)"), showlegend=False, margin=dict(l=60, r=60, t=20, b=20), height=380, paper_bgcolor="rgba(0,0,0,0)")
+    fig.add_trace(go.Scatterpolar(r=values+[values[0]], theta=axes+[axes[0]], customdata=descriptions+[descriptions[0]], fill="toself", fillcolor="rgba(31, 119, 180, 0.25)", line=dict(color="rgba(31, 119, 180, 0.9)", width=2), marker=dict(size=6, color="rgba(31, 119, 180, 1)"), name="This player", hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<br><br><i>%{customdata}</i><extra></extra>"))
+    if benchmark is not None and any(v is not None for v in bench_values):
+        bv_clean = [v if v is not None else 50 for v in bench_values]
+        bench_hover = [f"<b>{ax}</b><br>{benchmark_label}<br>{(rs + ' · ') if rs else ''}{p:.0f}th percentile" for ax, rs, p in zip(axes, bench_raw_strs, bv_clean)]
+        bench_hover.append(bench_hover[0])
+        fig.add_trace(go.Scatterpolar(r=bv_clean+[bv_clean[0]], theta=axes+[axes[0]], mode="lines+markers", line=dict(color="rgba(102, 102, 102, 0.9)", width=2, dash="dot"), marker=dict(size=10, color="rgba(102, 102, 102, 0.95)", symbol="diamond", line=dict(width=2, color="white")), name=benchmark_label, hovertext=bench_hover, hoverinfo="text"))
+    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100], tickvals=[25, 50, 75, 100], ticktext=["25", "50", "75", "100"], tickfont=dict(size=9, color="#888"), gridcolor="#ddd"), angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"), bgcolor="rgba(0,0,0,0)"), showlegend=(benchmark is not None), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01, bgcolor="rgba(255,255,255,0.7)", bordercolor="#ccc", borderwidth=1, font=dict(size=10)), margin=dict(l=60, r=60, t=20, b=20), height=380, paper_bgcolor="rgba(0,0,0,0)")
     return fig
 
 TIER_LABELS = {1: "Counting stats", 2: "Rate stats", 3: "Modeled stats", 4: "Estimated stats"}
@@ -214,7 +248,16 @@ with c1:
 
 with c2:
     st.markdown("**Kicker profile** (percentiles vs. league kickers)")
-    fig = build_radar_figure(player, stat_labels, stat_methodology)
+    st.caption("Solid blue = this player. Dashed gray = league kicker average.")
+    all_kickers = load_kicker_data()
+    season_pool = all_kickers[all_kickers["season_year"] == selected_season] if "season_year" in all_kickers.columns else all_kickers
+    radar_bench = {z: season_pool[z].mean() for z in RADAR_STATS if z in season_pool.columns and season_pool[z].notna().any()}
+    radar_bench_raw = {}
+    for z in RADAR_STATS:
+        raw_col = RAW_COL_MAP.get(z)
+        if raw_col and raw_col in season_pool.columns and season_pool[raw_col].notna().any():
+            radar_bench_raw[z] = season_pool[raw_col].mean()
+    fig = build_radar_figure(player, stat_labels, stat_methodology, benchmark=radar_bench, benchmark_raw=radar_bench_raw)
     if fig: st.plotly_chart(fig, use_container_width=True)
 
 career_arc_section(

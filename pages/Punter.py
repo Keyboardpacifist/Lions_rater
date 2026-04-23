@@ -8,7 +8,7 @@ import polars as pl
 import streamlit as st
 import plotly.graph_objects as go
 from scipy.stats import norm
-from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
+from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS, display_abbr
 from career_arc import career_arc_section
 from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
 
@@ -49,12 +49,37 @@ RADAR_STATS = list(RAW_COL_MAP.keys())
 RADAR_INVERT = set()
 RADAR_LABEL_OVERRIDES = {"avg_distance_z": "Distance", "avg_net_z": "Net yards", "inside_20_rate_z": "Inside 20", "touchback_rate_z": "No touchbacks", "fair_catch_rate_z": "Fair catches", "pin_rate_z": "Pin rate", "punt_epa_z": "Punt EPA"}
 
+def format_percentile(pct):
+    if pct is None or pd.isna(pct): return "—"
+    if pct >= 99: return "top 1%"
+    if pct >= 50: return f"top {100 - int(pct)}%"
+    return f"bottom {int(pct)}%"
+
 def zscore_to_percentile(z):
     if pd.isna(z): return None
     return float(norm.cdf(z) * 100)
 
-def build_radar_figure(player, stat_labels, stat_methodology):
-    axes, values, descriptions = [], [], []
+_RADAR_RAW_FORMATTERS = {
+    "avg_distance_z": ("avg dist", lambda v: f"{v:.1f} yd"),
+    "avg_net_z": ("net", lambda v: f"{v:.1f} yd"),
+    "inside_20_rate_z": ("in-20%", lambda v: f"{v*100:.1f}%"),
+    "touchback_rate_z": ("TB%", lambda v: f"{v*100:.1f}%"),
+    "fair_catch_rate_z": ("FC%", lambda v: f"{v*100:.1f}%"),
+    "pin_rate_z": ("pin%", lambda v: f"{v*100:.1f}%"),
+    "punt_epa_z": ("EPA/punt", lambda v: f"{v:+.3f}"),
+}
+
+def _format_radar_raw(z_col, raw_value):
+    if raw_value is None or pd.isna(raw_value):
+        return ""
+    spec = _RADAR_RAW_FORMATTERS.get(z_col)
+    if spec is None: return f"{raw_value:.2f}"
+    label, fmt = spec
+    return f"{label}: {fmt(raw_value)}"
+
+
+def build_radar_figure(player, stat_labels, stat_methodology, benchmark=None, benchmark_raw=None, benchmark_label="League punter avg"):
+    axes, values, descriptions, bench_values, bench_raw_strs = [], [], [], [], []
     for z_col in RADAR_STATS:
         if z_col not in player.index: continue
         z = player.get(z_col)
@@ -63,10 +88,20 @@ def build_radar_figure(player, stat_labels, stat_methodology):
         label = RADAR_LABEL_OVERRIDES.get(z_col, stat_labels.get(z_col, z_col))
         desc = stat_methodology.get(z_col, {}).get("what", "")
         axes.append(label); values.append(pct); descriptions.append(desc)
+        if benchmark is not None:
+            bz = benchmark.get(z_col)
+            bench_values.append(zscore_to_percentile(bz) if bz is not None and pd.notna(bz) else None)
+            raw_v = benchmark_raw.get(z_col) if benchmark_raw else None
+            bench_raw_strs.append(_format_radar_raw(z_col, raw_v))
     if not axes: return None
     fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(r=values+[values[0]], theta=axes+[axes[0]], customdata=descriptions+[descriptions[0]], fill="toself", fillcolor="rgba(31, 119, 180, 0.25)", line=dict(color="rgba(31, 119, 180, 0.9)", width=2), marker=dict(size=6, color="rgba(31, 119, 180, 1)"), hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<br><br><i>%{customdata}</i><extra></extra>"))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100], tickvals=[25, 50, 75, 100], ticktext=["25", "50", "75", "100"], tickfont=dict(size=9, color="#888"), gridcolor="#ddd"), angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"), bgcolor="rgba(0,0,0,0)"), showlegend=False, margin=dict(l=60, r=60, t=20, b=20), height=380, paper_bgcolor="rgba(0,0,0,0)")
+    fig.add_trace(go.Scatterpolar(r=values+[values[0]], theta=axes+[axes[0]], customdata=descriptions+[descriptions[0]], fill="toself", fillcolor="rgba(31, 119, 180, 0.25)", line=dict(color="rgba(31, 119, 180, 0.9)", width=2), marker=dict(size=6, color="rgba(31, 119, 180, 1)"), name="This player", hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<br><br><i>%{customdata}</i><extra></extra>"))
+    if benchmark is not None and any(v is not None for v in bench_values):
+        bv_clean = [v if v is not None else 50 for v in bench_values]
+        bench_hover = [f"<b>{ax}</b><br>{benchmark_label}<br>{(rs + ' · ') if rs else ''}{p:.0f}th percentile" for ax, rs, p in zip(axes, bench_raw_strs, bv_clean)]
+        bench_hover.append(bench_hover[0])
+        fig.add_trace(go.Scatterpolar(r=bv_clean+[bv_clean[0]], theta=axes+[axes[0]], mode="lines+markers", line=dict(color="rgba(102, 102, 102, 0.9)", width=2, dash="dot"), marker=dict(size=10, color="rgba(102, 102, 102, 0.95)", symbol="diamond", line=dict(width=2, color="white")), name=benchmark_label, hovertext=bench_hover, hoverinfo="text"))
+    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100], tickvals=[25, 50, 75, 100], ticktext=["25", "50", "75", "100"], tickfont=dict(size=9, color="#888"), gridcolor="#ddd"), angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"), bgcolor="rgba(0,0,0,0)"), showlegend=(benchmark is not None), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01, bgcolor="rgba(255,255,255,0.7)", bordercolor="#ccc", borderwidth=1, font=dict(size=10)), margin=dict(l=60, r=60, t=20, b=20), height=380, paper_bgcolor="rgba(0,0,0,0)")
     return fig
 
 TIER_LABELS = {1: "Counting stats", 2: "Rate stats", 3: "Modeled stats", 4: "Estimated stats"}
@@ -170,23 +205,74 @@ if len(ranked) > 0:
     sign = "+" if top_score >= 0 else ""
     st.markdown(f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;margin-bottom:8px;font-size:1.1rem;'><span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span> &nbsp;·&nbsp; <strong>{top_name}</strong> &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span> <span style='opacity:0.85;'>({format_percentile(zscore_to_percentile(top_score))})</span></div>", unsafe_allow_html=True)
 
+def _fmt_int(v): return f"{int(v)}" if pd.notna(v) else "—"
+def _fmt_pct(v): return f"{v*100:.1f}%" if pd.notna(v) else "—"
+def _fmt_float(v, places=2): return f"{v:.{places}f}" if pd.notna(v) else "—"
+
 display_df = pd.DataFrame({
     "Rank": ranked.index,
     "Player": ranked["player_name"],
-    "Games": ranked.get("games", pd.Series([0]*len(ranked))).fillna(0).astype(int),
-    "Punts": ranked.get("punt_att", pd.Series([0]*len(ranked))).fillna(0).astype(int),
-    "Avg dist": ranked.get("avg_distance", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1f}" if pd.notna(x) else "—"),
-    "Net": ranked.get("avg_net", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1f}" if pd.notna(x) else "—"),
-    "In 20 %": ranked.get("inside_20_rate", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—"),
+    "Punts": ranked.get("punt_att", ranked.get("punts", pd.Series([float("nan")]*len(ranked)))).apply(_fmt_int),
+    "Gross avg": ranked.get("avg_distance", pd.Series([float("nan")]*len(ranked))).apply(lambda v: _fmt_float(v, 1)),
+    "Net avg": ranked.get("avg_net", pd.Series([float("nan")]*len(ranked))).apply(lambda v: _fmt_float(v, 1)),
+    "In-20 %": ranked.get("inside_20_rate", pd.Series([float("nan")]*len(ranked))).apply(_fmt_pct),
+    "TB%": ranked.get("touchback_rate", pd.Series([float("nan")]*len(ranked))).apply(_fmt_pct),
     "Your score": ranked["score"].apply(format_score),
 })
 st.dataframe(display_df, use_container_width=True, hide_index=True)
+st.caption("**Net avg** = gross − return − 20 yds per touchback (modern punter stat) · **In-20 %** = punts pinned inside the 20 · **TB%** = touchback rate (lower is better).")
 with st.expander("ℹ️ How is the score calculated?"): st.markdown(SCORE_EXPLAINER)
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.subheader("Player detail")
 selected = st.selectbox("Pick a punter", options=ranked["player_name"].tolist(), index=0)
 player = ranked[ranked["player_name"] == selected].iloc[0]
+
+# ── Split-season panel ──
+all_punters_full = load_punter_data()
+season_stints = all_punters_full[
+    (all_punters_full["player_id"] == player.get("player_id"))
+    & (all_punters_full["season_year"] == selected_season)
+].copy() if "player_id" in all_punters_full.columns else pd.DataFrame()
+if len(season_stints) > 1:
+    n = len(season_stints)
+    st.info(f"**Split season** — {selected} punted for {n} teams in {selected_season}.")
+    season_stints = season_stints.sort_values("first_week" if "first_week" in season_stints.columns else "punts", ascending=True)
+    split_rows = []
+    for _, stint in season_stints.iterrows():
+        team_disp = display_abbr(stint["recent_team"])
+        is_current = stint["recent_team"] == player["recent_team"]
+        split_rows.append({
+            "Team": f"⮕ {team_disp}" if is_current else team_disp,
+            "Games": _fmt_int(stint.get("games")),
+            "Punts": _fmt_int(stint.get("punts")),
+            "Gross avg": _fmt_float(stint.get("avg_distance"), 1),
+            "Net avg": _fmt_float(stint.get("avg_net"), 1),
+            "In-20 %": _fmt_pct(stint.get("inside_20_rate")),
+            "TB%": _fmt_pct(stint.get("touchback_rate")),
+        })
+    def _safe_sum(col):
+        return season_stints[col].fillna(0).sum() if col in season_stints.columns else float("nan")
+    total_punts = _safe_sum("punts")
+    total_yds = _safe_sum("punt_yards")
+    total_net = _safe_sum("net_punt_yards")
+    total_tb = _safe_sum("touchbacks")
+    total_in20 = _safe_sum("inside_twenty")
+    season_gross = (total_yds / total_punts) if total_punts > 0 else float("nan")
+    season_net = (total_net / total_punts) if total_punts > 0 else float("nan")
+    season_in20 = (total_in20 / total_punts) if total_punts > 0 else float("nan")
+    season_tb = (total_tb / total_punts) if total_punts > 0 else float("nan")
+    split_rows.append({
+        "Team": f"**Total ({selected_season})**",
+        "Games": _fmt_int(_safe_sum("games")),
+        "Punts": _fmt_int(total_punts),
+        "Gross avg": _fmt_float(season_gross, 1),
+        "Net avg": _fmt_float(season_net, 1),
+        "In-20 %": _fmt_pct(season_in20),
+        "TB%": _fmt_pct(season_tb),
+    })
+    st.dataframe(pd.DataFrame(split_rows), use_container_width=True, hide_index=True)
+    st.caption(f"⮕ marks the stint shown ({display_abbr(player['recent_team'])}). Total recomputed from per-stint counts.")
 
 c1, c2 = st.columns([1, 1])
 with c1:
@@ -215,7 +301,15 @@ with c1:
 
 with c2:
     st.markdown("**Punter profile** (percentiles vs. league punters)")
-    fig = build_radar_figure(player, stat_labels, stat_methodology)
+    st.caption("Solid blue = this player. Dashed gray = league punter average.")
+    season_pool = all_punters_full[all_punters_full["season_year"] == selected_season] if "season_year" in all_punters_full.columns else all_punters_full
+    radar_bench = {z: season_pool[z].mean() for z in RADAR_STATS if z in season_pool.columns and season_pool[z].notna().any()}
+    radar_bench_raw = {}
+    for z in RADAR_STATS:
+        raw_col = RAW_COL_MAP.get(z)
+        if raw_col and raw_col in season_pool.columns and season_pool[raw_col].notna().any():
+            radar_bench_raw[z] = season_pool[raw_col].mean()
+    fig = build_radar_figure(player, stat_labels, stat_methodology, benchmark=radar_bench, benchmark_raw=radar_bench_raw)
     if fig: st.plotly_chart(fig, use_container_width=True)
 
 career_arc_section(

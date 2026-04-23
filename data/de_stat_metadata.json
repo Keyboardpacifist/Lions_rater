@@ -1,0 +1,76 @@
+{
+  "position_group": "de",
+  "season": "2016-2025",
+  "population": "Players with >= 100 DE, 100 DL total snaps, min 6 games",
+  "n_players": 1200,
+  "stat_tiers": {
+    "sacks_per_game_z": 1,
+    "qb_hits_per_game_z": 2,
+    "pressure_rate_z": 3,
+    "tfl_per_game_z": 1,
+    "solo_tackle_rate_z": 2,
+    "tackles_per_snap_z": 2,
+    "forced_fumbles_per_game_z": 2,
+    "passes_defended_per_game_z": 2,
+    "interceptions_per_game_z": 2
+  },
+  "stat_labels": {
+    "sacks_per_game_z": "Sacks per game",
+    "qb_hits_per_game_z": "QB hits per game",
+    "pressure_rate_z": "Pressure rate",
+    "tfl_per_game_z": "Tackles for loss per game",
+    "solo_tackle_rate_z": "Solo tackle rate",
+    "tackles_per_snap_z": "Tackles per snap",
+    "forced_fumbles_per_game_z": "Forced fumbles per game",
+    "passes_defended_per_game_z": "Passes defended per game",
+    "interceptions_per_game_z": "Interceptions per game"
+  },
+  "stat_methodology": {
+    "sacks_per_game_z": {
+      "what": "Sacks per game.",
+      "how": "From player_stats. Per-stint sacks / per-stint games.",
+      "limits": "Volume stat. Boom-or-bust play type."
+    },
+    "qb_hits_per_game_z": {
+      "what": "QB hits per game (sack + non-sack pressure that contacted the QB).",
+      "how": "From player_stats. Per-stint count / games.",
+      "limits": "Tracks contact, not effectiveness."
+    },
+    "pressure_rate_z": {
+      "what": "Pressures per pass play defended while on the field.",
+      "how": "PFR pressures / estimated pass plays defended (team pass plays \u00d7 this player's defensive snap share).",
+      "limits": "Snap-share approximation; not a true PFF/NGS pass-rush snap denominator."
+    },
+    "tfl_per_game_z": {
+      "what": "Tackles for loss per game.",
+      "how": "From player_stats. Per-stint TFLs / games.",
+      "limits": "Run-down opportunity dependent."
+    },
+    "solo_tackle_rate_z": {
+      "what": "Solo tackles as a share of total tackles.",
+      "how": "solo / (solo + assists).",
+      "limits": "Scorekeeper subjectivity on solo vs assist."
+    },
+    "tackles_per_snap_z": {
+      "what": "Total tackles per defensive snap.",
+      "how": "(solo + assists) / off_snaps.",
+      "limits": "Volume opportunity, not skill."
+    },
+    "forced_fumbles_per_game_z": {
+      "what": "Forced fumbles per game.",
+      "how": "From player_stats. Per-stint count / games.",
+      "limits": "Rare event \u2014 small samples noisy."
+    },
+    "passes_defended_per_game_z": {
+      "what": "Passes broken up per game (DE deflections at the line + pass coverage on swings).",
+      "how": "From player_stats. Per-stint count / games.",
+      "limits": "Edge defenders see fewer of these than DBs."
+    },
+    "interceptions_per_game_z": {
+      "what": "Interceptions per game.",
+      "how": "From player_stats. Per-stint count / games.",
+      "limits": "Even rarer than forced fumbles for edge players."
+    }
+  },
+  "invert_stats": []
+}

@@ -134,7 +134,14 @@ COLLEGE_VOLUME_COL = {
     "te": "receptions_total",
     "rb": "carries_total",
     "qb": "pass_att",
-    # Defensive positions could be added when those college parquets land
+    # Defensive positions all share the college_def_all_seasons.parquet,
+    # which is filtered by pos_group on load (see college_data.load_college_parquet).
+    # tackles_total is a universal starter proxy across all defensive groups.
+    "de": "tackles_total",
+    "dt": "tackles_total",
+    "lb": "tackles_total",
+    "cb": "tackles_total",
+    "s":  "tackles_total",
 }
 
 # How many "starters" to take per season. ~130 FBS teams → roughly one

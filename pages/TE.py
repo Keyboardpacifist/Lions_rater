@@ -1,6 +1,6 @@
 """
-Lions TE Rater — 2024 season
-Tight ends only. Z-scored against all 86 TEs league-wide with 200+ offensive snaps.
+TE Rater
+Tight ends only. Z-scored within the TE pool — all TEs league-wide with 100+ offensive snaps.
 """
 import json
 from pathlib import Path
@@ -9,7 +9,7 @@ import polars as pl
 import streamlit as st
 import plotly.graph_objects as go
 from scipy.stats import norm
-from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
+from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS, display_abbr
 from career_arc import career_arc_section
 from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
 
@@ -119,8 +119,30 @@ def bundle_tier_summary(bundle_stats, stat_tiers):
     for z in bundle_stats: t = stat_tiers.get(z, 2); counts[t] = counts.get(t, 0) + 1
     return " ".join(f"{tier_badge(t)}×{c}" for t, c in sorted(counts.items()))
 
-def build_radar_figure(player, stat_labels, stat_methodology):
-    axes, values, descriptions = [], [], []
+# Per-stat raw-value formatting for radar benchmark hover
+_RADAR_RAW_FORMATTERS = {
+    "yards_per_target_z": ("yds/target", lambda v: f"{v:.1f}"),
+    "catch_rate_z": ("catch rate", lambda v: f"{v*100:.1f}%"),
+    "first_down_rate_z": ("1D rate", lambda v: f"{v*100:.1f}%"),
+    "yac_per_reception_z": ("YAC/rec", lambda v: f"{v:.1f}"),
+    "yards_per_snap_z": ("yds/snap", lambda v: f"{v:.2f}"),
+    "epa_per_target_z": ("EPA/tgt", lambda v: f"{v:+.2f}"),
+    "yac_above_exp_z": ("YAC/exp", lambda v: f"{v:+.2f}"),
+    "avg_separation_z": ("separation", lambda v: f"{v:.2f}yd"),
+}
+
+def _format_radar_raw(z_col, raw_value):
+    if raw_value is None or pd.isna(raw_value):
+        return ""
+    spec = _RADAR_RAW_FORMATTERS.get(z_col)
+    if spec is None:
+        return f"{raw_value:.2f}"
+    label, fmt = spec
+    return f"{label}: {fmt(raw_value)}"
+
+
+def build_radar_figure(player, stat_labels, stat_methodology, benchmark=None, benchmark_raw=None, benchmark_label="Top 32 starter avg"):
+    axes, values, descriptions, bench_values, bench_raw_strs = [], [], [], [], []
     for z_col in RADAR_STATS:
         if z_col not in player.index: continue
         z = player.get(z_col)
@@ -129,10 +151,20 @@ def build_radar_figure(player, stat_labels, stat_methodology):
         label = RADAR_LABEL_OVERRIDES.get(z_col, stat_labels.get(z_col, z_col))
         desc = stat_methodology.get(z_col, {}).get("what", "")
         axes.append(label); values.append(pct); descriptions.append(desc)
+        if benchmark is not None:
+            bz = benchmark.get(z_col)
+            bench_values.append(zscore_to_percentile(bz) if bz is not None and pd.notna(bz) else None)
+            raw_v = benchmark_raw.get(z_col) if benchmark_raw else None
+            bench_raw_strs.append(_format_radar_raw(z_col, raw_v))
     if not axes: return None
     fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(r=values+[values[0]], theta=axes+[axes[0]], customdata=descriptions+[descriptions[0]], fill="toself", fillcolor="rgba(31, 119, 180, 0.25)", line=dict(color="rgba(31, 119, 180, 0.9)", width=2), marker=dict(size=6, color="rgba(31, 119, 180, 1)"), hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<br><br><i>%{customdata}</i><extra></extra>"))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100], tickvals=[25, 50, 75, 100], ticktext=["25th", "50th", "75th", "100th"], tickfont=dict(size=9, color="#888"), gridcolor="#ddd"), angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"), bgcolor="rgba(0,0,0,0)"), showlegend=False, margin=dict(l=60, r=60, t=20, b=20), height=380, paper_bgcolor="rgba(0,0,0,0)")
+    fig.add_trace(go.Scatterpolar(r=values+[values[0]], theta=axes+[axes[0]], customdata=descriptions+[descriptions[0]], fill="toself", fillcolor="rgba(31, 119, 180, 0.25)", line=dict(color="rgba(31, 119, 180, 0.9)", width=2), marker=dict(size=6, color="rgba(31, 119, 180, 1)"), name="This player", hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<br><br><i>%{customdata}</i><extra></extra>"))
+    if benchmark is not None and any(v is not None for v in bench_values):
+        bv_clean = [v if v is not None else 50 for v in bench_values]
+        bench_hover = [f"<b>{ax}</b><br>{benchmark_label}<br>{(rs + ' · ') if rs else ''}{p:.0f}th percentile" for ax, rs, p in zip(axes, bench_raw_strs, bv_clean)]
+        bench_hover.append(bench_hover[0])
+        fig.add_trace(go.Scatterpolar(r=bv_clean+[bv_clean[0]], theta=axes+[axes[0]], mode="lines+markers", line=dict(color="rgba(102, 102, 102, 0.9)", width=2, dash="dot"), marker=dict(size=10, color="rgba(102, 102, 102, 0.95)", symbol="diamond", line=dict(width=2, color="white")), name=benchmark_label, hovertext=bench_hover, hoverinfo="text"))
+    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100], tickvals=[25, 50, 75, 100], ticktext=["25th", "50th", "75th", "100th"], tickfont=dict(size=9, color="#888"), gridcolor="#ddd"), angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"), bgcolor="rgba(0,0,0,0)"), showlegend=(benchmark is not None), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01, bgcolor="rgba(255,255,255,0.7)", bordercolor="#ccc", borderwidth=1, font=dict(size=10)), margin=dict(l=60, r=60, t=20, b=20), height=380, paper_bgcolor="rgba(0,0,0,0)")
     return fig
 
 # ── Session state ─────────────────────────────────────────────
@@ -161,7 +193,7 @@ if "algo" in st.query_params and st.session_state.te_loaded_algo is None:
 # ══════════════════════════════════════════════════════════════
 st.subheader(f"{team_name} tight ends")
 st.markdown("What makes a great TE? **You decide.** Use the sliders on the left to tell us what you value most, and the rankings update instantly.")
-st.caption(f"{selected_season} regular season · Compared to all 86 TEs league-wide with 200+ offensive snaps")
+st.caption(f"{selected_season} regular season · Compared to all TEs league-wide with 100+ offensive snaps")
 
 st.sidebar.header("What matters to you?")
 st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize it, or all the way left to ignore it.")
@@ -232,7 +264,7 @@ players.index = players.index + 1
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 ranked = players.copy()
 
-st.markdown("**How to read the score:** 0.00 = league average TE. The percentile shows where this player ranks among all 86 qualifying TEs.")
+st.markdown("**How to read the score:** 0.00 = league average TE. The percentile shows where this player ranks among all qualifying TEs (100+ snaps).")
 
 if len(ranked) > 0:
     top = ranked.iloc[0]
@@ -243,23 +275,87 @@ if len(ranked) > 0:
     warn = sample_size_warning(top.get("off_snaps", 0))
     if warn: st.warning(warn)
 
+def _fmt_int(v): return f"{int(v)}" if pd.notna(v) else "—"
+def _fmt_pct(v): return f"{v*100:.1f}%" if pd.notna(v) else "—"
+def _fmt_signed(v, places=2): return f"{v:+.{places}f}" if pd.notna(v) else "—"
+
 display_df = pd.DataFrame({
     "Rank": ranked.index,
     "Player": ranked["player_display_name"],
-    "Snaps": ranked.get("off_snaps", pd.Series([0]*len(ranked))).apply(lambda s: f"{int(s)} ⚠️" if pd.notna(s) and s < 300 else (f"{int(s)}" if pd.notna(s) else "—")),
-    "Targets": ranked.get("targets", pd.Series([0]*len(ranked))).fillna(0).astype(int),
-    "Yards": ranked.get("rec_yards", pd.Series([0]*len(ranked))).fillna(0).astype(int),
-    "TDs": ranked.get("rec_tds", pd.Series([0]*len(ranked))).fillna(0).astype(int),
+    "Snaps": ranked.get("off_snaps", pd.Series([0]*len(ranked))).apply(lambda s: f"{int(s)} ⚠️" if pd.notna(s) and s < 300 else _fmt_int(s)),
+    "Rec": ranked.get("receptions", pd.Series([0]*len(ranked))).apply(_fmt_int),
+    "Yds": ranked.get("rec_yards", pd.Series([0]*len(ranked))).apply(_fmt_int),
+    "TDs": ranked.get("rec_tds", pd.Series([0]*len(ranked))).apply(_fmt_int),
+    "Tgt%": ranked.get("target_share", pd.Series([float("nan")]*len(ranked))).apply(_fmt_pct),
+    "EPA/tgt": ranked.get("epa_per_target", pd.Series([float("nan")]*len(ranked))).apply(lambda v: _fmt_signed(v, 2)),
+    "YAC/exp": ranked.get("yac_above_exp", pd.Series([float("nan")]*len(ranked))).apply(lambda v: _fmt_signed(v, 1)),
     "Your score": ranked["score"].apply(format_score),
 })
 st.dataframe(display_df, use_container_width=True, hide_index=True)
-st.caption("⚠️ = under 300 snaps — small sample, treat with caution.")
+st.caption("⚠️ = under 300 snaps. **Tgt%** = share of team's targets · **EPA/tgt** = Expected Points Added per target · **YAC/exp** = yards-after-catch above NGS expectation.")
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 selected = st.selectbox("Pick a tight end to see their full breakdown", options=ranked["player_display_name"].tolist(), index=0)
 player = ranked[ranked["player_display_name"] == selected].iloc[0]
 warn = sample_size_warning(player.get("off_snaps", 0))
 if warn: st.warning(warn)
+
+# ── Split-season panel for traded TEs ──
+all_tes_full = load_te_data()
+season_stints = all_tes_full[
+    (all_tes_full["player_id"] == player.get("player_id"))
+    & (all_tes_full["season_year"] == selected_season)
+].copy()
+if len(season_stints) > 1:
+    n = len(season_stints)
+    st.info(f"**Split season** — {selected} played for {n} teams in {selected_season}.")
+    season_stints = season_stints.sort_values("first_week" if "first_week" in season_stints.columns else "off_snaps", ascending=True)
+    split_rows = []
+    for _, stint in season_stints.iterrows():
+        team_disp = display_abbr(stint["recent_team"])
+        is_current = stint["recent_team"] == player["recent_team"]
+        split_rows.append({
+            "Team": f"⮕ {team_disp}" if is_current else team_disp,
+            "Games": _fmt_int(stint.get("games")),
+            "Snaps": _fmt_int(stint.get("off_snaps")),
+            "Rec": _fmt_int(stint.get("receptions")),
+            "Yds": _fmt_int(stint.get("rec_yards")),
+            "TDs": _fmt_int(stint.get("rec_tds")),
+            "Tgt%": _fmt_pct(stint.get("target_share")),
+            "EPA/tgt": _fmt_signed(stint.get("epa_per_target"), 2),
+            "YAC/exp": _fmt_signed(stint.get("yac_above_exp"), 1),
+        })
+    # Total row (weighted aggregates)
+    def _safe_sum(col):
+        return season_stints[col].fillna(0).sum() if col in season_stints.columns else float("nan")
+    def _weighted_mean(value_col, weight_col):
+        if value_col not in season_stints.columns or weight_col not in season_stints.columns:
+            return float("nan")
+        v = season_stints[value_col]; w = season_stints[weight_col]
+        mask = v.notna() & w.notna() & (w > 0)
+        if not mask.any(): return float("nan")
+        return (v[mask] * w[mask]).sum() / w[mask].sum()
+    total_games = _safe_sum("games"); total_snaps = _safe_sum("off_snaps")
+    total_rec = _safe_sum("receptions"); total_yds = _safe_sum("rec_yards"); total_tds = _safe_sum("rec_tds")
+    total_targets = _safe_sum("targets")
+    if "target_share" in season_stints.columns and "targets" in season_stints.columns:
+        ts = season_stints["target_share"]; tg = season_stints["targets"]
+        mask = ts.notna() & tg.notna() & (ts > 0)
+        season_tgt_share = (total_targets / (tg[mask] / ts[mask]).sum()) if mask.any() and (tg[mask] / ts[mask]).sum() > 0 else float("nan")
+    else:
+        season_tgt_share = float("nan")
+    season_epa = _weighted_mean("epa_per_target", "targets")
+    season_yac = _weighted_mean("yac_above_exp", "receptions")
+    split_rows.append({
+        "Team": f"**Total ({selected_season})**",
+        "Games": _fmt_int(total_games), "Snaps": _fmt_int(total_snaps),
+        "Rec": _fmt_int(total_rec), "Yds": _fmt_int(total_yds), "TDs": _fmt_int(total_tds),
+        "Tgt%": _fmt_pct(season_tgt_share),
+        "EPA/tgt": _fmt_signed(season_epa, 2),
+        "YAC/exp": _fmt_signed(season_yac, 1),
+    })
+    st.dataframe(pd.DataFrame(split_rows), use_container_width=True, hide_index=True)
+    st.caption(f"⮕ marks the stint shown on this page ({display_abbr(player['recent_team'])}). Stints chronological. Total uses weighted aggregates.")
 
 c1, c2 = st.columns([1, 1])
 with c1:
@@ -301,8 +397,16 @@ with c1:
 
 with c2:
     st.markdown("**Percentile profile vs. all league TEs**")
-    st.caption("50th = league average. Higher = better. Compared to TEs only, not WRs.")
-    fig = build_radar_figure(player, stat_labels, stat_methodology)
+    st.caption("Solid blue = this player. Dashed gray = top-32 starter average. Compared to TEs only, not WRs.")
+    season_pool = all_tes_full[all_tes_full["season_year"] == selected_season]
+    top32 = season_pool.sort_values("off_snaps", ascending=False).head(32)
+    radar_bench = {z: top32[z].mean() for z in RADAR_STATS if z in top32.columns and top32[z].notna().any()}
+    radar_bench_raw = {}
+    for z in RADAR_STATS:
+        raw_col = RAW_COL_MAP.get(z)
+        if raw_col and raw_col in top32.columns and top32[raw_col].notna().any():
+            radar_bench_raw[z] = top32[raw_col].mean()
+    fig = build_radar_figure(player, stat_labels, stat_methodology, benchmark=radar_bench, benchmark_raw=radar_bench_raw)
     if fig: st.plotly_chart(fig, use_container_width=True)
 
 career_arc_section(
@@ -316,4 +420,4 @@ career_arc_section(
 )
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.caption("Data via [nflverse](https://github.com/nflverse) · NGS tracking data · 2024 regular season · Z-scored against 86 TEs with 200+ offensive snaps · Fan project, not affiliated with the NFL or Detroit Lions.")
+st.caption("Data via [nflverse](https://github.com/nflverse) · NGS tracking data · regular season only · Z-scored against league-wide TEs with 100+ offensive snaps · Fan project, not affiliated with the NFL or any team.")

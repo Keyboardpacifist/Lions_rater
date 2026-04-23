@@ -33,6 +33,10 @@ class PositionConfig:
     # snap_floor is preferred (Decision 1, 2026-04-22). top_n kept for back-compat.
     top_n: dict[str, int] | None = None
     snap_floor: dict[str, int] | None = None
+    # Which snap_counts column drives qualification: "offense_snaps" (default
+    # for offensive positions), "defense_snaps" (DE/DT/LB/CB/S), or
+    # "st_snaps" (K/P/long snappers).
+    snap_column: str = "offense_snaps"
 
     # ── Data sources ─────────────────────────────────────────
     pbp_play_types: list[str] = field(default_factory=list)     # ["pass"] / ["run"] / ["run", "pass"]
@@ -48,6 +52,14 @@ class PositionConfig:
     use_player_stats: bool = False
     # Map: nflverse player_stats column name -> output column name.
     player_stats_col_map: dict[str, str] = field(default_factory=dict)
+
+    # ── Defensive pass exposure (for pressure rate, etc.) ────
+    # When True, the runner computes per-stint `pass_plays_exposure` =
+    # estimated team pass plays defended while this player was on the
+    # field, derived as: team_total_pass_plays × (player_def_snaps /
+    # team_total_def_snaps). Defensive position configs (DE/DT/LB) use
+    # this as a denominator for pressure rate.
+    compute_pass_exposure: bool = False
 
     # ── PBP aggregation ──────────────────────────────────────
     # Each function: (pbp_filtered: DataFrame, population: DataFrame) -> DataFrame

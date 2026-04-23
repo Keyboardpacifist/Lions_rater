@@ -9,7 +9,7 @@ import polars as pl
 import streamlit as st
 import plotly.graph_objects as go
 from scipy.stats import norm
-from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
+from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS, display_abbr
 from career_arc import career_arc_section
 from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
 
@@ -139,9 +139,32 @@ def sample_size_warning(snaps):
     if snaps < 500: return f"⚠️ {int(snaps)} snaps — moderate sample"
     return ""
 
+# Per-stat raw value formatting for the radar benchmark hover.
+_RADAR_RAW_FORMATTERS = {
+    "sacks_per_game_z": ("sacks/g", lambda v: f"{v:.2f}"),
+    "qb_hits_per_game_z": ("QB hits/g", lambda v: f"{v:.2f}"),
+    "pressure_rate_z": ("press rate", lambda v: f"{v*100:.1f}%"),
+    "tfl_per_game_z": ("TFL/g", lambda v: f"{v:.2f}"),
+    "solo_tackle_rate_z": ("solo tkl rate", lambda v: f"{v*100:.1f}%"),
+    "tackles_per_snap_z": ("tkl/snap", lambda v: f"{v:.3f}"),
+    "forced_fumbles_per_game_z": ("FF/g", lambda v: f"{v:.2f}"),
+    "passes_defended_per_game_z": ("PD/g", lambda v: f"{v:.2f}"),
+    "interceptions_per_game_z": ("INT/g", lambda v: f"{v:.2f}"),
+}
+
+def _format_radar_raw(z_col, raw_value):
+    if raw_value is None or pd.isna(raw_value):
+        return ""
+    spec = _RADAR_RAW_FORMATTERS.get(z_col)
+    if spec is None:
+        return f"{raw_value:.2f}"
+    label, fmt = spec
+    return f"{label}: {fmt(raw_value)}"
+
+
 # ── Radar chart ───────────────────────────────────────────────
-def build_radar_figure(player, stat_labels, stat_methodology):
-    axes, values, descriptions = [], [], []
+def build_radar_figure(player, stat_labels, stat_methodology, benchmark=None, benchmark_raw=None, benchmark_label="Top 32 starter avg"):
+    axes, values, descriptions, bench_values, bench_raw_strs = [], [], [], [], []
     for z_col in RADAR_STATS:
         if z_col not in player.index: continue
         z = player.get(z_col)
@@ -150,6 +173,11 @@ def build_radar_figure(player, stat_labels, stat_methodology):
         label = RADAR_LABEL_OVERRIDES.get(z_col, stat_labels.get(z_col, z_col))
         desc = stat_methodology.get(z_col, {}).get("what", "")
         axes.append(label); values.append(pct); descriptions.append(desc)
+        if benchmark is not None:
+            bz = benchmark.get(z_col)
+            bench_values.append(zscore_to_percentile(bz) if bz is not None and pd.notna(bz) else None)
+            raw_v = benchmark_raw.get(z_col) if benchmark_raw else None
+            bench_raw_strs.append(_format_radar_raw(z_col, raw_v))
     if not axes: return None
     fig = go.Figure()
     fig.add_trace(go.Scatterpolar(
@@ -158,8 +186,20 @@ def build_radar_figure(player, stat_labels, stat_methodology):
         fill="toself", fillcolor="rgba(31, 119, 180, 0.25)",
         line=dict(color="rgba(31, 119, 180, 0.9)", width=2),
         marker=dict(size=6, color="rgba(31, 119, 180, 1)"),
+        name="This player",
         hovertemplate="<b>%{theta}</b><br>%{r:.0f}th percentile<br><br><i>%{customdata}</i><extra></extra>",
     ))
+    if benchmark is not None and any(v is not None for v in bench_values):
+        bv_clean = [v if v is not None else 50 for v in bench_values]
+        bench_hover = [f"<b>{ax}</b><br>{benchmark_label}<br>{(rs + ' · ') if rs else ''}{p:.0f}th percentile" for ax, rs, p in zip(axes, bench_raw_strs, bv_clean)]
+        bench_hover.append(bench_hover[0])
+        fig.add_trace(go.Scatterpolar(
+            r=bv_clean + [bv_clean[0]], theta=axes + [axes[0]],
+            mode="lines+markers",
+            line=dict(color="rgba(102, 102, 102, 0.9)", width=2, dash="dot"),
+            marker=dict(size=10, color="rgba(102, 102, 102, 0.95)", symbol="diamond", line=dict(width=2, color="white")),
+            name=benchmark_label, hovertext=bench_hover, hoverinfo="text",
+        ))
     fig.update_layout(
         polar=dict(
             radialaxis=dict(visible=True, range=[0, 100], tickvals=[25, 50, 75, 100],
@@ -168,7 +208,10 @@ def build_radar_figure(player, stat_labels, stat_methodology):
             angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"),
             bgcolor="rgba(0,0,0,0)",
         ),
-        showlegend=False, margin=dict(l=60, r=60, t=20, b=20),
+        showlegend=(benchmark is not None),
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01,
+                    bgcolor="rgba(255,255,255,0.7)", bordercolor="#ccc", borderwidth=1, font=dict(size=10)),
+        margin=dict(l=60, r=60, t=20, b=20),
         height=380, paper_bgcolor="rgba(0,0,0,0)",
     )
     return fig
@@ -186,7 +229,7 @@ except FileNotFoundError:
     st.stop()
 
 # Filter to selected team and season
-df = filter_by_team_and_season(df, selected_team, selected_season, team_col="team", season_col="season_year")
+df = filter_by_team_and_season(df, selected_team, selected_season, team_col="recent_team", season_col="season_year")
 if len(df) == 0:
     st.warning(f"No {team_name} defensive ends found for {selected_season}.")
     st.stop()
@@ -330,7 +373,7 @@ ranked = des.copy()
 # Score guide — visible by default
 st.markdown("""
 **How to read the score:** 0.00 = league average · Positive = above average · Negative = below average.
-The percentile shows where this player ranks among all 90 qualifying DEs league-wide.
+The percentile shows where this player ranks among all qualifying DEs league-wide (100+ defensive snaps).
 """)
 
 if len(ranked) > 0:
@@ -353,17 +396,26 @@ if len(ranked) > 0:
     if warn:
         st.warning(warn)
 
+def _fmt_int(v): return f"{int(v)}" if pd.notna(v) else "—"
+def _fmt_pct(v): return f"{v*100:.1f}%" if pd.notna(v) else "—"
+def _fmt_signed(v, places=2): return f"{v:+.{places}f}" if pd.notna(v) else "—"
+def _fmt_float(v, places=2): return f"{v:.{places}f}" if pd.notna(v) else "—"
+
 display_df = pd.DataFrame({
     "Rank": ranked.index,
     "Player": ranked["player_name"],
-    "Games": ranked.get("games", pd.Series([0] * len(ranked))).fillna(0).astype(int),
     "Snaps": ranked.get("def_snaps", pd.Series([0] * len(ranked))).apply(
-        lambda s: f"{int(s)} ⚠️" if pd.notna(s) and s < 300 else (f"{int(s)}" if pd.notna(s) else "—")
+        lambda s: f"{int(s)} ⚠️" if pd.notna(s) and s < 300 else _fmt_int(s)
     ),
+    "Sacks": ranked.get("def_sacks", pd.Series([float("nan")] * len(ranked))).apply(lambda v: _fmt_float(v, 1)),
+    "QB hits": ranked.get("def_qb_hits", pd.Series([float("nan")] * len(ranked))).apply(_fmt_int),
+    "TFL": ranked.get("def_tackles_for_loss", pd.Series([float("nan")] * len(ranked))).apply(_fmt_int),
+    "Pressures": ranked.get("pfr_pressures", pd.Series([float("nan")] * len(ranked))).apply(_fmt_int),
+    "Press rate": ranked.get("pressure_rate", pd.Series([float("nan")] * len(ranked))).apply(_fmt_pct),
     "Your score": ranked["score"].apply(format_score),
 })
 st.dataframe(display_df, use_container_width=True, hide_index=True)
-st.caption("⚠️ = under 300 snaps — small sample, treat with caution.")
+st.caption("⚠️ = under 300 snaps. **Pressures** = PFR pressures (sacks + hurries + QB hits) · **Press rate** = pressures / estimated pass plays defended while on field.")
 
 # ══════════════════════════════════════════════════════════════
 # PLAYER DETAIL
@@ -375,6 +427,49 @@ player = ranked[ranked["player_name"] == selected].iloc[0]
 warn = sample_size_warning(player.get("def_snaps", 0))
 if warn:
     st.warning(warn)
+
+# ── Split-season panel for traded DEs ──
+all_des_full = load_de_data()
+season_stints = all_des_full[
+    (all_des_full["player_id"] == player.get("player_id"))
+    & (all_des_full["season_year"] == selected_season)
+].copy() if "player_id" in all_des_full.columns and "season_year" in all_des_full.columns else pd.DataFrame()
+if len(season_stints) > 1:
+    n = len(season_stints)
+    st.info(f"**Split season** — {selected} played for {n} teams in {selected_season}.")
+    season_stints = season_stints.sort_values("first_week" if "first_week" in season_stints.columns else "def_snaps", ascending=True)
+    split_rows = []
+    for _, stint in season_stints.iterrows():
+        team_disp = display_abbr(stint["recent_team"])
+        is_current = stint["recent_team"] == player["recent_team"]
+        split_rows.append({
+            "Team": f"⮕ {team_disp}" if is_current else team_disp,
+            "Games": _fmt_int(stint.get("games")),
+            "Snaps": _fmt_int(stint.get("def_snaps")),
+            "Sacks": _fmt_float(stint.get("def_sacks"), 1),
+            "QB hits": _fmt_int(stint.get("def_qb_hits")),
+            "TFL": _fmt_int(stint.get("def_tackles_for_loss")),
+            "Pressures": _fmt_int(stint.get("pfr_pressures")),
+            "Press rate": _fmt_pct(stint.get("pressure_rate")),
+        })
+    # Total row — sum counts; press rate = total pressures / total exposure
+    def _safe_sum(col):
+        return season_stints[col].fillna(0).sum() if col in season_stints.columns else float("nan")
+    total_press = _safe_sum("pfr_pressures")
+    total_exposure = _safe_sum("pass_plays_exposure") if "pass_plays_exposure" in season_stints.columns else float("nan")
+    season_press_rate = (total_press / total_exposure) if total_exposure > 0 else float("nan")
+    split_rows.append({
+        "Team": f"**Total ({selected_season})**",
+        "Games": _fmt_int(_safe_sum("games")),
+        "Snaps": _fmt_int(_safe_sum("def_snaps")),
+        "Sacks": _fmt_float(_safe_sum("def_sacks"), 1),
+        "QB hits": _fmt_int(_safe_sum("def_qb_hits")),
+        "TFL": _fmt_int(_safe_sum("def_tackles_for_loss")),
+        "Pressures": _fmt_int(total_press),
+        "Press rate": _fmt_pct(season_press_rate),
+    })
+    st.dataframe(pd.DataFrame(split_rows), use_container_width=True, hide_index=True)
+    st.caption(f"⮕ marks the stint shown on this page ({display_abbr(player['recent_team'])}). Stints chronological. Total combines per-stint counts; press rate = total pressures / total exposure.")
 
 c1, c2 = st.columns([1, 1])
 with c1:
@@ -447,8 +542,17 @@ with c1:
 
 with c2:
     st.markdown("**Percentile profile vs. all league DEs**")
-    st.caption("50th = league average. Higher = better.")
-    fig = build_radar_figure(player, stat_labels, stat_methodology)
+    st.caption("Solid blue = this player. Dashed gray = top-32 starter average.")
+    season_pool = all_des_full[all_des_full["season_year"] == selected_season] if "season_year" in all_des_full.columns else all_des_full
+    snap_col_for_top = "def_snaps" if "def_snaps" in season_pool.columns else "off_snaps"
+    top32 = season_pool.sort_values(snap_col_for_top, ascending=False).head(32)
+    radar_bench = {z: top32[z].mean() for z in RADAR_STATS if z in top32.columns and top32[z].notna().any()}
+    radar_bench_raw = {}
+    for z in RADAR_STATS:
+        raw_col = RAW_COL_MAP.get(z)
+        if raw_col and raw_col in top32.columns and top32[raw_col].notna().any():
+            radar_bench_raw[z] = top32[raw_col].mean()
+    fig = build_radar_figure(player, stat_labels, stat_methodology, benchmark=radar_bench, benchmark_raw=radar_bench_raw)
     if fig:
         st.plotly_chart(fig, use_container_width=True)
     else:
