@@ -143,6 +143,30 @@ COLLEGE_VOLUME_COL = {
 COLLEGE_STARTER_TOP_N = 130
 
 
+def _coverage_note(player_seasons, league_df, season_col, label):
+    """Return a soft note when the player's earliest season equals the
+    earliest season in the source data — i.e., the player's career
+    likely extends before our coverage window.
+
+    Returns None when the player's min season is comfortably inside the
+    coverage range, so no note is needed.
+    """
+    if not player_seasons or season_col not in league_df.columns:
+        return None
+    try:
+        player_min = int(min(s for s in player_seasons if s is not None))
+        data_min = int(league_df[season_col].dropna().min())
+    except (ValueError, TypeError):
+        return None
+    if player_min == data_min:
+        return (
+            f"ℹ️ {label} data in this app starts at {data_min}. "
+            f"This player's career may extend earlier — those seasons "
+            f"aren't shown."
+        )
+    return None
+
+
 def _add_benchmark_trace(fig, benchmark_dict, label, season_anchor=0.5,
                           show_in_legend=True, color="#666"):
     """Overlay a dashed-diamond benchmark line on an existing figure.
@@ -565,6 +589,14 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
         st.markdown("### NFL career arc")
 
+        # Soft note if player's earliest season touches our data floor
+        nfl_note = _coverage_note(
+            nfl_history[nfl_season_col].tolist(), league_df,
+            season_col=nfl_season_col, label="NFL",
+        )
+        if nfl_note:
+            st.caption(nfl_note)
+
         team_col = "recent_team" if "recent_team" in nfl_history.columns else "team"
         # Sort chronologically: by season, then by first_week within season
         sort_cols = [nfl_season_col]
@@ -643,6 +675,25 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
         st.markdown("### College profile")
         st.caption(f"Z-scored against all FBS {position_label} each season")
+
+        # Soft note if the player's earliest college season equals our
+        # data floor (e.g., Goff at Cal — our college data starts 2014,
+        # his freshman 2013 season isn't captured).
+        try:
+            from college_data import COLLEGE_PARQUET_MAP, COLLEGE_DATA_DIR as _CDD
+            _full_path = Path(_CDD) / COLLEGE_PARQUET_MAP.get(pg, "")
+            if _full_path.exists():
+                _full_college = pl.read_parquet(str(_full_path)).to_pandas()
+                _college_note = _coverage_note(
+                    college_history[college_season_col].tolist(),
+                    _full_college,
+                    season_col=college_season_col,
+                    label="College",
+                )
+                if _college_note:
+                    st.caption(_college_note)
+        except (ImportError, FileNotFoundError, KeyError):
+            pass
 
         college_seasons_list = sorted(college_history[college_season_col].unique())
 

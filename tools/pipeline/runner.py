@@ -88,11 +88,14 @@ def run_season(
                 "receiving_yards_after_catch", "receiving_2pt_conversions",
                 "receiving_fumbles", "receiving_fumbles_lost",
                 "carries", "rushing_yards", "rushing_tds", "rushing_first_downs",
-                "rushing_fumbles", "rushing_fumbles_lost",
+                "rushing_fumbles", "rushing_fumbles_lost", "rushing_2pt_conversions",
+                "rushing_epa",
                 "completions", "attempts", "passing_yards", "passing_tds",
                 "passing_interceptions", "sacks_suffered", "sack_yards_lost",
+                "sack_fumbles", "sack_fumbles_lost",
                 "passing_first_downs", "passing_air_yards",
-                "passing_yards_after_catch",
+                "passing_yards_after_catch", "passing_2pt_conversions",
+                "passing_epa",
             }
             sum_cols = [c for c in config.player_stats_col_map if c in counting_in_map and c in ps_week.columns]
             agg_dict = {c: (c, "sum") for c in sum_cols}

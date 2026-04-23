@@ -1,113 +1,129 @@
 {
+  "position_group": "qb",
+  "season": "2016-2025",
+  "population": "Players with >= 100 QB total snaps, min 6 games",
+  "n_players": 413,
   "stat_tiers": {
     "passing_yards_per_game_z": 1,
     "passing_tds_per_game_z": 1,
-    "pass_epa_per_play_z": 2,
+    "rush_yards_per_game_z": 1,
     "yards_per_attempt_z": 2,
+    "completion_pct_z": 2,
     "td_rate_z": 2,
     "int_rate_z": 2,
-    "completion_pct_z": 2,
-    "sack_rate_z": 2,
     "first_down_rate_z": 2,
-    "turnover_rate_z": 2,
-    "passing_cpoe_z": 3,
     "air_yards_per_attempt_z": 2,
     "yac_per_completion_z": 2,
-    "rush_yards_per_game_z": 1,
-    "rush_epa_per_carry_z": 2
+    "sack_rate_z": 2,
+    "turnover_rate_z": 2,
+    "pass_epa_per_play_z": 3,
+    "passing_cpoe_z": 3,
+    "rush_epa_per_carry_z": 3,
+    "pass_success_rate_z": 3
   },
   "stat_labels": {
-    "pass_epa_per_play_z": "Pass EPA per play",
+    "passing_yards_per_game_z": "Passing yards per game",
+    "passing_tds_per_game_z": "Passing TDs per game",
+    "rush_yards_per_game_z": "Rushing yards per game",
     "yards_per_attempt_z": "Yards per attempt",
-    "td_rate_z": "TD rate",
-    "int_rate_z": "INT rate (inverted \u2014 fewer = better)",
     "completion_pct_z": "Completion %",
-    "passing_cpoe_z": "Completion % over expected (CPOE)",
-    "sack_rate_z": "Sack rate (inverted \u2014 fewer = better)",
-    "first_down_rate_z": "First down rate",
+    "td_rate_z": "TD rate",
+    "int_rate_z": "INT rate (lower is better)",
+    "first_down_rate_z": "First-down rate",
     "air_yards_per_attempt_z": "Air yards per attempt",
     "yac_per_completion_z": "YAC per completion",
-    "turnover_rate_z": "Turnover rate (inverted \u2014 fewer = better)",
-    "rush_yards_per_game_z": "Rush yards per game",
+    "sack_rate_z": "Sack rate (lower is better)",
+    "turnover_rate_z": "Turnover rate (lower is better)",
+    "pass_epa_per_play_z": "Pass EPA per play",
+    "passing_cpoe_z": "Completion % over expected",
     "rush_epa_per_carry_z": "Rush EPA per carry",
-    "passing_yards_per_game_z": "Passing yards per game",
-    "passing_tds_per_game_z": "Passing TDs per game"
+    "pass_success_rate_z": "Pass success rate"
   },
   "stat_methodology": {
-    "pass_epa_per_play_z": {
-      "what": "Average EPA on pass attempts \u2014 the core efficiency metric",
-      "how": "Total passing EPA / attempts.",
-      "limits": "Influenced by receiver quality and OL protection."
-    },
-    "yards_per_attempt_z": {
-      "what": "Yards gained per pass attempt",
-      "how": "Passing yards / attempts.",
-      "limits": "Doesn't account for sacks or throwaways."
-    },
-    "td_rate_z": {
-      "what": "Touchdown rate per attempt",
-      "how": "Passing TDs / attempts.",
-      "limits": "Red zone opportunities vary by team."
-    },
-    "int_rate_z": {
-      "what": "Interception rate \u2014 fewer = better",
-      "how": "INTs / attempts. Inverted so positive z = fewer picks.",
-      "limits": "Drops and tipped balls can inflate INT counts."
-    },
-    "completion_pct_z": {
-      "what": "Completion percentage",
-      "how": "Completions / attempts.",
-      "limits": "Short passes inflate completion % without adding value."
-    },
-    "passing_cpoe_z": {
-      "what": "Completion % over expected \u2014 accuracy vs difficulty",
-      "how": "Actual completion % minus expected completion % based on throw difficulty.",
-      "limits": "Model may not capture all situational factors."
-    },
-    "sack_rate_z": {
-      "what": "Sack rate \u2014 fewer = better",
-      "how": "Sacks / (attempts + sacks). Inverted so positive z = fewer sacks.",
-      "limits": "OL quality is a major factor."
-    },
-    "first_down_rate_z": {
-      "what": "First down rate per attempt",
-      "how": "Passing first downs / attempts.",
-      "limits": "Influenced by down-and-distance situations."
-    },
-    "air_yards_per_attempt_z": {
-      "what": "Average air yards per attempt \u2014 throw depth",
-      "how": "Total air yards / attempts.",
-      "limits": "Scheme-dependent. West Coast offenses throw shorter."
-    },
-    "yac_per_completion_z": {
-      "what": "Yards after catch per completion",
-      "how": "YAC / completions.",
-      "limits": "Heavily influenced by receiver ability and scheme."
-    },
-    "turnover_rate_z": {
-      "what": "Turnovers per dropback \u2014 fewer = better",
-      "how": "(INTs + fumbles lost) / (attempts + sacks). Inverted.",
-      "limits": "Includes fumbles which may be OL-related."
-    },
-    "rush_yards_per_game_z": {
-      "what": "Rushing yards per game",
-      "how": "Total rush yards / games.",
-      "limits": "Designed runs vs scrambles not distinguished."
-    },
-    "rush_epa_per_carry_z": {
-      "what": "Rush EPA per carry",
-      "how": "Rushing EPA / carries.",
-      "limits": "Small sample for pocket passers. Kneeldowns can deflate."
-    },
     "passing_yards_per_game_z": {
-      "what": "Passing yards per game",
-      "how": "Total passing yards / games.",
-      "limits": "Volume stat \u2014 garbage time and blowouts inflate."
+      "what": "Passing yards per game played.",
+      "how": "From player_stats per stint, divided by stint games.",
+      "limits": "Volume metric \u2014 opportunity-driven."
     },
     "passing_tds_per_game_z": {
-      "what": "Passing TDs per game",
-      "how": "Passing TDs / games.",
-      "limits": "Red zone usage varies by team and game script."
+      "what": "Passing TDs per game played.",
+      "how": "From player_stats per stint.",
+      "limits": "Small samples noisy."
+    },
+    "rush_yards_per_game_z": {
+      "what": "Rushing yards per game (QB rushing only).",
+      "how": "From player_stats rushing per stint.",
+      "limits": "Pocket passers near zero by design."
+    },
+    "yards_per_attempt_z": {
+      "what": "Average yards per pass attempt.",
+      "how": "passing_yards / attempts.",
+      "limits": "Doesn't account for sacks."
+    },
+    "completion_pct_z": {
+      "what": "Percentage of attempts completed.",
+      "how": "completions / attempts.",
+      "limits": "Doesn't account for throw difficulty (CPOE does)."
+    },
+    "td_rate_z": {
+      "what": "Touchdown passes per attempt.",
+      "how": "passing_tds / attempts.",
+      "limits": "Red-zone usage drives it."
+    },
+    "int_rate_z": {
+      "what": "Interceptions per attempt \u2014 lower is better.",
+      "how": "passing_interceptions / attempts. Z inverted so positive = good.",
+      "limits": "Tipped balls and bad luck inflate this."
+    },
+    "first_down_rate_z": {
+      "what": "First downs per pass attempt.",
+      "how": "passing_first_downs / attempts.",
+      "limits": "Down-and-distance situational."
+    },
+    "air_yards_per_attempt_z": {
+      "what": "Average intended air yards per attempt (downfield aggression).",
+      "how": "passing_air_yards / attempts.",
+      "limits": "Doesn't reward dink-and-dunk efficiency."
+    },
+    "yac_per_completion_z": {
+      "what": "Yards after the catch per completion.",
+      "how": "passing_yards_after_catch / completions.",
+      "limits": "Heavy receiver / scheme dependence."
+    },
+    "sack_rate_z": {
+      "what": "Sacks per dropback \u2014 lower is better.",
+      "how": "sacks_suffered / (attempts + sacks_suffered). Z inverted.",
+      "limits": "Offensive line quality is a major factor."
+    },
+    "turnover_rate_z": {
+      "what": "INTs + lost fumbles per dropback \u2014 lower is better.",
+      "how": "(passing_interceptions + sack_fumbles_lost) / dropbacks. Z inverted.",
+      "limits": "Conflates skill and bad luck."
+    },
+    "pass_epa_per_play_z": {
+      "what": "Expected Points Added per dropback.",
+      "how": "Mean of nflverse EPA on this player's dropbacks (per stint).",
+      "limits": "Depends on trusting the EPA model."
+    },
+    "passing_cpoe_z": {
+      "what": "Completion percentage over expected.",
+      "how": "Actual completion rate \u2212 model-expected, weighted across attempts.",
+      "limits": "A model decides what 'expected' means."
+    },
+    "rush_epa_per_carry_z": {
+      "what": "Expected Points Added per QB rush.",
+      "how": "Mean EPA on the QB's carries (per stint).",
+      "limits": "Few carries \u2192 noisy values."
+    },
+    "pass_success_rate_z": {
+      "what": "Percentage of dropbacks that produced a successful play by EPA standards.",
+      "how": "Mean of nflverse binary success flag across this player's dropbacks (per stint).",
+      "limits": "Binary cutoff hides near-misses."
     }
-  }
+  },
+  "invert_stats": [
+    "int_rate",
+    "sack_rate",
+    "turnover_rate"
+  ]
 }
