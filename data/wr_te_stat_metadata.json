@@ -1,106 +1,146 @@
 {
+  "position_group": "wr",
+  "season": "2016-2025",
+  "population": "Players with >= 100 WR, 100 TE total snaps, min 6 games",
+  "n_players": 2500,
   "stat_tiers": {
     "rec_yards_z": 1,
     "receptions_z": 1,
     "rec_tds_z": 1,
     "targets_z": 1,
-    "yards_per_target_z": 2,
-    "epa_per_target_z": 2,
+    "target_share_z": 2,
+    "air_yards_share_z": 2,
+    "racr_z": 2,
+    "wopr_z": 2,
     "catch_rate_z": 2,
-    "first_down_rate_z": 2,
     "success_rate_z": 2,
-    "targets_per_snap_z": 2,
+    "first_down_rate_z": 2,
+    "yards_per_target_z": 2,
     "yards_per_snap_z": 2,
+    "targets_per_snap_z": 2,
     "yac_per_reception_z": 2,
-    "avg_separation_z": 3,
-    "yac_above_exp_z": 3
+    "epa_per_target_z": 3,
+    "avg_cpoe_z": 3,
+    "yac_above_exp_z": 3,
+    "avg_separation_z": 3
   },
   "stat_labels": {
-    "rec_yards_z": "Receiving yards",
-    "receptions_z": "Receptions",
-    "rec_tds_z": "Receiving TDs",
-    "targets_z": "Targets",
-    "yards_per_target_z": "Yards per target",
-    "epa_per_target_z": "EPA per target",
+    "rec_yards_z": "Receiving yards (raw)",
+    "receptions_z": "Receptions (raw)",
+    "rec_tds_z": "Receiving TDs (raw)",
+    "targets_z": "Targets (raw)",
+    "target_share_z": "Target share",
+    "air_yards_share_z": "Air-yards share",
+    "racr_z": "RACR (yards / air yards)",
+    "wopr_z": "WOPR (weighted opportunity)",
     "catch_rate_z": "Catch rate",
-    "first_down_rate_z": "First down rate",
-    "success_rate_z": "Success rate (positive EPA %)",
-    "targets_per_snap_z": "Targets per snap",
+    "success_rate_z": "Success rate",
+    "first_down_rate_z": "First-down rate",
+    "yards_per_target_z": "Yards per target",
     "yards_per_snap_z": "Yards per snap",
+    "targets_per_snap_z": "Targets per snap",
     "yac_per_reception_z": "YAC per reception",
-    "avg_separation_z": "Average separation (NGS)",
-    "yac_above_exp_z": "YAC above expected (NGS)"
+    "epa_per_target_z": "EPA per target",
+    "avg_cpoe_z": "CPOE",
+    "yac_above_exp_z": "YAC over expected",
+    "avg_separation_z": "Average separation"
   },
   "stat_methodology": {
     "rec_yards_z": {
-      "what": "Total receiving yards",
-      "how": "Raw volume.",
-      "limits": "Volume stat \u2014 more targets = more yards."
+      "what": "Total raw receiving yards (full season, REG only).",
+      "how": "From nflverse load_player_stats(summary_level='reg'). Z-scored within position group (WR vs WR, TE vs TE).",
+      "limits": "Raw volume stat \u2014 rewards opportunity as much as skill."
     },
     "receptions_z": {
-      "what": "Total receptions",
-      "how": "Raw count.",
-      "limits": "Volume stat."
+      "what": "Total raw receptions.",
+      "how": "From nflverse load_player_stats. Z-scored within position group.",
+      "limits": "Volume stat. High-volume possession receivers outrank efficient deep threats."
     },
     "rec_tds_z": {
-      "what": "Receiving touchdowns",
-      "how": "Raw count.",
-      "limits": "Highly variable year to year."
+      "what": "Total raw receiving touchdowns.",
+      "how": "From nflverse load_player_stats \u2014 correctly attributed even on lateral plays (which PBP overcounts).",
+      "limits": "Small integer samples are noisy."
     },
     "targets_z": {
-      "what": "Total targets",
-      "how": "Raw count.",
-      "limits": "Reflects role more than skill."
+      "what": "Total raw targets.",
+      "how": "From nflverse load_player_stats.",
+      "limits": "Pure opportunity \u2014 not a skill measure."
     },
-    "yards_per_target_z": {
-      "what": "Yards gained per target",
-      "how": "Receiving yards / targets.",
-      "limits": "Deep threats score higher naturally."
+    "target_share_z": {
+      "what": "Player's share of team passing targets.",
+      "how": "From nflverse load_player_stats. targets / team total targets.",
+      "limits": "Team-context dependent. Top option on a low-volume team can outrank #2 on a heavy passing team."
     },
-    "epa_per_target_z": {
-      "what": "EPA per target \u2014 value added per look",
-      "how": "Receiving EPA / targets.",
-      "limits": "QB quality affects this significantly."
+    "air_yards_share_z": {
+      "what": "Player's share of team intended air yards (downfield throws).",
+      "how": "From nflverse load_player_stats.",
+      "limits": "Rewards deep threats; possession receivers near zero by design."
+    },
+    "racr_z": {
+      "what": "Receiver Air Conversion Ratio. Yards gained per air yard thrown your way.",
+      "how": "receiving_yards / receiving_air_yards from player_stats.",
+      "limits": "Inflated by big YAC plays; small-sample players get extreme values."
+    },
+    "wopr_z": {
+      "what": "Weighted Opportunity Rating. Combines target share and air-yards share.",
+      "how": "1.5 \u00d7 target_share + 0.7 \u00d7 air_yards_share. Standard fantasy/analytics opportunity metric.",
+      "limits": "Opportunity, not skill. Two players with the same WOPR can have very different outcomes."
     },
     "catch_rate_z": {
-      "what": "Catches per target",
-      "how": "Receptions / targets.",
-      "limits": "Throw accuracy matters. Contested catches lower this."
-    },
-    "first_down_rate_z": {
-      "what": "First downs per target",
-      "how": "Receiving first downs / targets.",
-      "limits": "Route depth and situation affect this."
+      "what": "Percentage of targets caught.",
+      "how": "receptions / targets.",
+      "limits": "Doesn't account for target difficulty."
     },
     "success_rate_z": {
-      "what": "Positive EPA rate on targets",
-      "how": "% of targets with positive EPA.",
-      "limits": "Captures consistency."
+      "what": "Percentage of targets that produced a successful play by EPA standards.",
+      "how": "Mean of nflverse binary success flag across this player's targets, from PBP.",
+      "limits": "Binary cutoff hides near-misses and runaway successes."
     },
-    "targets_per_snap_z": {
-      "what": "How often the offense looks his way",
-      "how": "Targets / offensive snaps.",
-      "limits": "Usage metric \u2014 reflects role."
+    "first_down_rate_z": {
+      "what": "Percentage of targets that gained a first down.",
+      "how": "receiving_first_downs / targets, both from player_stats.",
+      "limits": "Depends on usage patterns (slot on 3rd-and-short inflates this)."
+    },
+    "yards_per_target_z": {
+      "what": "Average yards per target (not per reception).",
+      "how": "receiving_yards / targets.",
+      "limits": "Penalizes drops as zeros. Rewards big plays disproportionately."
     },
     "yards_per_snap_z": {
-      "what": "Receiving production per snap on the field",
-      "how": "Rec yards / offensive snaps.",
-      "limits": "Combines volume and efficiency."
+      "what": "Receiving yards per offensive snap on the field.",
+      "how": "receiving_yards / off_snaps.",
+      "limits": "Best available efficiency-of-role metric from free data."
+    },
+    "targets_per_snap_z": {
+      "what": "How often the QB looks your way per snap.",
+      "how": "targets / off_snaps.",
+      "limits": "Measures role, not skill."
     },
     "yac_per_reception_z": {
-      "what": "Yards after catch per reception",
-      "how": "NGS tracked YAC / receptions.",
-      "limits": "Scheme and throw location matter."
+      "what": "Average yards gained after the catch, per reception.",
+      "how": "receiving_yards_after_catch / receptions.",
+      "limits": "Credit shared between receiver, scheme, and blockers."
     },
-    "avg_separation_z": {
-      "what": "Average separation from defender at catch point (NGS)",
-      "how": "NFL Next Gen Stats tracking data.",
-      "limits": "Route type affects separation. Crossing routes > go routes."
+    "epa_per_target_z": {
+      "what": "Expected Points Added per target.",
+      "how": "Mean of nflverse EPA on this player's targets, from PBP.",
+      "limits": "Depends on trusting the EPA model."
+    },
+    "avg_cpoe_z": {
+      "what": "Completion Percentage Over Expected.",
+      "how": "Actual completion - model-expected completion, averaged across targets.",
+      "limits": "A model decides what 'expected' means."
     },
     "yac_above_exp_z": {
-      "what": "YAC above expected \u2014 how much extra a receiver creates after the catch",
-      "how": "Actual YAC minus expected YAC from NGS model.",
-      "limits": "Model may not capture all scheme effects."
+      "what": "YAC vs. league-average receiver in the same situations.",
+      "how": "NFL Next Gen Stats: actual YAC - expected YAC from tracking data.",
+      "limits": "Requires NGS tracking data. Small samples may be unstable."
+    },
+    "avg_separation_z": {
+      "what": "Average yards of separation from nearest defender at catch point.",
+      "how": "NFL Next Gen Stats tracking data, season average.",
+      "limits": "Depth-blind \u2014 doesn't distinguish route-running from scheme."
     }
-  }
+  },
+  "invert_stats": []
 }
