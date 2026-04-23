@@ -1,14 +1,14 @@
 """
-RB position config — STUB.
+RB position config.
 
-Translated from tools/rb_data_pull.py structure. The aggregation
-functions are here but need testing before uncommenting in the registry.
+Population: RBs with >= 100 total offensive snaps for the season,
+min 6 games. One row per (player, team) stint.
 
-To finish:
-1. Run: python tools/data_pull.py --position rb --seasons 2024 --verbose
-2. Compare output columns to existing data/league_rb_all_seasons.parquet
-3. Fix any column mismatches
-4. Uncomment in positions/__init__.py
+Counting stats (carries, rushing/receiving yards, TDs, etc.) come from
+nflverse pre-aggregated player_stats — handles trades and lateral-TD
+attribution correctly. PBP is used only for advanced/situational stats
+that nflverse doesn't pre-compute (success_rate, EPA per rush, explosive
+runs, red-zone usage, short-yardage conversions).
 """
 from __future__ import annotations
 
@@ -18,13 +18,15 @@ import pandas as pd
 from ..base import PositionConfig
 
 
-# ── PBP aggregation: rushing ─────────────────────────────────────────────────
+# ── PBP aggregation: rushing (advanced/situational only) ─────────────────────
 
 
-def agg_rusher(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate per-player rushing stats from run plays.
+def agg_rusher_advanced(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.DataFrame:
+    """Per-(player, team) advanced rushing metrics from PBP.
 
-    Matches rb_data_pull.py:135-175.
+    Counting stats (carries, rush_yards, rush_tds) come from player_stats.
+    Here we compute: epa_per_rush, rush_success_rate, explosive run counts,
+    and red-zone / goal-line / short-yardage situational stats.
     """
     rush_plays = pbp[
         (pbp["play_type"] == "run") & (pbp["rusher_player_id"].notna())
@@ -33,7 +35,6 @@ def agg_rusher(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.DataFrame:
     if rush_plays.empty:
         return pd.DataFrame()
 
-    # Explosive + situational flags
     rush_plays["is_explosive_10"] = (rush_plays["yards_gained"] >= 10).astype(int)
     rush_plays["is_explosive_15"] = (rush_plays["yards_gained"] >= 15).astype(int)
     if "yardline_100" in rush_plays.columns:
@@ -43,7 +44,7 @@ def agg_rusher(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.DataFrame:
         rush_plays["is_gl"] = 0
         rush_plays["is_rz"] = 0
 
-    if "ydstogo" in rush_plays.columns:
+    if "ydstogo" in rush_plays.columns and "down" in rush_plays.columns:
         rush_plays["is_sy"] = (
             (rush_plays["ydstogo"] <= 2) & (rush_plays["down"].isin([3, 4]))
         ).astype(int)
@@ -60,48 +61,36 @@ def agg_rusher(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.DataFrame:
     ).astype(int)
 
     def _agg(group):
-        return pd.Series(
-            {
-                "pbp_carries": len(group),
-                "rush_yards": group["yards_gained"].fillna(0).sum(),
-                "rush_tds": (
-                    group["rush_touchdown"].fillna(0).sum()
-                    if "rush_touchdown" in group.columns
-                    else 0
-                ),
-                "rush_first_downs": (
-                    group["first_down"].fillna(0).sum()
-                    if "first_down" in group.columns
-                    else 0
-                ),
-                "epa_per_rush": group["epa"].mean(),
-                "rush_success_rate": group["success"].mean(),
-                "explosive_10_count": group["is_explosive_10"].sum(),
-                "explosive_15_count": group["is_explosive_15"].sum(),
-                "rz_carries": group["is_rz"].sum(),
-                "gl_attempts": group["is_gl"].sum(),
-                "gl_tds": group["is_gl_td"].sum(),
-                "sy_attempts": group["is_sy"].sum(),
-                "sy_conversions": group["is_sy_converted"].sum(),
-            }
-        )
+        return pd.Series({
+            "pbp_carries": len(group),
+            "epa_per_rush": group["epa"].mean(),
+            "rush_success_rate": group["success"].mean(),
+            "explosive_10_count": group["is_explosive_10"].sum(),
+            "explosive_15_count": group["is_explosive_15"].sum(),
+            "rz_carries": group["is_rz"].sum(),
+            "gl_attempts": group["is_gl"].sum(),
+            "gl_tds": group["is_gl_td"].sum(),
+            "sy_attempts": group["is_sy"].sum(),
+            "sy_conversions": group["is_sy_converted"].sum(),
+        })
 
     stats = (
-        rush_plays.groupby("rusher_player_id")
+        rush_plays.groupby(["rusher_player_id", "posteam"])
         .apply(_agg, include_groups=False)
         .reset_index()
-        .rename(columns={"rusher_player_id": "gsis_id"})
+        .rename(columns={"rusher_player_id": "gsis_id", "posteam": "team"})
     )
     return stats
 
 
-# ── PBP aggregation: RB receiving ───────────────────────────────────────────
+# ── PBP aggregation: RB receiving (advanced only) ───────────────────────────
 
 
-def agg_rb_receiver(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate per-player receiving stats for RBs.
+def agg_rb_receiver_advanced(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.DataFrame:
+    """Per-(player, team) advanced receiving metrics for RBs.
 
-    Matches rb_data_pull.py:188-212.
+    Counting stats come from player_stats. Here: rec_epa_per_target,
+    rec_success_rate.
     """
     passes = pbp[
         (pbp["play_type"] == "pass") & (pbp["receiver_player_id"].notna())
@@ -111,27 +100,16 @@ def agg_rb_receiver(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.DataFrame
         return pd.DataFrame()
 
     def _agg(group):
-        return pd.Series(
-            {
-                "targets": len(group),
-                "receptions": group["complete_pass"].sum(),
-                "rec_yards": group["receiving_yards"].fillna(0).sum(),
-                "rec_tds": (
-                    group["pass_touchdown"].fillna(0).sum()
-                    if "pass_touchdown" in group.columns
-                    else 0
-                ),
-                "rec_epa_per_target": group["epa"].mean(),
-                "rec_success_rate": group["success"].mean(),
-                "yac": group["yards_after_catch"].fillna(0).sum(),
-            }
-        )
+        return pd.Series({
+            "rec_epa_per_target": group["epa"].mean(),
+            "rec_success_rate": group["success"].mean(),
+        })
 
     stats = (
-        passes.groupby("receiver_player_id")
+        passes.groupby(["receiver_player_id", "posteam"])
         .apply(_agg, include_groups=False)
         .reset_index()
-        .rename(columns={"receiver_player_id": "gsis_id"})
+        .rename(columns={"receiver_player_id": "gsis_id", "posteam": "team"})
     )
     return stats
 
@@ -140,16 +118,12 @@ def agg_rb_receiver(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.DataFrame
 
 
 def compute_rb_derived(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute derived rate stats for RB.
-
-    Matches rb_data_pull.py:273-302.
-    """
+    """Compute derived rate stats for RB from counting stats + PBP situational counts."""
     safe = lambda col: df[col].replace(0, np.nan) if col in df.columns else np.nan
-
-    df["carries"] = df.get("pbp_carries", 0)
 
     df["yards_per_carry"] = df.get("rush_yards", 0) / safe("carries")
     df["carries_per_game"] = df.get("carries", 0) / safe("games_played")
+    # 65 = approximate offensive snaps per game (a rough but stable scale factor)
     df["snap_share"] = df.get("off_snaps", 0) / (
         df.get("games_played", 1) * 65
     ).replace(0, np.nan)
@@ -157,13 +131,12 @@ def compute_rb_derived(df: pd.DataFrame) -> pd.DataFrame:
         df.get("carries", pd.Series(0)).fillna(0)
         + df.get("receptions", pd.Series(0)).fillna(0)
     ) / safe("games_played")
-    df["targets_per_game"] = df.get("targets", pd.Series(0)).fillna(0) / safe(
-        "games_played"
-    )
+    df["targets_per_game"] = df.get("targets", pd.Series(0)).fillna(0) / safe("games_played")
 
+    # Explosive / situational rates use PBP per-stint counts (from agg_rusher_advanced)
+    # divided by counting carries from player_stats.
     df["explosive_run_rate"] = df.get("explosive_10_count", 0) / safe("carries")
     df["explosive_15_rate"] = df.get("explosive_15_count", 0) / safe("carries")
-
     df["rz_carry_share"] = df.get("rz_carries", 0) / safe("carries")
     df["goal_line_td_rate"] = df.get("gl_tds", 0) / safe("gl_attempts")
     df["short_yardage_conv_rate"] = df.get("sy_conversions", 0) / safe("sy_attempts")
@@ -171,21 +144,18 @@ def compute_rb_derived(df: pd.DataFrame) -> pd.DataFrame:
     df["rec_yards_per_target"] = df.get("rec_yards", 0) / safe("targets")
     df["yac_per_reception"] = df.get("yac", 0) / safe("receptions")
 
-    # PFR-derived rates (if PFR data was merged)
+    # PFR-derived rates (per-(player, season) from PFR; same value applied to
+    # both stints for traded players).
     if "yards_before_contact_total" in df.columns:
         pfr_carries = df.get("pfr_carries", df.get("carries", 0)).replace(0, np.nan)
-        df["yards_before_contact_per_att"] = (
-            df["yards_before_contact_total"] / pfr_carries
-        )
-        df["yards_after_contact_per_att"] = (
-            df["yards_after_contact_total"] / pfr_carries
-        )
+        df["yards_before_contact_per_att"] = df["yards_before_contact_total"] / pfr_carries
+        df["yards_after_contact_per_att"] = df["yards_after_contact_total"] / pfr_carries
         df["broken_tackles_per_att"] = df["broken_tackles_total"] / pfr_carries
 
     return df
 
 
-# ── Config ───────────────────────────────────────────────────────────────────
+# ── Stats to z-score ─────────────────────────────────────────────────────────
 
 STATS_TO_ZSCORE = [
     # Tier 1 — raw counts
@@ -195,7 +165,7 @@ STATS_TO_ZSCORE = [
     "receptions",
     "rec_yards",
     "rec_tds",
-    # Tier 2 — rates
+    # Tier 2 — rates and situational
     "yards_per_carry",
     "rush_success_rate",
     "carries_per_game",
@@ -218,7 +188,10 @@ STATS_TO_ZSCORE = [
     "ryoe_per_att",
 ]
 
+# ── Output columns ───────────────────────────────────────────────────────────
+
 OUTPUT_COLUMNS = [
+    # Identity
     "player_id",
     "player_display_name",
     "position",
@@ -226,16 +199,21 @@ OUTPUT_COLUMNS = [
     "season_year",
     "games",
     "off_snaps",
+    "first_week",
+    "last_week",
+    # Raw counts (from player_stats)
     "carries",
-    "pbp_carries",
     "rush_yards",
     "rush_tds",
     "rush_first_downs",
+    "rush_2pt",
     "receptions",
     "targets",
     "rec_yards",
     "rec_tds",
+    "rec_first_downs",
     "yac",
+    # Derived rates
     "yards_per_carry",
     "rush_success_rate",
     "carries_per_game",
@@ -249,6 +227,7 @@ OUTPUT_COLUMNS = [
     "short_yardage_conv_rate",
     "rec_yards_per_target",
     "yac_per_reception",
+    # PBP situational counts (raw)
     "rz_carries",
     "gl_attempts",
     "gl_tds",
@@ -256,12 +235,15 @@ OUTPUT_COLUMNS = [
     "sy_conversions",
     "explosive_10_count",
     "explosive_15_count",
+    # PFR (per-player-season; same on both stints if traded)
     "broken_tackles_per_att",
     "yards_before_contact_per_att",
     "yards_after_contact_per_att",
+    # PBP advanced
     "epa_per_rush",
     "rec_epa_per_target",
     "rec_success_rate",
+    # NGS rushing
     "ryoe_per_att",
     "avg_time_to_los",
     "efficiency",
@@ -335,11 +317,11 @@ STAT_LABELS = {
     "snap_share_z": "Snap share",
     "touches_per_game_z": "Touches per game",
     "targets_per_game_z": "Targets per game",
-    "explosive_run_rate_z": "Explosive run rate (10+)",
+    "explosive_run_rate_z": "Explosive run rate (10+ yd)",
     "explosive_15_rate_z": "15+ yard run rate",
     "rz_carry_share_z": "Red zone carry share",
     "goal_line_td_rate_z": "Goal line TD rate",
-    "short_yardage_conv_rate_z": "Short yardage conversion rate",
+    "short_yardage_conv_rate_z": "Short-yardage conversion rate",
     "rec_yards_per_target_z": "Receiving yards per target",
     "yac_per_reception_z": "YAC per reception",
     "broken_tackles_per_att_z": "Broken tackles per attempt",
@@ -350,20 +332,166 @@ STAT_LABELS = {
     "ryoe_per_att_z": "Rush yards over expected per attempt",
 }
 
-# Methodology omitted for stub — copy from rb_data_pull.py when finishing.
-STAT_METHODOLOGY = {}
+STAT_METHODOLOGY = {
+    "rush_yards_z": {
+        "what": "Total raw rushing yards (full season, REG only).",
+        "how": "From nflverse load_player_stats(summary_level='week') summed per (player, team).",
+        "limits": "Volume stat — usage-driven.",
+    },
+    "rush_tds_z": {
+        "what": "Total raw rushing touchdowns.",
+        "how": "From nflverse load_player_stats — correctly attributed even on lateral plays.",
+        "limits": "Small integer samples are noisy.",
+    },
+    "carries_z": {
+        "what": "Total raw rushing attempts.",
+        "how": "From nflverse load_player_stats per (player, team) stint.",
+        "limits": "Pure opportunity — not a skill measure.",
+    },
+    "receptions_z": {
+        "what": "Total raw receptions.",
+        "how": "From nflverse load_player_stats per stint.",
+        "limits": "Volume stat.",
+    },
+    "rec_yards_z": {
+        "what": "Total raw receiving yards.",
+        "how": "From nflverse load_player_stats per stint.",
+        "limits": "Volume stat. Pass-catching role drives this.",
+    },
+    "rec_tds_z": {
+        "what": "Total raw receiving touchdowns.",
+        "how": "From nflverse load_player_stats per stint.",
+        "limits": "Small integer samples are noisy.",
+    },
+    "yards_per_carry_z": {
+        "what": "Average yards per rushing attempt.",
+        "how": "rush_yards / carries.",
+        "limits": "Inflated by long runs; one or two big gains can spike a low-volume back.",
+    },
+    "rush_success_rate_z": {
+        "what": "Percentage of rushes that produced a successful play by EPA standards.",
+        "how": "Mean of nflverse binary success flag across this player's carries (per stint).",
+        "limits": "Binary cutoff; doesn't differentiate near-misses from runaway successes.",
+    },
+    "carries_per_game_z": {
+        "what": "Carries per game played.",
+        "how": "carries / games_played.",
+        "limits": "Pure usage — not skill.",
+    },
+    "snap_share_z": {
+        "what": "Fraction of estimated team offensive snaps the player was on the field for.",
+        "how": "off_snaps / (games_played * 65). 65 is an approximate league-average snap count per offensive game.",
+        "limits": "Uses a constant denominator; teams with low- or high-snap offenses are normalized away.",
+    },
+    "touches_per_game_z": {
+        "what": "Combined carries + receptions per game.",
+        "how": "(carries + receptions) / games_played.",
+        "limits": "Volume / role indicator.",
+    },
+    "targets_per_game_z": {
+        "what": "Pass targets per game.",
+        "how": "targets / games_played.",
+        "limits": "Role-driven; pass-catching backs vs. early-down only.",
+    },
+    "explosive_run_rate_z": {
+        "what": "Percentage of carries gaining 10+ yards.",
+        "how": "PBP plays gaining ≥10 yards / total carries.",
+        "limits": "Often scheme-aided; low-volume backs have noisy rates.",
+    },
+    "explosive_15_rate_z": {
+        "what": "Percentage of carries gaining 15+ yards.",
+        "how": "Same as above with a 15-yard cutoff.",
+        "limits": "Same caveats; harder threshold = noisier.",
+    },
+    "rz_carry_share_z": {
+        "what": "Share of the player's carries that came inside the opponent's 20.",
+        "how": "rz_carries / carries.",
+        "limits": "Usage signal: trust in scoring position.",
+    },
+    "goal_line_td_rate_z": {
+        "what": "TD rate on carries inside the 5.",
+        "how": "gl_tds / gl_attempts.",
+        "limits": "Tiny samples — extreme values for backs with few goal-line carries.",
+    },
+    "short_yardage_conv_rate_z": {
+        "what": "Conversion rate on 3rd/4th-and-2-or-shorter carries.",
+        "how": "sy_conversions / sy_attempts.",
+        "limits": "Small samples; counted as a first down only when the run gained one.",
+    },
+    "rec_yards_per_target_z": {
+        "what": "Receiving yards per target.",
+        "how": "rec_yards / targets.",
+        "limits": "Penalizes drops as zeros.",
+    },
+    "yac_per_reception_z": {
+        "what": "Average yards after the catch per reception.",
+        "how": "yac / receptions.",
+        "limits": "Credit shared with scheme and blockers.",
+    },
+    "broken_tackles_per_att_z": {
+        "what": "Broken tackles per rushing attempt.",
+        "how": "PFR data: broken tackles total / PFR carries.",
+        "limits": "Subjective tracking by PFR; methodology can drift.",
+    },
+    "yards_before_contact_per_att_z": {
+        "what": "Yards gained before being contacted, per attempt.",
+        "how": "PFR data: yards before contact / PFR carries.",
+        "limits": "More about offensive line + scheme than the runner.",
+    },
+    "yards_after_contact_per_att_z": {
+        "what": "Yards gained after first contact, per attempt.",
+        "how": "PFR data: yards after contact / PFR carries.",
+        "limits": "Best single-stat playmaker measure for RBs.",
+    },
+    "epa_per_rush_z": {
+        "what": "Expected Points Added per rush.",
+        "how": "Mean of nflverse EPA on this player's carries (per stint).",
+        "limits": "Depends on trusting the EPA model.",
+    },
+    "rec_epa_per_target_z": {
+        "what": "Expected Points Added per target on receiving plays.",
+        "how": "Mean of nflverse EPA on the player's targets (per stint).",
+        "limits": "Same caveats as EPA generally.",
+    },
+    "ryoe_per_att_z": {
+        "what": "Rush Yards Over Expected per attempt.",
+        "how": "NFL Next Gen Stats: actual rush yards − model-expected, per attempt.",
+        "limits": "Requires NGS tracking data; older seasons missing or partial.",
+    },
+}
+
+
+# ── The config ───────────────────────────────────────────────────────────────
 
 RB_CONFIG = PositionConfig(
     key="rb",
     output_filenames=["league_rb_all_seasons.parquet"],
     metadata_filename="rb_stat_metadata.json",
     snap_positions=["RB"],
-    top_n={"RB": 32},
+    snap_floor={"RB": 100},  # Decision 1: 100+ snap floor
     min_games=6,
-    pbp_play_types=["run", "pass"],  # RBs have both rushing and receiving
+    pbp_play_types=["run", "pass"],
+    pbp_season_types=["REG"],  # Bug 3 fix: regular season only
+    use_player_stats=True,  # Decision 3: hybrid data source
+    player_stats_col_map={
+        "carries": "carries",
+        "rushing_yards": "rush_yards",
+        "rushing_tds": "rush_tds",
+        "rushing_first_downs": "rush_first_downs",
+        "rushing_2pt_conversions": "rush_2pt",
+        "targets": "targets",
+        "receptions": "receptions",
+        "receiving_yards": "rec_yards",
+        "receiving_tds": "rec_tds",
+        "receiving_first_downs": "rec_first_downs",
+        "receiving_air_yards": "air_yards",
+        "receiving_yards_after_catch": "yac",
+        "first_week": "first_week",
+        "last_week": "last_week",
+    },
     ngs_stat_type="rushing",
     pfr_stat_type="rush",
-    aggregate_stats=[agg_rusher, agg_rb_receiver],
+    aggregate_stats=[agg_rusher_advanced, agg_rb_receiver_advanced],
     ngs_col_map={
         "rush_yards_over_expected_per_att": "ryoe_per_att",
         "avg_time_to_los": "avg_time_to_los",
@@ -378,7 +506,8 @@ RB_CONFIG = PositionConfig(
     },
     compute_derived=compute_rb_derived,
     stats_to_zscore=STATS_TO_ZSCORE,
-    invert_stats=set(),
+    invert_stats=set(),  # All higher-is-better
+    zscore_groups=None,  # Single-position pool — no per-group split needed
     output_columns=OUTPUT_COLUMNS,
     stat_tiers=STAT_TIERS,
     stat_labels=STAT_LABELS,

@@ -223,17 +223,33 @@ def run_season(
                 else "pfr_id" if "pfr_id" in pfr.columns else None
             )
             if pfr_id_col:
+                # Drop PFR's combined "2TM" / "3TM" rows for traded players —
+                # they're a per-season aggregate that would multiply our
+                # per-stint population on the merge.
+                if "tm" in pfr.columns:
+                    pfr = pfr[~pfr["tm"].astype(str).str.contains("TM", na=False)].copy()
                 available = {
                     k: v for k, v in config.pfr_col_map.items() if k in pfr.columns
                 }
                 cols_to_select = [pfr_id_col] + list(available.keys())
-                cols_to_select = [c for c in cols_to_select if c in pfr.columns]
-                pfr_slim = pfr[cols_to_select].rename(
-                    columns={pfr_id_col: "pfr_player_id", **available}
-                )
-                population = population.merge(
-                    pfr_slim, on="pfr_player_id", how="left"
-                )
+                # If PFR has a per-team column, merge on (pfr_player_id, team)
+                # to keep each stint's PFR numbers separate. Otherwise fall
+                # back to player-only merge.
+                if "tm" in pfr.columns:
+                    cols_to_select = [pfr_id_col, "tm"] + list(available.keys())
+                    pfr_slim = pfr[cols_to_select].rename(
+                        columns={pfr_id_col: "pfr_player_id", "tm": "team", **available}
+                    )
+                    population = population.merge(
+                        pfr_slim, on=["pfr_player_id", "team"], how="left"
+                    )
+                else:
+                    pfr_slim = pfr[cols_to_select].rename(
+                        columns={pfr_id_col: "pfr_player_id", **available}
+                    )
+                    population = population.merge(
+                        pfr_slim, on="pfr_player_id", how="left"
+                    )
                 if verbose:
                     print(f"  Merged PFR columns: {list(available.values())}")
         else:
