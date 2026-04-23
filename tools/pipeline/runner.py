@@ -96,6 +96,11 @@ def run_season(
             }
             sum_cols = [c for c in config.player_stats_col_map if c in counting_in_map and c in ps_week.columns]
             agg_dict = {c: (c, "sum") for c in sum_cols}
+            # Always track first/last week per stint for chronological ordering
+            # (used by the career arc viz to draw trades in the correct order)
+            if "week" in ps_week.columns:
+                agg_dict["first_week"] = ("week", "min")
+                agg_dict["last_week"] = ("week", "max")
             ps_stint = ps_week.groupby(["player_id", "team"], as_index=False).agg(**agg_dict) if agg_dict else ps_week.groupby(["player_id", "team"], as_index=False).first()
 
             # Per-stint team-level totals (for rate stats like target_share).

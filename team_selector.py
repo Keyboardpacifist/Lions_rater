@@ -49,6 +49,15 @@ TEAM_ALIASES = {
     "WSH": "WAS",
 }
 
+# Display overrides — nflverse uses 2-letter codes that we want to render
+# differently in the UI. Keys are nflverse codes, values are what the user sees.
+TEAM_ABBR_DISPLAY = {
+    "LV": "LVR",
+    "LA": "LAR",
+}
+# Reverse map for parsing user-selected display labels back to internal codes.
+TEAM_ABBR_INTERNAL = {v: k for k, v in TEAM_ABBR_DISPLAY.items()}
+
 AVAILABLE_SEASONS = list(range(2025, 2015, -1))
 
 
@@ -57,6 +66,20 @@ def normalize_team(abbr):
     if abbr in TEAM_ALIASES:
         return TEAM_ALIASES[abbr]
     return abbr
+
+
+def display_abbr(abbr):
+    """Convert an internal team code (e.g. 'LV') to its UI form (e.g. 'LVR')."""
+    if abbr is None:
+        return abbr
+    return TEAM_ABBR_DISPLAY.get(abbr, abbr)
+
+
+def internal_abbr(abbr):
+    """Convert a UI team code back to the internal nflverse code."""
+    if abbr is None:
+        return abbr
+    return TEAM_ABBR_INTERNAL.get(abbr, abbr)
 
 
 def get_team_and_season():
@@ -69,7 +92,7 @@ def get_team_and_season():
         st.session_state.selected_season = 2025
 
     team_options = sorted(NFL_TEAMS.keys())
-    team_labels = [f"{abbr} — {NFL_TEAMS[abbr]}" for abbr in team_options]
+    team_labels = [f"{display_abbr(abbr)} — {NFL_TEAMS[abbr]}" for abbr in team_options]
     current_idx = team_options.index(st.session_state.selected_team) if st.session_state.selected_team in team_options else 0
 
     # Title + dropdowns on one row
@@ -93,7 +116,7 @@ def get_team_and_season():
             label_visibility="collapsed",
         )
 
-    selected_team = selected_label.split(" — ")[0]
+    selected_team = internal_abbr(selected_label.split(" — ")[0])
     st.session_state.selected_team = selected_team
     st.session_state.selected_season = selected_season
 

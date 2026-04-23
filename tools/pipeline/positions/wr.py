@@ -115,6 +115,8 @@ OUTPUT_COLUMNS = [
     "season_year",
     "games",
     "off_snaps",
+    "first_week",
+    "last_week",
     # Raw counts (from player_stats)
     "targets",
     "receptions",
@@ -338,6 +340,8 @@ WR_CONFIG = PositionConfig(
         "air_yards_share": "air_yards_share",
         "racr": "racr",
         "wopr": "wopr",
+        "first_week": "first_week",
+        "last_week": "last_week",
     },
     ngs_stat_type="receiving",
     pfr_stat_type=None,
