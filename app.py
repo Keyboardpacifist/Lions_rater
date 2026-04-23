@@ -26,33 +26,315 @@ st.markdown("---")
 # NFL MODE
 # ══════════════════════════════════════════════════════════════
 if mode == "NFL":
-    from team_selector import get_team_and_season, NFL_TEAMS
+    from team_selector import (
+        NFL_TEAMS,
+        LEAGUE_WIDE_KEY,
+        LEAGUE_WIDE_LABEL,
+        display_abbr,
+        internal_abbr,
+    )
 
     if "selected_team" not in st.session_state:
-        st.session_state.selected_team = "DET"
+        st.session_state.selected_team = LEAGUE_WIDE_KEY
     if "selected_season" not in st.session_state:
         st.session_state.selected_season = 2025
 
-    team_options = sorted(NFL_TEAMS.keys())
-    team_labels = [f"{abbr} — {NFL_TEAMS[abbr]}" for abbr in team_options]
+    # League-wide first, then sorted real teams (matches the per-page selector).
+    real_teams = sorted(k for k in NFL_TEAMS.keys() if k != LEAGUE_WIDE_KEY)
+    team_options = [LEAGUE_WIDE_KEY] + real_teams
+    team_labels = [LEAGUE_WIDE_LABEL] + [
+        f"{display_abbr(abbr)} — {NFL_TEAMS[abbr]}" for abbr in real_teams
+    ]
     current_idx = team_options.index(st.session_state.selected_team) if st.session_state.selected_team in team_options else 0
     AVAILABLE_SEASONS = list(range(2025, 2015, -1))
 
     col_team, col_season, col_spacer = st.columns([2, 1, 3])
     with col_team:
         selected_label = st.selectbox("Team", options=team_labels, index=current_idx,
-                                       key="landing_team", label_visibility="collapsed")
+                                       key="landing_team_v2", label_visibility="collapsed")
     with col_season:
         selected_season = st.selectbox("Season", options=AVAILABLE_SEASONS,
                                         index=0, key="landing_season", label_visibility="collapsed")
 
-    selected_team = selected_label.split(" — ")[0]
+    if selected_label == LEAGUE_WIDE_LABEL:
+        selected_team = LEAGUE_WIDE_KEY
+    else:
+        selected_team = internal_abbr(selected_label.split(" — ")[0])
     st.session_state.selected_team = selected_team
     st.session_state.selected_season = selected_season
     team_name = NFL_TEAMS.get(selected_team, selected_team)
 
-    st.markdown(f"Pick a position from the sidebar to see how the **{selected_season} {team_name}** "
-                f"stack up against every player in the league.")
+    # ── Position + metric pickers (inline leaderboard preview) ─────
+    import polars as pl
+    from team_selector import filter_by_team_and_season
+    from lib_shared import metric_picker
+
+    NFL_POSITION_CONFIGS = {
+        "QB": {
+            "file": "league_qb_all_seasons.parquet",
+            "filter": None,
+            "snap_col": "off_snaps",
+            "min_snaps": 100,
+            "noun": "quarterbacks",
+            "cols": [("Player", "player_display_name"),
+                     ("Team", "recent_team"),
+                     ("Att", "attempts"),
+                     ("Yds", "passing_yards"),
+                     ("TDs", "passing_tds"),
+                     ("INT", "passing_interceptions"),
+                     ("EPA/play", "pass_epa_per_play"),
+                     ("CPOE", "passing_cpoe"),
+                     ("Success%", "pass_success_rate")],
+            "metrics": {
+                "Passing yards": ("passing_yards", False),
+                "Passing TDs": ("passing_tds", False),
+                "EPA per play": ("pass_epa_per_play", False),
+                "CPOE": ("passing_cpoe", False),
+                "Pass success rate": ("pass_success_rate", False),
+                "Yards per attempt": ("yards_per_attempt", False),
+                "Completion %": ("completion_pct", False),
+                "INT rate (lower better)": ("int_rate", True),
+                "Sack rate (lower better)": ("sack_rate", True),
+                "Turnover rate (lower better)": ("turnover_rate", True),
+            },
+        },
+        "WR": {
+            "file": "league_wr_all_seasons.parquet",
+            "filter": ("position", "WR"),
+            "snap_col": "off_snaps",
+            "min_snaps": 100,
+            "noun": "wide receivers",
+            "cols": [("Player", "player_display_name"),
+                     ("Team", "recent_team"),
+                     ("Snaps", "off_snaps"),
+                     ("Rec", "receptions"),
+                     ("Yds", "rec_yards"),
+                     ("TDs", "rec_tds"),
+                     ("Tgt%", "target_share"),
+                     ("EPA/tgt", "epa_per_target"),
+                     ("YAC/exp", "yac_above_exp")],
+            "metrics": {
+                "Receiving yards": ("rec_yards", False),
+                "Receptions": ("receptions", False),
+                "TDs": ("rec_tds", False),
+                "Target share": ("target_share", False),
+                "EPA per target": ("epa_per_target", False),
+                "Yards per target": ("yards_per_target", False),
+                "YAC over expected": ("yac_above_exp", False),
+                "Catch rate": ("catch_rate", False),
+                "WOPR (opportunity)": ("wopr", False),
+                "Average separation (NGS)": ("avg_separation", False),
+            },
+        },
+        "TE": {
+            "file": "league_te_all_seasons.parquet",
+            "filter": ("position", "TE"),
+            "snap_col": "off_snaps",
+            "min_snaps": 100,
+            "noun": "tight ends",
+            "cols": [("Player", "player_display_name"),
+                     ("Team", "recent_team"),
+                     ("Snaps", "off_snaps"),
+                     ("Rec", "receptions"),
+                     ("Yds", "rec_yards"),
+                     ("TDs", "rec_tds"),
+                     ("Tgt%", "target_share"),
+                     ("EPA/tgt", "epa_per_target")],
+            "metrics": {
+                "Receiving yards": ("rec_yards", False),
+                "Receptions": ("receptions", False),
+                "TDs": ("rec_tds", False),
+                "Target share": ("target_share", False),
+                "EPA per target": ("epa_per_target", False),
+                "Yards per target": ("yards_per_target", False),
+                "YAC over expected": ("yac_above_exp", False),
+                "Catch rate": ("catch_rate", False),
+            },
+        },
+        "RB": {
+            "file": "league_rb_all_seasons.parquet",
+            "filter": None,
+            "snap_col": "off_snaps",
+            "min_snaps": 100,
+            "noun": "running backs",
+            "cols": [("Player", "player_display_name"),
+                     ("Team", "recent_team"),
+                     ("Att", "carries"),
+                     ("Yds", "rush_yards"),
+                     ("TDs", "rush_tds"),
+                     ("Rec", "receptions"),
+                     ("YPC", "yards_per_carry"),
+                     ("EPA/rush", "epa_per_rush"),
+                     ("YACO/att", "yards_after_contact_per_att")],
+            "metrics": {
+                "Rushing yards": ("rush_yards", False),
+                "Rushing TDs": ("rush_tds", False),
+                "Yards per carry": ("yards_per_carry", False),
+                "EPA per rush": ("epa_per_rush", False),
+                "YACO per attempt": ("yards_after_contact_per_att", False),
+                "Broken tackles per att": ("broken_tackles_per_att", False),
+                "RYOE per attempt (NGS)": ("ryoe_per_att", False),
+                "Snap share": ("snap_share", False),
+                "Touches per game": ("touches_per_game", False),
+            },
+        },
+        "DE": {
+            "file": "league_de_all_seasons.parquet",
+            "filter": None,
+            "snap_col": "def_snaps",
+            "min_snaps": 100,
+            "noun": "defensive ends",
+            "cols": [("Player", "player_name"),
+                     ("Team", "recent_team"),
+                     ("Snaps", "def_snaps"),
+                     ("Sacks", "def_sacks"),
+                     ("QB hits", "def_qb_hits"),
+                     ("TFL", "def_tackles_for_loss"),
+                     ("Pressures", "pfr_pressures"),
+                     ("Press rate", "pressure_rate")],
+            "metrics": {
+                "Sacks": ("def_sacks", False),
+                "QB hits": ("def_qb_hits", False),
+                "Tackles for loss": ("def_tackles_for_loss", False),
+                "Pressures (PFR)": ("pfr_pressures", False),
+                "Pressure rate": ("pressure_rate", False),
+                "Sacks per game": ("sacks_per_game", False),
+                "Forced fumbles per game": ("forced_fumbles_per_game", False),
+            },
+        },
+        "DT": {
+            "file": "league_dt_all_seasons.parquet",
+            "filter": None,
+            "snap_col": "def_snaps",
+            "min_snaps": 100,
+            "noun": "defensive tackles",
+            "cols": [("Player", "player_name"),
+                     ("Team", "recent_team"),
+                     ("Snaps", "def_snaps"),
+                     ("Sacks", "def_sacks"),
+                     ("TFL", "def_tackles_for_loss"),
+                     ("QB hits", "def_qb_hits"),
+                     ("Pressures", "pfr_pressures"),
+                     ("Press rate", "pressure_rate")],
+            "metrics": {
+                "Sacks": ("def_sacks", False),
+                "QB hits": ("def_qb_hits", False),
+                "Tackles for loss": ("def_tackles_for_loss", False),
+                "Pressures (PFR)": ("pfr_pressures", False),
+                "Pressure rate": ("pressure_rate", False),
+                "Sacks per game": ("sacks_per_game", False),
+            },
+        },
+        "LB": {
+            "file": "league_lb_all_seasons.parquet",
+            "filter": None,
+            "snap_col": "def_snaps",
+            "min_snaps": 100,
+            "noun": "linebackers",
+            "cols": [("Player", "player_name"),
+                     ("Team", "recent_team"),
+                     ("Snaps", "def_snaps"),
+                     ("Solo Tkl", "def_tackles_solo"),
+                     ("TFL", "def_tackles_for_loss"),
+                     ("Sacks", "def_sacks"),
+                     ("INT", "def_interceptions"),
+                     ("PD", "def_pass_defended"),
+                     ("Missed Tkl%", "pfr_missed_tackle_pct")],
+            "metrics": {
+                "Solo tackles": ("def_tackles_solo", False),
+                "Tackles for loss": ("def_tackles_for_loss", False),
+                "Sacks": ("def_sacks", False),
+                "Interceptions": ("def_interceptions", False),
+                "Passes defended": ("def_pass_defended", False),
+                "Tackles per snap": ("tackles_per_snap", False),
+                "Missed tackle % (lower better)": ("pfr_missed_tackle_pct", True),
+            },
+        },
+        "Punter": {
+            "file": "league_p_all_seasons.parquet",
+            "filter": None,
+            "snap_col": "off_snaps",
+            "min_snaps": 0,
+            "noun": "punters",
+            "cols": [("Player", "player_display_name"),
+                     ("Team", "recent_team"),
+                     ("Punts", "punts"),
+                     ("Gross avg", "avg_distance"),
+                     ("Net avg", "avg_net"),
+                     ("In-20%", "inside_20_rate"),
+                     ("TB%", "touchback_rate"),
+                     ("Pin%", "pin_rate")],
+            "metrics": {
+                "Net average": ("avg_net", False),
+                "Gross distance": ("avg_distance", False),
+                "Inside-20 rate": ("inside_20_rate", False),
+                "Pin rate": ("pin_rate", False),
+                "Touchback rate (lower better)": ("touchback_rate", True),
+                "EPA per punt": ("punt_epa", False),
+            },
+        },
+    }
+
+    if selected_team == LEAGUE_WIDE_KEY:
+        st.markdown(f"### {selected_season} league-wide leaderboards")
+        st.caption("Pick a position and a metric to see who's #1 in the NFL.")
+    else:
+        st.markdown(f"### {selected_season} {team_name}")
+        st.caption("Pick a position and a metric to see how the roster stacks up.")
+
+    col_pos, col_metric = st.columns([1, 2])
+    with col_pos:
+        selected_pos = st.selectbox("Position", list(NFL_POSITION_CONFIGS.keys()),
+                                     index=0, key="landing_position")
+    cfg = NFL_POSITION_CONFIGS[selected_pos]
+    with col_metric:
+        sort_label, sort_col, sort_asc = metric_picker(
+            cfg["metrics"], key=f"landing_metric_{selected_pos}", label="🔍 Sort leaderboard by"
+        )
+
+    DATA_DIR = Path(__file__).resolve().parent / "data"
+    data_path = DATA_DIR / cfg["file"]
+    if not data_path.exists():
+        st.warning(f"Data file missing: {cfg['file']}")
+    else:
+        ldf = pl.read_parquet(str(data_path)).to_pandas()
+        if cfg["filter"]:
+            fcol, fval = cfg["filter"]
+            ldf = ldf[ldf[fcol] == fval]
+        ldf = filter_by_team_and_season(ldf, selected_team, selected_season,
+                                          team_col="recent_team", season_col="season_year")
+        if cfg["snap_col"] in ldf.columns:
+            ldf = ldf[ldf[cfg["snap_col"]].fillna(0) >= cfg["min_snaps"]]
+
+        if len(ldf) == 0:
+            st.info(f"No {cfg['noun']} found for this team/season.")
+        else:
+            if sort_col in ldf.columns:
+                ldf = ldf.sort_values(sort_col, ascending=sort_asc, na_position="last")
+            ldf = ldf.head(25).reset_index(drop=True)
+            ldf.index = ldf.index + 1
+
+            def _fmt(col, val):
+                if pd.isna(val):
+                    return "—"
+                if "rate" in col or "share" in col or "_pct" in col or col == "pin_rate":
+                    return f"{val*100:.1f}%" if abs(val) < 2 else f"{val:.1f}%"
+                if col in ("epa_per_target", "pass_epa_per_play", "epa_per_rush", "punt_epa", "passing_cpoe", "yac_above_exp"):
+                    return f"{val:+.2f}"
+                if col in ("yards_per_carry", "yards_per_target", "avg_distance", "avg_net", "yards_after_contact_per_att"):
+                    return f"{val:.2f}"
+                if isinstance(val, float) and val == int(val):
+                    return f"{int(val)}"
+                if isinstance(val, float):
+                    return f"{val:.1f}"
+                return str(val)
+
+            display = pd.DataFrame({"#": ldf.index})
+            for label, col in cfg["cols"]:
+                if col in ldf.columns:
+                    display[label] = ldf[col].apply(lambda v, c=col: _fmt(c, v))
+            st.dataframe(display, use_container_width=True, hide_index=True)
+            st.caption(f"Showing top {len(ldf)} {cfg['noun']} sorted by **{sort_label}**. Click into the position page from the sidebar for the full feature set.")
     st.divider()
     st.markdown("### Pick a position")
     st.markdown("**Offense:** QB · WR · TE · RB · OL\n\n**Defense:** DE · DT · LB · CB · S\n\n"

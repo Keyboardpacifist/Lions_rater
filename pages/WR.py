@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS, display_abbr
 from career_arc import career_arc_section
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, metric_picker, score_players
 
 st.set_page_config(page_title="WR Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -323,7 +323,33 @@ if len(players) == 0: st.warning("No WRs match the current filter."); st.stop()
 players = score_players(players, effective_weights)
 total_weight = sum(effective_weights.values())
 if total_weight == 0: st.info("All sliders are at zero — slide at least one to the right.")
-players = players.sort_values("score", ascending=False).reset_index(drop=True)
+
+# Metric picker — let fans sort by any nerd metric instead of the composite
+WR_METRICS = {
+    "Receiving yards": ("rec_yards", False),
+    "Receptions": ("receptions", False),
+    "TDs": ("rec_tds", False),
+    "Targets": ("targets", False),
+    "Target share": ("target_share", False),
+    "EPA per target": ("epa_per_target", False),
+    "Yards per target": ("yards_per_target", False),
+    "Yards per snap": ("yards_per_snap", False),
+    "Catch rate": ("catch_rate", False),
+    "Success rate": ("success_rate", False),
+    "First-down rate": ("first_down_rate", False),
+    "YAC over expected": ("yac_above_exp", False),
+    "YAC per reception": ("yac_per_reception", False),
+    "WOPR (opportunity)": ("wopr", False),
+    "RACR (yds per air yd)": ("racr", False),
+    "Average separation (NGS)": ("avg_separation", False),
+    "CPOE (NGS)": ("avg_cpoe", False),
+}
+sort_label, sort_col, sort_ascending = metric_picker(WR_METRICS, key="wr_metric_picker")
+
+if sort_col in players.columns:
+    players = players.sort_values(sort_col, ascending=sort_ascending, na_position="last").reset_index(drop=True)
+else:
+    players = players.sort_values("score", ascending=False).reset_index(drop=True)
 players.index = players.index + 1
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)

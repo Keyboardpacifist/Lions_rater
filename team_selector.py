@@ -120,7 +120,7 @@ def get_team_and_season():
             "Team",
             options=team_labels,
             index=current_idx,
-            key="team_selector_widget",
+            key="team_selector_widget_v2",
             label_visibility="collapsed",
         )
     with col_season:
