@@ -368,6 +368,9 @@ else:
         return "⭐" * int(stars)
 
     # ── Cached data loaders ───────────────────────────────
+    ALL_SCHOOLS_LABEL = "🏫 All schools"
+    ALL_CONFERENCES_LABEL = "🏈 All conferences"
+
     @st.cache_data
     def get_school_list():
         schools = set()
@@ -379,6 +382,42 @@ else:
                 df = pd.read_parquet(path, columns=["team"])
                 schools.update(df["team"].dropna().unique())
         return sorted(schools)
+
+    @st.cache_data
+    def load_draft_class(year):
+        """Return a set of (last_name_lower, school_lower) tuples for the
+        given draft year, sourced from nflverse's combine invitation list
+        (the closest public proxy for "declared prospects in the class").
+        Returns an empty set if the data isn't available.
+        """
+        try:
+            import nflreadpy as nfl
+            cb = nfl.load_combine([year]).to_pandas()
+            out = set()
+            for _, row in cb.iterrows():
+                name = str(row.get("player_name", "") or "")
+                school = str(row.get("school", "") or "")
+                last = name.split()[-1].lower() if name else ""
+                out.add((last, school.lower()))
+                # Also include last-name-only fallback for fuzzy match
+                if last:
+                    out.add((last, ""))
+            return out
+        except Exception:
+            return set()
+
+    @st.cache_data
+    def get_conference_list():
+        confs = set()
+        for fname in ["college_qb_all_seasons.parquet", "college_wr_all_seasons.parquet",
+                      "college_te_all_seasons.parquet", "college_rb_all_seasons.parquet",
+                      "college_def_all_seasons.parquet"]:
+            path = COLLEGE_DATA_DIR / fname
+            if path.exists():
+                df = pd.read_parquet(path, columns=["conference"])
+                if "conference" in df.columns:
+                    confs.update(df["conference"].dropna().unique())
+        return sorted(confs)
 
     @st.cache_data
     def load_college_position(fname):
@@ -399,22 +438,106 @@ else:
     transfers_df = load_enrichment("college_transfers.parquet")
     combine_df = load_enrichment("nfl_combine.parquet")
 
-    # ── School + season selector ──────────────────────────
-    schools = get_school_list()
+    # ── School + Conference + Season selector ─────────────
+    schools = [ALL_SCHOOLS_LABEL] + get_school_list()
+    conferences = [ALL_CONFERENCES_LABEL] + get_conference_list()
     COLLEGE_SEASONS = list(range(2025, 2013, -1))
 
-    col_school, col_season, col_spacer = st.columns([2, 1, 3])
+    # Default school: All schools (was Michigan before).
+    if "college_school_v2" not in st.session_state:
+        st.session_state.college_school_v2 = ALL_SCHOOLS_LABEL
+
+    COLLEGE_POSITIONS_FOR_TOP = ["QB", "WR", "TE", "RB", "DE", "DT", "LB", "CB", "S"]
+
+    col_school, col_conf, col_season, col_position = st.columns([2, 2, 1, 1])
     with col_school:
         selected_school = st.selectbox("School", options=schools,
-                                        index=schools.index("Michigan") if "Michigan" in schools else 0,
-                                        key="college_school", label_visibility="collapsed")
+                                        index=schools.index(st.session_state.college_school_v2) if st.session_state.college_school_v2 in schools else 0,
+                                        key="college_school_v2", label_visibility="collapsed")
+    with col_conf:
+        selected_conf = st.selectbox("Conference", options=conferences,
+                                      index=0, key="college_conference",
+                                      label_visibility="collapsed")
     with col_season:
         selected_college_season = st.selectbox("Season", options=COLLEGE_SEASONS,
                                                index=0, key="college_season_landing",
                                                label_visibility="collapsed")
+    with col_position:
+        selected_position = st.selectbox("Position", options=COLLEGE_POSITIONS_FOR_TOP,
+                                          index=0, key="college_position_top",
+                                          label_visibility="collapsed")
 
-    st.markdown(f"### {selected_school} — {selected_college_season}")
-    st.caption(f"Every player z-scored against all FBS players at their position that season")
+    # Resolve filter modes:
+    #   - Specific school: school filter wins; conference is informational.
+    #   - All schools + specific conference: filter by conference.
+    #   - All schools + All conferences: show everyone (FBS-wide).
+    school_is_all = selected_school == ALL_SCHOOLS_LABEL
+    conf_is_all = selected_conf == ALL_CONFERENCES_LABEL
+
+    if not school_is_all:
+        header_label = f"{selected_school} — {selected_college_season}"
+    elif not conf_is_all:
+        header_label = f"{selected_conf} — {selected_college_season}"
+    else:
+        header_label = f"FBS-wide — {selected_college_season}"
+    st.markdown(f"### {header_label}")
+    st.caption(f"Every player z-scored against all FBS players at their position that season. Pick a metric per position to re-sort the leaderboard.")
+
+    # ── Volume threshold + 2026 prospects filter ──────────
+    # College doesn't track snap counts publicly, so volume is per-position:
+    # carries for RB, receptions for WR/TE, pass attempts for QB, games for DEF.
+    POS_VOLUME = {
+        "QB": ("pass_att",         "Min pass attempts",  100, 0, 700,  25),
+        "WR": ("receptions_total", "Min receptions",      15, 0, 150,  5),
+        "TE": ("receptions_total", "Min receptions",      10, 0, 100,  2),
+        "RB": ("carries_total",    "Min carries",         50, 0, 400,  10),
+        "DE": ("games",            "Min games played",     6, 1, 15,   1),
+        "DT": ("games",            "Min games played",     6, 1, 15,   1),
+        "LB": ("games",            "Min games played",     6, 1, 15,   1),
+        "CB": ("games",            "Min games played",     6, 1, 15,   1),
+        "S":  ("games",            "Min games played",     6, 1, 15,   1),
+    }
+    vol_col, vol_label, vol_default, vol_min, vol_max, vol_step = POS_VOLUME.get(
+        selected_position, ("games", "Min games played", 6, 1, 15, 1)
+    )
+
+    col_g, col_d1, col_d2 = st.columns([2, 2, 3])
+    with col_g:
+        min_volume = st.slider(
+            vol_label,
+            min_value=vol_min, max_value=vol_max, value=vol_default, step=vol_step,
+            key=f"college_min_volume_{selected_position}",
+            help="Filter out low-volume players (college's snap-equivalent — varies by position).",
+        )
+    with col_d1:
+        prospects_only = st.checkbox(
+            "🎯 2026 draft prospects only",
+            value=False,
+            key="college_2026_filter",
+            help="Two-layer filter: nflverse combine invites (~319 declared prospects) "
+                 "PLUS the heuristic of recruits from 2022-2024 who played in 2025. "
+                 "Combine invites are the most reliable signal; recruit-year heuristic "
+                 "catches smaller-school prospects who weren't invited.",
+        )
+    draft_class_set = load_draft_class(2026) if prospects_only else set()
+    if prospects_only and recruiting_df is not None and len(recruiting_df) > 0 and "recruit_year" in recruiting_df.columns:
+        # Heuristic pool: recruits from 2022-2024 (covers 4-year + redshirt 5th-years)
+        heuristic_recruits = recruiting_df[
+            recruiting_df["recruit_year"].between(2022, 2024)
+        ]
+        heuristic_set = set()
+        for _, row in heuristic_recruits.iterrows():
+            name = str(row.get("name", "") or "")
+            school = str(row.get("school", "") or "")
+            last = name.split()[-1].lower() if name else ""
+            if last:
+                heuristic_set.add((last, school.lower()))
+                heuristic_set.add((last, ""))
+        draft_class_set = draft_class_set | heuristic_set
+    if prospects_only:
+        with col_d2:
+            n_combine = len(load_draft_class(2026))
+            st.caption(f"📋 {n_combine} combine invites + recruits from 2022-2024 still playing.")
 
     # ── Position configs with bundles ─────────────────────
     POSITION_FILES = {
@@ -434,10 +557,43 @@ else:
                ["rush_yards_total_z", "rush_tds_total_z", "yards_per_carry_z", "total_yards_z", "receptions_total_z"],
                {"rush_yards_total_z": "Rush yds", "rush_tds_total_z": "Rush TDs",
                 "yards_per_carry_z": "Yds/carry", "total_yards_z": "Total yds", "receptions_total_z": "Receptions"}),
-        "DEF": ("college_def_all_seasons.parquet",
-                ["tackles_per_game_z", "sacks_per_game_z", "tfl_per_game_z", "pd_per_game_z", "int_per_game_z", "pressure_rate_z"],
-                {"tackles_per_game_z": "Tackles/gm", "sacks_per_game_z": "Sacks/gm", "tfl_per_game_z": "TFL/gm",
-                 "pd_per_game_z": "PD/gm", "int_per_game_z": "INT/gm", "pressure_rate_z": "Pressure rate"}),
+        "DE": ("college_def_all_seasons.parquet",
+                ["sacks_per_game_z", "tfl_per_game_z", "qb_hurries_per_game_z", "tackles_per_game_z", "pressure_rate_z"],
+                {"sacks_per_game_z": "Sacks/gm", "tfl_per_game_z": "TFL/gm",
+                 "qb_hurries_per_game_z": "QB hurries/gm", "tackles_per_game_z": "Tackles/gm",
+                 "pressure_rate_z": "Pressure rate"}),
+        "DT": ("college_def_all_seasons.parquet",
+                ["sacks_per_game_z", "tfl_per_game_z", "qb_hurries_per_game_z", "tackles_per_game_z", "pressure_rate_z"],
+                {"sacks_per_game_z": "Sacks/gm", "tfl_per_game_z": "TFL/gm",
+                 "qb_hurries_per_game_z": "QB hurries/gm", "tackles_per_game_z": "Tackles/gm",
+                 "pressure_rate_z": "Pressure rate"}),
+        "LB": ("college_def_all_seasons.parquet",
+                ["tackles_per_game_z", "solo_tackles_per_game_z", "tfl_per_game_z", "sacks_per_game_z",
+                 "pd_per_game_z", "int_per_game_z"],
+                {"tackles_per_game_z": "Tackles/gm", "solo_tackles_per_game_z": "Solo tkl/gm",
+                 "tfl_per_game_z": "TFL/gm", "sacks_per_game_z": "Sacks/gm",
+                 "pd_per_game_z": "PD/gm", "int_per_game_z": "INT/gm"}),
+        "CB": ("college_def_all_seasons.parquet",
+                ["pd_per_game_z", "int_per_game_z", "tackles_per_game_z",
+                 "solo_tackles_per_game_z", "tfl_per_game_z"],
+                {"pd_per_game_z": "PD/gm", "int_per_game_z": "INT/gm",
+                 "tackles_per_game_z": "Tackles/gm", "solo_tackles_per_game_z": "Solo tkl/gm",
+                 "tfl_per_game_z": "TFL/gm"}),
+        "S": ("college_def_all_seasons.parquet",
+                ["pd_per_game_z", "int_per_game_z", "tackles_per_game_z",
+                 "solo_tackles_per_game_z", "tfl_per_game_z"],
+                {"pd_per_game_z": "PD/gm", "int_per_game_z": "INT/gm",
+                 "tackles_per_game_z": "Tackles/gm", "solo_tackles_per_game_z": "Solo tkl/gm",
+                 "tfl_per_game_z": "TFL/gm"}),
+    }
+
+    # NFL position -> college pos_group filter values (matches college_data.py).
+    COLLEGE_DEF_POS_FILTER = {
+        "DE": ["EDGE"],
+        "DT": ["DL"],
+        "LB": ["LB"],
+        "CB": ["CB"],
+        "S":  ["DB"],
     }
 
     # ── Bundle definitions by position ────────────────────
@@ -468,22 +624,48 @@ else:
             "versatility": {"label": "🎯 Versatility", "why": "Total offensive contribution including receiving",
                            "stats": {"total_yards_z": 0.4, "receptions_total_z": 0.3, "total_tds_z": 0.3}},
         },
-        "DEF": {
-            "pass_rush": {"label": "⚡ Pass rush", "why": "Ability to pressure the quarterback",
-                         "stats": {"sacks_per_game_z": 0.4, "tfl_per_game_z": 0.3, "pressure_rate_z": 0.3}},
-            "coverage": {"label": "🛡️ Coverage", "why": "Ball-hawking and pass defense",
+        "DE": {
+            "pass_rush": {"label": "⚡ Pass rush", "why": "Get to the QB",
+                         "stats": {"sacks_per_game_z": 0.4, "qb_hurries_per_game_z": 0.3, "pressure_rate_z": 0.3}},
+            "run_defense": {"label": "🛡️ Run defense", "why": "Stop the run at the line",
+                           "stats": {"tfl_per_game_z": 0.6, "tackles_per_game_z": 0.4}},
+        },
+        "DT": {
+            "pass_rush": {"label": "⚡ Interior pass rush", "why": "Collapse the pocket",
+                         "stats": {"sacks_per_game_z": 0.4, "qb_hurries_per_game_z": 0.3, "pressure_rate_z": 0.3}},
+            "run_defense": {"label": "🛡️ Run defense", "why": "Plug the gaps",
+                           "stats": {"tfl_per_game_z": 0.5, "tackles_per_game_z": 0.5}},
+        },
+        "LB": {
+            "tackling": {"label": "💪 Tackling", "why": "Sure tackler in space",
+                        "stats": {"tackles_per_game_z": 0.5, "solo_tackles_per_game_z": 0.5}},
+            "run_disruption": {"label": "💥 Run disruption", "why": "TFLs and stops behind the line",
+                              "stats": {"tfl_per_game_z": 1.0}},
+            "coverage": {"label": "🛡️ Coverage", "why": "Drops in coverage and disrupts pass game",
                         "stats": {"pd_per_game_z": 0.5, "int_per_game_z": 0.5}},
-            "tackling": {"label": "💪 Tackling", "why": "Run stopping and sure tackling",
-                        "stats": {"tackles_per_game_z": 1.0}},
+            "pass_rush": {"label": "⚡ Pass rush", "why": "Blitz LB sack production",
+                         "stats": {"sacks_per_game_z": 1.0}},
+        },
+        "CB": {
+            "ball_hawk": {"label": "🦅 Ball-hawking", "why": "Picks and pass breakups",
+                         "stats": {"int_per_game_z": 0.5, "pd_per_game_z": 0.5}},
+            "tackling": {"label": "💪 Tackling", "why": "Doesn't shy from contact",
+                        "stats": {"tackles_per_game_z": 0.7, "tfl_per_game_z": 0.3}},
+        },
+        "S": {
+            "ball_hawk": {"label": "🦅 Ball-hawking", "why": "Range and ball production",
+                         "stats": {"int_per_game_z": 0.5, "pd_per_game_z": 0.5}},
+            "tackling": {"label": "💪 Run support", "why": "Comes downhill to tackle",
+                        "stats": {"tackles_per_game_z": 0.5, "solo_tackles_per_game_z": 0.3, "tfl_per_game_z": 0.2}},
         },
     }
 
     # ── Sidebar: position selector + sliders ──────────────
+    # Position is now driven by the top-bar dropdown so the sliders apply
+    # to whatever the user picked up there.
     st.sidebar.header("What matters to you?")
-    st.sidebar.caption("Pick a position group and adjust what you value")
-
-    active_pos = st.sidebar.selectbox("Position group", options=list(COLLEGE_BUNDLES.keys()),
-                                       index=0, key="college_pos_select")
+    st.sidebar.caption(f"Adjust what you value for **{selected_position}** — change the position dropdown at the top of the page to switch.")
+    active_pos = selected_position if selected_position in COLLEGE_BUNDLES else "QB"
 
     bundles = COLLEGE_BUNDLES[active_pos]
     bundle_weights = {}
@@ -712,12 +894,45 @@ else:
     # ══════════════════════════════════════════════════════
     # RENDER EACH POSITION GROUP
     # ══════════════════════════════════════════════════════
-    for pos_name, (fname, z_cols, labels) in POSITION_FILES.items():
+    from lib_shared import metric_picker as _metric_picker
+
+    # Only render the position picked from the top dropdown
+    positions_to_render = [(p, POSITION_FILES[p]) for p in [selected_position] if p in POSITION_FILES]
+
+    for pos_name, (fname, z_cols, labels) in positions_to_render:
         df = load_college_position(fname)
         if len(df) == 0: continue
 
         season_col = "season" if "season" in df.columns else "season_year"
-        filtered = df[(df["team"] == selected_school) & (df[season_col] == selected_college_season)].copy()
+
+        # Apply selectors: school > conference > FBS-wide.
+        mask = df[season_col] == selected_college_season
+        if not school_is_all:
+            mask = mask & (df["team"] == selected_school)
+        elif not conf_is_all and "conference" in df.columns:
+            mask = mask & (df["conference"] == selected_conf)
+        # For defensive positions, narrow to the specific pos_group bucket
+        if pos_name in COLLEGE_DEF_POS_FILTER and "pos_group" in df.columns:
+            allowed = COLLEGE_DEF_POS_FILTER[pos_name] + ["UNKNOWN"]
+            mask = mask & (df["pos_group"].isin(allowed))
+        filtered = df[mask].copy()
+
+        # Volume filter (college's snap-equivalent — column varies by position)
+        if vol_col in filtered.columns and min_volume > 0:
+            filtered = filtered[filtered[vol_col].fillna(0) >= min_volume]
+
+        # 2026 draft prospect filter — keep only rows whose (last name, team)
+        # appears in the prospect set (combine invites + heuristic).
+        if prospects_only and len(draft_class_set) > 0:
+            def _is_prospect(row):
+                name = str(row.get("player", "") or "")
+                team = str(row.get("team", "") or "")
+                last = name.split()[-1].lower() if name else ""
+                if not last:
+                    return False
+                return (last, team.lower()) in draft_class_set or (last, "") in draft_class_set
+            filtered = filtered[filtered.apply(_is_prospect, axis=1)]
+
         if len(filtered) == 0: continue
 
         available_z = [c for c in z_cols if c in filtered.columns]
@@ -728,20 +943,47 @@ else:
         is_active = (pos_name == active_pos)
         if is_active and effective_weights:
             filtered = score_college_players(filtered, effective_weights)
-            filtered = filtered.sort_values("your_score", ascending=False)
             score_col = "your_score"
             score_label_text = "Your score"
         else:
-            filtered = filtered.sort_values("composite_z", ascending=False)
             score_col = "composite_z"
             score_label_text = "Score"
 
         pos_display = {"QB": "Quarterbacks", "WR": "Wide Receivers", "TE": "Tight Ends",
-                       "RB": "Running Backs", "DEF": "Defense"}[pos_name]
-        pos_col = "pos_group" if pos_name == "DEF" and "pos_group" in filtered.columns else None
+                       "RB": "Running Backs",
+                       "DE": "Defensive Ends", "DT": "Defensive Tackles",
+                       "LB": "Linebackers", "CB": "Cornerbacks", "S": "Safeties"}[pos_name]
+        pos_col = "pos_group" if pos_name in COLLEGE_DEF_POS_FILTER and "pos_group" in filtered.columns else None
 
         active_marker = " ← your sliders" if is_active else ""
         st.markdown(f"#### {pos_display}{active_marker}")
+
+        # Per-position metric picker — sort the leaderboard by any nerd stat
+        position_metrics = {}
+        for z_col, label in labels.items():
+            raw_col = z_col.replace("_z", "")
+            if z_col in filtered.columns:
+                position_metrics[label + " (z)"] = (z_col, False)
+            if raw_col in filtered.columns:
+                position_metrics[label] = (raw_col, False)
+        # Default to composite ("Your score" if active, "Score" otherwise)
+        col_metric_label, col_sort, col_asc = _metric_picker(
+            position_metrics,
+            default_label=score_label_text if score_col != "composite_z" else "Your score",
+            key=f"college_metric_{pos_name}",
+            label=f"🔍 Sort {pos_display.lower()} by",
+        )
+        # If user picked "Your score" but there's no slider score, fall back to composite_z
+        if col_sort == "score":
+            col_sort = score_col
+        if col_sort in filtered.columns:
+            filtered = filtered.sort_values(col_sort, ascending=col_asc, na_position="last")
+        else:
+            filtered = filtered.sort_values(score_col, ascending=False)
+
+        # Cap the leaderboard for FBS-wide views so the page stays usable
+        if school_is_all:
+            filtered = filtered.head(50)
 
         # ── Summary table ─────────────────────────────────
         display_rows = []
@@ -799,6 +1041,12 @@ else:
             st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
 
         # ── Player expanders ──────────────────────────────
+        # Skip the heavy per-player panels in FBS-wide / conference-wide
+        # views (would render 50 expanders × 5 positions = 250 per page).
+        # Pick a school to drill into individual player detail.
+        if school_is_all:
+            st.caption("💡 Pick a specific school in the dropdown above to expand individual player profiles (radar, career arc, recruiting, combine).")
+            continue
         for _, row in filtered.iterrows():
             name = row.get("player", "—")
             comp = row.get("composite_z", np.nan)
