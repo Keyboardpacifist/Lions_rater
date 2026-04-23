@@ -145,14 +145,25 @@ def write_metadata(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    if config.snap_floor:
+        population_desc = (
+            "Players with >= "
+            + ", ".join(f"{n} {p}" for p, n in config.snap_floor.items())
+            + f" total snaps, min {config.min_games} games"
+        )
+    elif config.top_n:
+        population_desc = (
+            f"Top {sum(config.top_n.values())} "
+            + "+".join(f"{n} {p}" for p, n in config.top_n.items())
+            + f" by total offensive snaps, min {config.min_games} games"
+        )
+    else:
+        population_desc = f"Min {config.min_games} games"
+
     metadata = {
         "position_group": config.key,
         "season": season,
-        "population": (
-            f"Top {sum(config.top_n.values())} "
-            + "+".join(f"{n} {p}" for p, n in config.top_n.items())
-            + f" by offensive snaps, min {config.min_games} games"
-        ),
+        "population": population_desc,
         "n_players": int(len(df)),
         "stat_tiers": config.stat_tiers,
         "stat_labels": config.stat_labels,

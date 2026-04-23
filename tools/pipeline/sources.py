@@ -154,6 +154,32 @@ def load_ngs(
     )
 
 
+def load_player_stats(
+    season: int,
+    summary_level: str = "reg",
+    verbose: bool = True,
+) -> pd.DataFrame:
+    """Load nflverse pre-aggregated player_stats for a single season.
+
+    Args:
+        season: NFL season year.
+        summary_level: "week" | "reg" | "post" | "reg+post". Default "reg"
+            so traded players, lateral TDs, and edge cases are correctly
+            attributed by nflverse, regular-season only.
+
+    Returns:
+        Per-(player, team, season) row DataFrame. Empty on failure.
+    """
+    import nflreadpy as nfl
+
+    return _pull_with_cache(
+        f"player_stats_{summary_level}",
+        season,
+        lambda: nfl.load_player_stats([season], summary_level=summary_level).to_pandas(),
+        verbose=verbose,
+    )
+
+
 def load_pfr(
     season: int, stat_type: str, verbose: bool = True
 ) -> pd.DataFrame:

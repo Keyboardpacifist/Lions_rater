@@ -1,8 +1,14 @@
 """
-Population selection — snap filtering, top-N selection, roster matching.
+Population selection — snap aggregation, qualification, roster matching.
 
-Extracted from the identical pattern in wr_data_pull.py:80-117 and
-rb_data_pull.py:77-109. One function that handles any position.
+Aggregates snaps to per-player-season totals (across all team stints),
+applies a snap floor or top-N, and emits one row per player-season
+attributed to the team where the player took the most snaps.
+
+This shape — one row per player-season — matches how nflverse
+`load_player_stats(summary_level='reg')` aggregates traded players,
+so the per-team-stint counting bug from earlier (Davante Adams etc.)
+is sidestepped entirely.
 """
 from __future__ import annotations
 
@@ -13,75 +19,124 @@ def select_population(
     snaps: pd.DataFrame,
     rosters: pd.DataFrame,
     positions: list[str],
-    top_n: dict[str, int],
     min_games: int,
+    top_n: dict[str, int] | None = None,
+    snap_floor: dict[str, int] | None = None,
     verbose: bool = True,
 ) -> pd.DataFrame:
-    """Select the top-N players by offensive snaps for each position.
+    """Select qualifying players for a season.
 
     Steps:
       1. Filter snap counts to target positions
-      2. Aggregate to player-season totals (off_snaps, games_played)
+      2. Aggregate to per-player-season totals (sum across team stints)
       3. Apply minimum-games floor
-      4. Select top-N per position by snaps
-      5. Match to gsis_id via rosters (for PBP joins)
+      4. Apply snap_floor (preferred) OR top_n selection per position
+      5. Attribute each player to the team with their most snaps
+      6. Match to gsis_id via rosters
 
     Args:
         snaps: Raw per-game snap count data from nflverse.
         rosters: Roster data for gsis_id / pfr_id matching.
         positions: e.g., ["WR", "TE"] or ["RB"].
-        top_n: e.g., {"WR": 64, "TE": 32}.
         min_games: Minimum games played to be eligible.
+        top_n: Legacy. {"WR": 64, "TE": 32} = top N by total snaps per position.
+        snap_floor: Preferred. {"WR": 100, "TE": 100} = all players with >=N total snaps.
         verbose: Print progress.
 
     Returns:
-        DataFrame with columns:
+        DataFrame, one row per qualifying player-season, with columns:
           player, pfr_player_id, position, team, off_snaps,
           games_played, gsis_id, full_name
+        where `team` = team with the most snaps for that player-season.
     """
+    if (top_n is None) == (snap_floor is None):
+        raise ValueError(
+            "Provide exactly one of top_n or snap_floor (got "
+            f"top_n={top_n}, snap_floor={snap_floor})"
+        )
+
     # Step 1: Filter to target positions
     pos_snaps = snaps[snaps["position"].isin(positions)].copy()
 
-    # Step 2: Aggregate to player-season totals
-    # Some positions may not have 'position' in groupby (e.g., RB where
-    # all are one position). Include it when multiple positions are pooled.
-    group_cols = ["player", "pfr_player_id", "position", "team"]
-    # Only group by columns that exist
-    group_cols = [c for c in group_cols if c in pos_snaps.columns]
-
-    snap_totals = (
-        pos_snaps.groupby(group_cols, as_index=False)
+    # Step 2a: Per-team-stint totals (we need these to find each player's
+    # primary team and to know per-team snap distribution)
+    per_stint = (
+        pos_snaps.groupby(
+            ["player", "pfr_player_id", "position", "team"],
+            as_index=False,
+        )
         .agg(
-            off_snaps=("offense_snaps", "sum"),
-            games_played=("game_id", "nunique"),
+            stint_snaps=("offense_snaps", "sum"),
+            stint_games=("game_id", "nunique"),
+        )
+    )
+
+    # Step 2b: Aggregate to per-player-season totals (across all stints)
+    per_player = (
+        per_stint.groupby(
+            ["player", "pfr_player_id", "position"],
+            as_index=False,
+        )
+        .agg(
+            off_snaps=("stint_snaps", "sum"),
+            games_played=("stint_games", "sum"),
         )
     )
     if verbose:
-        print(f"  Total player-seasons: {len(snap_totals)}")
+        print(f"  Total player-seasons: {len(per_player)}")
 
     # Step 3: Minimum-games floor
-    eligible = snap_totals[snap_totals["games_played"] >= min_games].copy()
+    eligible = per_player[per_player["games_played"] >= min_games].copy()
     if verbose:
         print(f"  After {min_games}-game floor: {len(eligible)}")
 
-    # Step 4: Top-N per position
+    # Step 4: Position-by-position selection
     parts = []
-    for pos, n in top_n.items():
-        pos_df = eligible[eligible["position"] == pos] if "position" in eligible.columns else eligible
-        selected = pos_df.nlargest(n, "off_snaps")
+    for pos in positions:
+        pos_df = eligible[eligible["position"] == pos]
+        if snap_floor is not None:
+            floor = snap_floor.get(pos)
+            if floor is None:
+                if verbose:
+                    print(f"  No snap_floor entry for {pos}; skipping")
+                continue
+            selected = pos_df[pos_df["off_snaps"] >= floor]
+            if verbose:
+                print(f"  {pos} >= {floor} snaps: {len(selected)} selected")
+        else:
+            n = top_n.get(pos)
+            if n is None:
+                if verbose:
+                    print(f"  No top_n entry for {pos}; skipping")
+                continue
+            selected = pos_df.nlargest(n, "off_snaps")
+            if verbose:
+                print(f"  Top {n} {pos}: {len(selected)} selected")
         parts.append(selected)
-        if verbose:
-            print(f"  Top {n} {pos}: {len(selected)} selected")
+
+    if not parts:
+        return pd.DataFrame()
 
     population = pd.concat(parts, ignore_index=True)
 
-    # Step 5: Match to gsis_id via rosters
+    # Step 5: Pick each player's primary team (the one with most snaps)
+    primary_team = (
+        per_stint.sort_values("stint_snaps", ascending=False)
+        .drop_duplicates(subset=["player", "pfr_player_id", "position"])
+        [["player", "pfr_player_id", "position", "team"]]
+    )
+    population = population.merge(
+        primary_team,
+        on=["player", "pfr_player_id", "position"],
+        how="left",
+    )
+
+    # Step 6: Match to gsis_id via rosters
     roster_slim = (
         rosters[["gsis_id", "pfr_id", "full_name", "position"]]
         .dropna(subset=["gsis_id"])
         .rename(columns={"pfr_id": "pfr_player_id"})
     )
-    # Only merge on pfr_player_id + gsis_id + full_name (avoid position clash)
     population = population.merge(
         roster_slim[["pfr_player_id", "gsis_id", "full_name"]],
         on="pfr_player_id",

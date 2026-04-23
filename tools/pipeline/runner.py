@@ -1,8 +1,9 @@
 """
 Season-loop orchestrator.
 
-For each season: pull data → build population → aggregate PBP stats →
-merge advanced sources → compute derived stats → z-score → stack.
+For each season: pull data → build population → merge pre-aggregated
+player_stats (counting stats) → aggregate PBP advanced stats → merge
+NGS/PFR sources → compute derived stats → z-score → stack.
 
 After all seasons are processed, write the combined output.
 """
@@ -16,7 +17,14 @@ import pandas as pd
 from .base import PositionConfig
 from .output import write_metadata, write_parquet
 from .population import select_population
-from .sources import load_ngs, load_pbp, load_pfr, load_rosters, load_snap_counts
+from .sources import (
+    load_ngs,
+    load_pbp,
+    load_pfr,
+    load_player_stats,
+    load_rosters,
+    load_snap_counts,
+)
 from .zscore import zscore_stats
 
 
@@ -25,10 +33,7 @@ def run_season(
     season: int,
     verbose: bool = True,
 ) -> pd.DataFrame:
-    """Run the pipeline for a single season.
-
-    Returns a DataFrame with all stats + z-scores for one season.
-    """
+    """Run the pipeline for a single season."""
     if verbose:
         print(f"\n{'='*60}")
         print(f"  Season {season}")
@@ -53,8 +58,9 @@ def run_season(
         snaps=snaps,
         rosters=rosters,
         positions=config.snap_positions,
-        top_n=config.top_n,
         min_games=config.min_games,
+        top_n=config.top_n,
+        snap_floor=config.snap_floor,
         verbose=verbose,
     )
 
@@ -63,16 +69,51 @@ def run_season(
             print(f"  SKIPPING season {season}: empty population")
         return pd.DataFrame()
 
-    # ── Filter PBP to relevant play types ────────────────────────
-    pbp_filtered = pbp[pbp["play_type"].isin(config.pbp_play_types)].copy()
+    # ── Merge pre-aggregated player_stats (counting stats) ───────
+    if config.use_player_stats and config.player_stats_col_map:
+        if verbose:
+            print("\nMerging pre-aggregated player_stats...")
+        # Map config season_types -> nflverse summary_level
+        # (REG only is the default; extend here if config asks for postseason too)
+        summary_level = (
+            "reg+post" if "POST" in config.pbp_season_types else "reg"
+        )
+        ps = load_player_stats(season, summary_level=summary_level, verbose=verbose)
+        if not ps.empty and "player_id" in ps.columns:
+            available = {
+                k: v for k, v in config.player_stats_col_map.items() if k in ps.columns
+            }
+            cols_to_select = ["player_id"] + list(available.keys())
+            ps_slim = ps[cols_to_select].rename(
+                columns={"player_id": "gsis_id", **available}
+            )
+            # nflverse aggregates traded players to one row keyed by player_id;
+            # we already attributed each player to a primary team above.
+            population = population.merge(ps_slim, on="gsis_id", how="left")
+            if verbose:
+                print(f"  Merged player_stats columns: {list(available.values())}")
+        elif verbose:
+            print("  player_stats unavailable for this season")
 
-    # ── Aggregate PBP stats ──────────────────────────────────────
+    # ── Filter PBP: play types + season types (Bug 3 fix) ────────
+    pbp_filtered = pbp[
+        (pbp["play_type"].isin(config.pbp_play_types))
+        & (pbp["season_type"].isin(config.pbp_season_types))
+    ].copy()
     if verbose:
-        print("\nAggregating PBP stats...")
-    for agg_fn in config.aggregate_stats:
-        stats_df = agg_fn(pbp_filtered, population)
-        if not stats_df.empty and "gsis_id" in stats_df.columns:
-            population = population.merge(stats_df, on="gsis_id", how="left")
+        print(
+            f"\nPBP filter: play_type in {config.pbp_play_types}, "
+            f"season_type in {config.pbp_season_types} → {len(pbp_filtered):,} plays"
+        )
+
+    # ── Aggregate PBP advanced stats ─────────────────────────────
+    if config.aggregate_stats:
+        if verbose:
+            print("\nAggregating PBP advanced stats...")
+        for agg_fn in config.aggregate_stats:
+            stats_df = agg_fn(pbp_filtered, population)
+            if not stats_df.empty and "gsis_id" in stats_df.columns:
+                population = population.merge(stats_df, on="gsis_id", how="left")
 
     # ── Merge NGS stats ──────────────────────────────────────────
     if config.ngs_stat_type and config.ngs_col_map:
@@ -83,7 +124,6 @@ def run_season(
             available = {
                 k: v for k, v in config.ngs_col_map.items() if k in ngs.columns
             }
-            # Always need the join key
             cols_to_select = ["player_gsis_id"] + [
                 k for k in available if k != "player_gsis_id"
             ]
@@ -94,7 +134,6 @@ def run_season(
             if verbose:
                 print(f"  Merged NGS columns: {list(available.values())}")
         else:
-            # Fill NaN for expected NGS columns
             for col in config.ngs_col_map.values():
                 if col not in population.columns:
                     population[col] = np.nan
@@ -105,7 +144,6 @@ def run_season(
             print("\nMerging PFR stats...")
         pfr = load_pfr(season, config.pfr_stat_type, verbose=verbose)
         if not pfr.empty:
-            # PFR uses 'pfr_id' or 'pfr_player_id'
             pfr_id_col = (
                 "pfr_player_id"
                 if "pfr_player_id" in pfr.columns
@@ -135,14 +173,35 @@ def run_season(
         print("\nComputing derived stats...")
     population = config.compute_derived(population)
 
-    # ── Z-score ──────────────────────────────────────────────────
+    # ── Z-score (Decision 2: optionally per position group) ──────
     if verbose:
         print("\nZ-scoring...")
-    population = zscore_stats(
-        population,
-        stats=config.stats_to_zscore,
-        invert=config.invert_stats,
-    )
+    if config.zscore_groups:
+        groups = []
+        for pos in config.zscore_groups:
+            pos_df = population[population["position"] == pos].copy()
+            if pos_df.empty:
+                continue
+            pos_df = zscore_stats(
+                pos_df, stats=config.stats_to_zscore, invert=config.invert_stats
+            )
+            if verbose:
+                print(f"  Z-scored {pos}: {len(pos_df)} players")
+            groups.append(pos_df)
+        # Include any players whose position falls outside zscore_groups
+        # (shouldn't happen for current configs, but keep them)
+        outside = population[~population["position"].isin(config.zscore_groups)]
+        if not outside.empty:
+            for stat in config.stats_to_zscore:
+                outside[f"{stat}_z"] = np.nan
+            groups.append(outside)
+        population = pd.concat(groups, ignore_index=True)
+    else:
+        population = zscore_stats(
+            population,
+            stats=config.stats_to_zscore,
+            invert=config.invert_stats,
+        )
 
     # ── Normalize column names for pages ─────────────────────────
     population["player_display_name"] = population.get(
@@ -168,7 +227,7 @@ def run_pipeline(
 ) -> None:
     """Run the full multi-season pipeline.
 
-    For each season: pull → populate → aggregate → merge → derive →
+    For each season: pull → populate → merge → aggregate → derive →
     zscore. Then stack all seasons and write output.
     """
     if verbose:
@@ -188,7 +247,6 @@ def run_pipeline(
         print("\nERROR: No seasons produced data. Nothing to write.")
         return
 
-    # Stack all seasons
     combined = pd.concat(all_seasons, ignore_index=True)
     if verbose:
         print(f"\n{'='*60}")
@@ -202,7 +260,6 @@ def run_pipeline(
         print(f"  {output_dir / config.metadata_filename}")
         return
 
-    # Write outputs
     if verbose:
         print("\nWriting outputs...")
     write_parquet(combined, config, output_dir, verbose=verbose)
