@@ -1,6 +1,6 @@
 """
-Lions WR Rater — 2024 season
-Wide receivers only. Z-scored against all 139 WRs league-wide with 200+ offensive snaps.
+WR Rater
+Wide receivers only. Z-scored within the WR pool — all WRs league-wide with 100+ offensive snaps.
 """
 import json
 from pathlib import Path
@@ -167,7 +167,7 @@ if "algo" in st.query_params and st.session_state.wr_loaded_algo is None:
 # ══════════════════════════════════════════════════════════════
 st.subheader(f"{team_name} wide receivers")
 st.markdown("What makes a great WR? **You decide.** Use the sliders on the left to tell us what you value most, and the rankings update instantly.")
-st.caption(f"{selected_season} regular season · Compared to all 139 WRs league-wide with 200+ offensive snaps")
+st.caption(f"{selected_season} regular season · Compared to all WRs league-wide with 100+ offensive snaps")
 
 st.sidebar.header("What matters to you?")
 st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize it, or all the way left to ignore it.")
@@ -238,7 +238,7 @@ players.index = players.index + 1
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 ranked = players.copy()
 
-st.markdown("**How to read the score:** 0.00 = league average WR. The percentile shows where this player ranks among all 139 qualifying WRs.")
+st.markdown("**How to read the score:** 0.00 = league average WR. The percentile shows where this player ranks among all qualifying WRs (100+ snaps).")
 
 if len(ranked) > 0:
     top = ranked.iloc[0]
@@ -249,17 +249,24 @@ if len(ranked) > 0:
     warn = sample_size_warning(top.get("off_snaps", 0))
     if warn: st.warning(warn)
 
+def _fmt_int(v): return f"{int(v)}" if pd.notna(v) else "—"
+def _fmt_pct(v): return f"{v*100:.1f}%" if pd.notna(v) else "—"
+def _fmt_signed(v, places=2): return f"{v:+.{places}f}" if pd.notna(v) else "—"
+
 display_df = pd.DataFrame({
     "Rank": ranked.index,
     "Player": ranked["player_display_name"],
-    "Snaps": ranked.get("off_snaps", pd.Series([0]*len(ranked))).apply(lambda s: f"{int(s)} ⚠️" if pd.notna(s) and s < 300 else (f"{int(s)}" if pd.notna(s) else "—")),
-    "Targets": ranked.get("targets", pd.Series([0]*len(ranked))).fillna(0).astype(int),
-    "Yards": ranked.get("rec_yards", pd.Series([0]*len(ranked))).fillna(0).astype(int),
-    "TDs": ranked.get("rec_tds", pd.Series([0]*len(ranked))).fillna(0).astype(int),
+    "Snaps": ranked.get("off_snaps", pd.Series([0]*len(ranked))).apply(lambda s: f"{int(s)} ⚠️" if pd.notna(s) and s < 300 else _fmt_int(s)),
+    "Rec": ranked.get("receptions", pd.Series([0]*len(ranked))).apply(_fmt_int),
+    "Yds": ranked.get("rec_yards", pd.Series([0]*len(ranked))).apply(_fmt_int),
+    "TDs": ranked.get("rec_tds", pd.Series([0]*len(ranked))).apply(_fmt_int),
+    "Tgt%": ranked.get("target_share", pd.Series([float("nan")]*len(ranked))).apply(_fmt_pct),
+    "EPA/tgt": ranked.get("epa_per_target", pd.Series([float("nan")]*len(ranked))).apply(lambda v: _fmt_signed(v, 2)),
+    "YAC/exp": ranked.get("yac_above_exp", pd.Series([float("nan")]*len(ranked))).apply(lambda v: _fmt_signed(v, 1)),
     "Your score": ranked["score"].apply(format_score),
 })
 st.dataframe(display_df, use_container_width=True, hide_index=True)
-st.caption("⚠️ = under 300 snaps — small sample, treat with caution.")
+st.caption("⚠️ = under 300 snaps — small sample, treat with caution. **Tgt%** = share of team's targets · **EPA/tgt** = Expected Points Added per target (modern efficiency stat) · **YAC/exp** = yards-after-catch above NGS expectation, per reception.")
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 selected = st.selectbox("Pick a wide receiver to see their full breakdown", options=ranked["player_display_name"].tolist(), index=0)
@@ -322,4 +329,4 @@ career_arc_section(
 )
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.caption("Data via [nflverse](https://github.com/nflverse) · NGS tracking data · 2024 regular season · Z-scored against 139 WRs with 200+ offensive snaps · Fan project, not affiliated with the NFL or Detroit Lions.")
+st.caption("Data via [nflverse](https://github.com/nflverse) · NGS tracking data · regular season only · Z-scored against league-wide WRs with 100+ offensive snaps · Fan project, not affiliated with the NFL or any team.")

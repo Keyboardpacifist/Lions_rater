@@ -2,7 +2,7 @@
   "position_group": "wr",
   "season": "2016-2025",
   "population": "Players with >= 100 WR, 100 TE total snaps, min 6 games",
-  "n_players": 2383,
+  "n_players": 2500,
   "stat_tiers": {
     "rec_yards_z": 1,
     "receptions_z": 1,

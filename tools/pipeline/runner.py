@@ -69,29 +69,94 @@ def run_season(
             print(f"  SKIPPING season {season}: empty population")
         return pd.DataFrame()
 
-    # ── Merge pre-aggregated player_stats (counting stats) ───────
+    # ── Merge pre-aggregated player_stats per (player, team) stint ──
     if config.use_player_stats and config.player_stats_col_map:
         if verbose:
-            print("\nMerging pre-aggregated player_stats...")
-        # Map config season_types -> nflverse summary_level
-        # (REG only is the default; extend here if config asks for postseason too)
-        summary_level = (
-            "reg+post" if "POST" in config.pbp_season_types else "reg"
-        )
-        ps = load_player_stats(season, summary_level=summary_level, verbose=verbose)
-        if not ps.empty and "player_id" in ps.columns:
-            available = {
-                k: v for k, v in config.player_stats_col_map.items() if k in ps.columns
+            print("\nMerging player_stats per team stint...")
+        # Pull WEEK-level so we can re-aggregate per (player, team) stint.
+        # summary_level='reg' would already collapse traded players to one row.
+        ps_week = load_player_stats(season, summary_level="week", verbose=verbose)
+        if not ps_week.empty and "player_id" in ps_week.columns and "team" in ps_week.columns:
+            # Filter to configured season types (REG by default)
+            if "season_type" in ps_week.columns:
+                ps_week = ps_week[ps_week["season_type"].isin(config.pbp_season_types)]
+
+            # Counting stats: sum across weeks per (player, team) stint
+            counting_in_map = {
+                "targets", "receptions", "receiving_yards", "receiving_tds",
+                "receiving_first_downs", "receiving_air_yards",
+                "receiving_yards_after_catch", "receiving_2pt_conversions",
+                "receiving_fumbles", "receiving_fumbles_lost",
+                "carries", "rushing_yards", "rushing_tds", "rushing_first_downs",
+                "rushing_fumbles", "rushing_fumbles_lost",
+                "completions", "attempts", "passing_yards", "passing_tds",
+                "passing_interceptions", "sacks_suffered", "sack_yards_lost",
+                "passing_first_downs", "passing_air_yards",
+                "passing_yards_after_catch",
             }
-            cols_to_select = ["player_id"] + list(available.keys())
-            ps_slim = ps[cols_to_select].rename(
+            sum_cols = [c for c in config.player_stats_col_map if c in counting_in_map and c in ps_week.columns]
+            agg_dict = {c: (c, "sum") for c in sum_cols}
+            ps_stint = ps_week.groupby(["player_id", "team"], as_index=False).agg(**agg_dict) if agg_dict else ps_week.groupby(["player_id", "team"], as_index=False).first()
+
+            # Per-stint team-level totals (for rate stats like target_share).
+            # team_targets_in_stint = sum of all team targets across the weeks
+            # this player was on this team. Same for air_yards.
+            if "targets" in ps_week.columns or "receiving_air_yards" in ps_week.columns:
+                team_week_agg = {}
+                if "targets" in ps_week.columns:
+                    team_week_agg["team_week_targets"] = ("targets", "sum")
+                if "receiving_air_yards" in ps_week.columns:
+                    team_week_agg["team_week_air_yards"] = ("receiving_air_yards", "sum")
+                team_week = ps_week.groupby(["team", "week"], as_index=False).agg(**team_week_agg)
+
+                # For each player-team stint, find weeks they were on that team
+                stint_weeks = ps_week[["player_id", "team", "week"]].drop_duplicates()
+                stint_with_team_totals = stint_weeks.merge(team_week, on=["team", "week"])
+                stint_team_totals = stint_with_team_totals.groupby(
+                    ["player_id", "team"], as_index=False
+                ).agg(
+                    team_targets_in_stint=("team_week_targets", "sum") if "team_week_targets" in team_week.columns else ("week", "first"),
+                    team_air_yards_in_stint=("team_week_air_yards", "sum") if "team_week_air_yards" in team_week.columns else ("week", "first"),
+                )
+                ps_stint = ps_stint.merge(
+                    stint_team_totals, on=["player_id", "team"], how="left"
+                )
+
+                # Per-stint rate stats — recomputed from sums (correct, not approximated)
+                if "targets" in ps_stint.columns and "team_targets_in_stint" in ps_stint.columns:
+                    ps_stint["target_share"] = (
+                        ps_stint["targets"] / ps_stint["team_targets_in_stint"].replace(0, np.nan)
+                    )
+                if (
+                    "receiving_air_yards" in ps_stint.columns
+                    and "team_air_yards_in_stint" in ps_stint.columns
+                ):
+                    ps_stint["air_yards_share"] = (
+                        ps_stint["receiving_air_yards"]
+                        / ps_stint["team_air_yards_in_stint"].replace(0, np.nan)
+                    )
+                if (
+                    "receiving_yards" in ps_stint.columns
+                    and "receiving_air_yards" in ps_stint.columns
+                ):
+                    ps_stint["racr"] = (
+                        ps_stint["receiving_yards"]
+                        / ps_stint["receiving_air_yards"].replace(0, np.nan)
+                    )
+                if "target_share" in ps_stint.columns and "air_yards_share" in ps_stint.columns:
+                    ps_stint["wopr"] = 1.5 * ps_stint["target_share"] + 0.7 * ps_stint["air_yards_share"]
+
+            # Select + rename to output columns and merge on (gsis_id, team)
+            available = {
+                k: v for k, v in config.player_stats_col_map.items() if k in ps_stint.columns
+            }
+            cols_to_select = ["player_id", "team"] + list(available.keys())
+            ps_slim = ps_stint[cols_to_select].rename(
                 columns={"player_id": "gsis_id", **available}
             )
-            # nflverse aggregates traded players to one row keyed by player_id;
-            # we already attributed each player to a primary team above.
-            population = population.merge(ps_slim, on="gsis_id", how="left")
+            population = population.merge(ps_slim, on=["gsis_id", "team"], how="left")
             if verbose:
-                print(f"  Merged player_stats columns: {list(available.values())}")
+                print(f"  Merged player_stats columns per stint: {list(available.values())}")
         elif verbose:
             print("  player_stats unavailable for this season")
 
@@ -113,7 +178,10 @@ def run_season(
         for agg_fn in config.aggregate_stats:
             stats_df = agg_fn(pbp_filtered, population)
             if not stats_df.empty and "gsis_id" in stats_df.columns:
-                population = population.merge(stats_df, on="gsis_id", how="left")
+                merge_keys = ["gsis_id"]
+                if "team" in stats_df.columns and "team" in population.columns:
+                    merge_keys.append("team")
+                population = population.merge(stats_df, on=merge_keys, how="left")
 
     # ── Merge NGS stats ──────────────────────────────────────────
     if config.ngs_stat_type and config.ngs_col_map:

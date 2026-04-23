@@ -24,10 +24,13 @@ from ..base import PositionConfig
 
 
 def agg_receiver_advanced(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.DataFrame:
-    """Compute per-player PBP-derived stats that aren't in player_stats.
+    """Compute per-(player, team) PBP-derived stats that aren't in player_stats.
 
-    Currently: success_rate (binary success per target), epa_per_target
-    (mean EPA across this player's targets), avg_cpoe (mean CPOE).
+    Grouping by posteam ensures traded players get separate advanced stats
+    for each team stint (so Davante Adams' LV success_rate is distinct from
+    his NYJ success_rate).
+
+    Currently: success_rate, epa_per_target, avg_cpoe.
     """
     passes = pbp[
         (pbp["play_type"] == "pass") & (pbp["receiver_player_id"].notna())
@@ -48,10 +51,10 @@ def agg_receiver_advanced(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.Dat
         )
 
     stats = (
-        passes.groupby("receiver_player_id")
+        passes.groupby(["receiver_player_id", "posteam"])
         .apply(_agg, include_groups=False)
         .reset_index()
-        .rename(columns={"receiver_player_id": "gsis_id"})
+        .rename(columns={"receiver_player_id": "gsis_id", "posteam": "team"})
     )
     return stats
 
