@@ -1,0 +1,76 @@
+{
+  "position_group": "lb",
+  "season": "2016-2025",
+  "population": "Players with >= 100 LB, 100 ILB, 100 OLB, 100 MLB total snaps, min 6 games",
+  "n_players": 1839,
+  "stat_tiers": {
+    "tackles_per_game_z": 1,
+    "solo_tackle_rate_z": 2,
+    "tackles_per_snap_z": 2,
+    "tfl_per_game_z": 1,
+    "sacks_per_game_z": 1,
+    "qb_hits_per_game_z": 2,
+    "forced_fumbles_per_game_z": 2,
+    "passes_defended_per_game_z": 2,
+    "interceptions_per_game_z": 2
+  },
+  "stat_labels": {
+    "tackles_per_game_z": "Tackles per game",
+    "solo_tackle_rate_z": "Solo tackle rate",
+    "tackles_per_snap_z": "Tackles per snap",
+    "tfl_per_game_z": "Tackles for loss per game",
+    "sacks_per_game_z": "Sacks per game",
+    "qb_hits_per_game_z": "QB hits per game",
+    "forced_fumbles_per_game_z": "Forced fumbles per game",
+    "passes_defended_per_game_z": "Passes defended per game",
+    "interceptions_per_game_z": "Interceptions per game"
+  },
+  "stat_methodology": {
+    "tackles_per_game_z": {
+      "what": "Total tackles per game.",
+      "how": "(solo + assists) / games.",
+      "limits": "Volume opportunity, not skill."
+    },
+    "solo_tackle_rate_z": {
+      "what": "Solo tackles as a share of total tackles.",
+      "how": "solo / (solo + assists).",
+      "limits": "Scorekeeper subjectivity."
+    },
+    "tackles_per_snap_z": {
+      "what": "Total tackles per defensive snap.",
+      "how": "(solo + assists) / off_snaps.",
+      "limits": "Heavy run-down LBs accumulate more."
+    },
+    "tfl_per_game_z": {
+      "what": "Tackles for loss per game.",
+      "how": "From player_stats per stint.",
+      "limits": "Run-down opportunity."
+    },
+    "sacks_per_game_z": {
+      "what": "Sacks per game.",
+      "how": "From player_stats per stint.",
+      "limits": "Blitz LBs accumulate more."
+    },
+    "qb_hits_per_game_z": {
+      "what": "QB hits per game.",
+      "how": "From player_stats per stint.",
+      "limits": "Tracks contact, not effectiveness."
+    },
+    "forced_fumbles_per_game_z": {
+      "what": "Forced fumbles per game.",
+      "how": "From player_stats per stint.",
+      "limits": "Rare event \u2014 small samples noisy."
+    },
+    "passes_defended_per_game_z": {
+      "what": "Passes broken up per game.",
+      "how": "From player_stats per stint.",
+      "limits": "Coverage LBs accumulate more."
+    },
+    "interceptions_per_game_z": {
+      "what": "Interceptions per game.",
+      "how": "From player_stats per stint.",
+      "limits": "Rare event."
+    }
+  },
+  "invert_stats": []
+}

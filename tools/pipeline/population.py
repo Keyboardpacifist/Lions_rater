@@ -23,6 +23,7 @@ def select_population(
     min_games: int,
     top_n: dict[str, int] | None = None,
     snap_floor: dict[str, int] | None = None,
+    snap_column: str = "offense_snaps",
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Select qualifying players, emit one row per (player, team) stint.
@@ -57,17 +58,67 @@ def select_population(
             f"top_n={top_n}, snap_floor={snap_floor})"
         )
 
-    # Step 1: Filter to target positions
-    pos_snaps = snaps[snaps["position"].isin(positions)].copy()
+    # Step 0: Augment snap_counts with rosters' depth_chart_position to
+    # disambiguate generic codes. Match primarily on pfr_id (most reliable
+    # — survives name format quirks like "DJ Reader" vs "D.J. Reader"),
+    # then fall back to (name, team).
+    if "depth_chart_position" in rosters.columns:
+        roster_dcp = rosters[
+            [c for c in ["full_name", "team", "pfr_id", "depth_chart_position"]
+             if c in rosters.columns]
+        ].dropna(subset=["depth_chart_position"])
+
+        # Primary: by pfr_id when both sides have it
+        if "pfr_id" in roster_dcp.columns and "pfr_player_id" in snaps.columns:
+            by_pfr = (
+                roster_dcp.dropna(subset=["pfr_id"])[["pfr_id", "depth_chart_position"]]
+                .drop_duplicates(subset=["pfr_id"])
+                .rename(columns={"depth_chart_position": "_dcp_pfr"})
+            )
+            snaps = snaps.merge(
+                by_pfr, left_on="pfr_player_id", right_on="pfr_id", how="left"
+            )
+            snaps = snaps.drop(columns=[c for c in ["pfr_id"] if c in snaps.columns])
+        else:
+            snaps["_dcp_pfr"] = pd.NA
+
+        # Fallback: by (name, team) for rows the pfr_id match missed
+        by_name = (
+            roster_dcp.drop_duplicates(subset=["full_name", "team"])
+            [["full_name", "team", "depth_chart_position"]]
+            .rename(columns={"depth_chart_position": "_dcp_name"})
+        )
+        snaps = snaps.merge(
+            by_name, left_on=["player", "team"], right_on=["full_name", "team"], how="left"
+        )
+        snaps["effective_position"] = (
+            snaps["_dcp_pfr"]
+            .fillna(snaps.get("_dcp_name"))
+            .fillna(snaps["position"])
+        )
+        snaps = snaps.drop(columns=[c for c in ["_dcp_pfr", "_dcp_name", "full_name"]
+                                     if c in snaps.columns])
+    else:
+        snaps["effective_position"] = snaps["position"]
+
+    # Step 1: Filter to target positions (using effective_position)
+    pos_snaps = snaps[snaps["effective_position"].isin(positions)].copy()
+    # Use effective_position as the canonical position from here forward
+    pos_snaps["position"] = pos_snaps["effective_position"]
 
     # Step 2a: Per-team-stint totals
+    if snap_column not in pos_snaps.columns:
+        if verbose:
+            print(f"  WARNING: snap column '{snap_column}' missing from snap_counts; "
+                  f"falling back to offense_snaps")
+        snap_column = "offense_snaps"
     per_stint = (
         pos_snaps.groupby(
             ["player", "pfr_player_id", "position", "team"],
             as_index=False,
         )
         .agg(
-            off_snaps=("offense_snaps", "sum"),
+            off_snaps=(snap_column, "sum"),
             games_played=("game_id", "nunique"),
         )
     )
@@ -142,17 +193,38 @@ def select_population(
             f"({n_traded} qualifying players had multiple team stints)"
         )
 
-    # Step 6: Match to gsis_id via rosters
+    # Step 6: Match to gsis_id via rosters.
+    # Primary: join on pfr_player_id (most reliable when present).
+    # Fallback: for rows where rosters lacks pfr_id (common for punters
+    # and other special-teamers), join by (player name, team).
     roster_slim = (
-        rosters[["gsis_id", "pfr_id", "full_name", "position"]]
+        rosters[["gsis_id", "pfr_id", "full_name", "position", "team"]]
         .dropna(subset=["gsis_id"])
         .rename(columns={"pfr_id": "pfr_player_id"})
     )
-    population = population.merge(
-        roster_slim[["pfr_player_id", "gsis_id", "full_name"]],
-        on="pfr_player_id",
-        how="left",
+    by_pfr = (
+        roster_slim.dropna(subset=["pfr_player_id"])
+        [["pfr_player_id", "gsis_id", "full_name"]]
     )
+    population = population.merge(by_pfr, on="pfr_player_id", how="left")
+
+    # Name+team fallback for unmatched rows
+    if population["gsis_id"].isna().any():
+        by_name = (
+            roster_slim[["full_name", "team", "gsis_id"]]
+            .drop_duplicates(subset=["full_name", "team"])
+            .rename(columns={"gsis_id": "_fb_gsis_id", "full_name": "_fb_full_name"})
+        )
+        population = population.merge(
+            by_name,
+            left_on=["player", "team"],
+            right_on=["_fb_full_name", "team"],
+            how="left",
+        )
+        # Use fallback gsis_id where primary is null
+        population["gsis_id"] = population["gsis_id"].fillna(population["_fb_gsis_id"])
+        population["full_name"] = population["full_name"].fillna(population["_fb_full_name"])
+        population = population.drop(columns=["_fb_gsis_id", "_fb_full_name"])
 
     # Drop unmatched players
     missing = population["gsis_id"].isna().sum()

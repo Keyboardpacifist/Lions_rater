@@ -1,57 +1,50 @@
 {
+  "position_group": "p",
+  "season": "2016-2025",
+  "population": "Players with >= 30 P total snaps, min 4 games",
+  "n_players": 336,
   "stat_tiers": {
     "avg_distance_z": 1,
     "avg_net_z": 2,
-    "inside_20_rate_z": 1,
+    "inside_20_rate_z": 2,
     "touchback_rate_z": 2,
-    "fair_catch_rate_z": 2,
-    "pin_rate_z": 2,
-    "punt_epa_z": 2
+    "punt_epa_z": 3
   },
   "stat_labels": {
-    "avg_distance_z": "Average punt distance",
+    "avg_distance_z": "Average gross distance",
     "avg_net_z": "Average net yards",
     "inside_20_rate_z": "Inside-20 rate",
-    "touchback_rate_z": "Touchback rate (inverted)",
-    "fair_catch_rate_z": "Fair catch rate",
-    "pin_rate_z": "Pin rate (inside 20 + downed)",
-    "punt_epa_z": "Punt EPA"
+    "touchback_rate_z": "Touchback rate (lower is better)",
+    "punt_epa_z": "EPA per punt"
   },
   "stat_methodology": {
     "avg_distance_z": {
-      "what": "Average gross punt distance",
-      "how": "Kick distance averaged across all punts.",
-      "limits": "Doesn't capture placement quality."
+      "what": "Average gross yards per punt.",
+      "how": "kick_distance summed across the player's punts, divided by punt count.",
+      "limits": "Doesn't account for return or touchback."
     },
     "avg_net_z": {
-      "what": "Average net punt yards (gross minus return)",
-      "how": "Kick distance minus return yards.",
-      "limits": "Punt coverage unit affects returns."
+      "what": "Average net yards per punt \u2014 the modern punter stat.",
+      "how": "(gross yards \u2212 return yards \u2212 20 \u00d7 touchbacks) / punts. Touchback penalty is the standard 20-yard correction.",
+      "limits": "Coverage team is part of the credit."
     },
     "inside_20_rate_z": {
-      "what": "Rate of punts landing inside the 20",
-      "how": "Inside-20 punts / total punts.",
-      "limits": "Depends on field position when punting."
+      "what": "Share of punts downed inside the opponent's 20-yard line.",
+      "how": "PBP punt_inside_twenty / total punts.",
+      "limits": "Field position dependent."
     },
     "touchback_rate_z": {
-      "what": "Touchback rate \u2014 fewer = better",
-      "how": "Inverted so positive z = fewer touchbacks.",
-      "limits": "Some touchbacks are acceptable on long punts."
-    },
-    "fair_catch_rate_z": {
-      "what": "Fair catch rate \u2014 higher suggests better hang time",
-      "how": "Fair catches / total punts.",
-      "limits": "Returner decisions vary."
-    },
-    "pin_rate_z": {
-      "what": "Pin rate \u2014 inside 20 + downed combined",
-      "how": "Captures total placement success.",
-      "limits": "Field position when punting matters."
+      "what": "Share of punts that resulted in a touchback. Lower is better.",
+      "how": "PBP touchback / total punts. Z-score is inverted so positive = good.",
+      "limits": "Aggressive distance can drag this up; tradeoff with avg distance."
     },
     "punt_epa_z": {
-      "what": "Average EPA per punt",
-      "how": "EPA on all punt plays.",
-      "limits": "Influenced by coverage unit and return game."
+      "what": "Expected Points Added per punt.",
+      "how": "Mean of nflverse EPA across the player's punts.",
+      "limits": "Punt EPA reflects field position swing \u2014 partly the punt-coverage unit's work."
     }
-  }
+  },
+  "invert_stats": [
+    "touchback_rate"
+  ]
 }

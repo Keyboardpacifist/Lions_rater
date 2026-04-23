@@ -61,6 +61,7 @@ def run_season(
         min_games=config.min_games,
         top_n=config.top_n,
         snap_floor=config.snap_floor,
+        snap_column=config.snap_column,
         verbose=verbose,
     )
 
@@ -96,6 +97,23 @@ def run_season(
                 "passing_first_downs", "passing_air_yards",
                 "passing_yards_after_catch", "passing_2pt_conversions",
                 "passing_epa",
+                # Defensive counting stats (used by DE/DT/LB/CB/S configs)
+                "def_tackles_solo", "def_tackle_assists", "def_tackles_with_assist",
+                "def_tackles_for_loss", "def_tackles_for_loss_yards",
+                "def_fumbles_forced", "def_sacks", "def_sack_yards", "def_qb_hits",
+                "def_interceptions", "def_interception_yards", "def_pass_defended",
+                "def_tds", "def_fumbles", "def_safeties",
+                # Special teams + kicking
+                "fg_made", "fg_att", "fg_blocked", "fg_long",
+                "fg_made_0_19", "fg_made_20_29", "fg_made_30_39",
+                "fg_made_40_49", "fg_made_50_59", "fg_made_60_",
+                "fg_missed_0_19", "fg_missed_20_29", "fg_missed_30_39",
+                "fg_missed_40_49", "fg_missed_50_59", "fg_missed_60_",
+                "pat_made", "pat_att", "pat_missed", "pat_blocked",
+                "gwfg_made", "gwfg_att", "gwfg_blocked",
+                "punt_returns", "punt_return_yards",
+                "kickoff_returns", "kickoff_return_yards",
+                "special_teams_tds",
             }
             sum_cols = [c for c in config.player_stats_col_map if c in counting_in_map and c in ps_week.columns]
             agg_dict = {c: (c, "sum") for c in sum_cols}
@@ -167,6 +185,61 @@ def run_season(
                 print(f"  Merged player_stats columns per stint: {list(available.values())}")
         elif verbose:
             print("  player_stats unavailable for this season")
+
+    # ── Defensive pass exposure (per-stint denominator for pressure rate) ──
+    # Player snap share × team pass plays defended.
+    #   player_snap_share = player_def_snaps / team_total_def_plays
+    #   team_total_def_plays = max defense_snaps per team-game, summed across games
+    #     (the team plays one defensive snap per play; max across defenders ≈ team's
+    #      total defensive plays, since at least one defender is always on the field).
+    if config.compute_pass_exposure:
+        if verbose:
+            print("\nComputing pass exposure for defensive pressure rate...")
+        team_pass_plays = (
+            pbp[
+                (pbp["play_type"] == "pass")
+                & (pbp["season_type"].isin(config.pbp_season_types))
+                & (pbp["defteam"].notna())
+            ]
+            .groupby("defteam", as_index=False)
+            .size()
+            .rename(columns={"defteam": "team", "size": "team_pass_plays_defended"})
+        )
+        if "defense_snaps" in snaps.columns:
+            # Team total defensive plays = sum across games of (max defender snaps in that game).
+            # That equals the number of defensive snaps the team itself played.
+            team_def_plays = (
+                snaps.groupby(["team", "game_id"], as_index=False)["defense_snaps"]
+                .max()
+                .groupby("team", as_index=False)["defense_snaps"]
+                .sum()
+                .rename(columns={"defense_snaps": "team_total_def_plays"})
+            )
+            # Per-(player, team) defensive snaps
+            player_def_snaps = (
+                snaps[snaps["position"].isin(config.snap_positions)]
+                .groupby(["player", "pfr_player_id", "position", "team"], as_index=False)["defense_snaps"]
+                .sum()
+                .rename(columns={"defense_snaps": "player_def_snaps"})
+            )
+            exposure = (
+                player_def_snaps
+                .merge(team_def_plays, on="team", how="left")
+                .merge(team_pass_plays, on="team", how="left")
+            )
+            exposure["pass_plays_exposure"] = (
+                exposure["team_pass_plays_defended"]
+                * (
+                    exposure["player_def_snaps"]
+                    / exposure["team_total_def_plays"].replace(0, np.nan)
+                )
+            )
+            keys = ["player", "pfr_player_id", "position", "team"]
+            keys = [k for k in keys if k in population.columns]
+            population = population.merge(
+                exposure[keys + ["pass_plays_exposure", "player_def_snaps", "team_pass_plays_defended"]],
+                on=keys, how="left",
+            )
 
     # ── Filter PBP: play types + season types (Bug 3 fix) ────────
     pbp_filtered = pbp[
@@ -303,6 +376,16 @@ def run_season(
     population["recent_team"] = population["team"]
     population["season_year"] = season
     population["games"] = population["games_played"]
+
+    # Legacy aliases so older pages that read `player_name` / `def_snaps`
+    # continue to work alongside the standardized `player_display_name` /
+    # `off_snaps` names introduced by the new pipeline.
+    if "player_name" not in population.columns:
+        population["player_name"] = population["player_display_name"]
+    if config.snap_column == "defense_snaps" and "def_snaps" not in population.columns:
+        population["def_snaps"] = population["off_snaps"]
+    if config.snap_column == "st_snaps" and "st_snaps" not in population.columns:
+        population["st_snaps"] = population["off_snaps"]
 
     if verbose:
         print(f"\n  Season {season}: {len(population)} players processed")
