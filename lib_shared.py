@@ -332,3 +332,35 @@ def apply_algo_weights(algo: dict, bundles: dict):
     for bk in bundles:
         st.session_state[f"bundle_{bk}"] = bw.get(bk, 0)
     st.session_state.loaded_algo = algo
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Metric picker — third selector that lets fans sort a leaderboard by
+# any single nerd metric instead of the user-weighted composite.
+# ──────────────────────────────────────────────────────────────────────
+
+def metric_picker(metrics, default_label="Your score", key="metric_picker",
+                   label="🔍 Sort leaderboard by"):
+    """Render a dropdown that lets the user pick a sort metric.
+
+    Args:
+        metrics: dict {display_label: (column_name, ascending)}.
+                 e.g., {"Receiving yards": ("rec_yards", False),
+                        "INT rate": ("int_rate", True)}
+        default_label: which option to default to. "Your score" is always
+                       inserted as the first option (sorts by composite score).
+        key: streamlit widget key.
+        label: dropdown label.
+
+    Returns:
+        (selected_label, column_name, ascending) — the column to sort by
+        and the direction. When "Your score" is selected, returns
+        ("Your score", "score", False).
+    """
+    import streamlit as st
+    full = {"Your score": ("score", False), **metrics}
+    options = list(full.keys())
+    default_idx = options.index(default_label) if default_label in options else 0
+    selected = st.selectbox(label, options=options, index=default_idx, key=key)
+    col, ascending = full[selected]
+    return selected, col, ascending

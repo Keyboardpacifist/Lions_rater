@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS, display_abbr
 from career_arc import career_arc_section
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, metric_picker, score_players
 
 st.set_page_config(page_title="LB Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -332,10 +332,37 @@ if len(players) == 0:
     st.warning("No players found.")
     st.stop()
 players = score_players(players, effective_weights)
+
+# Compute total tackles for sort
+players["_tackles_total"] = (
+    players.get("def_tackles_solo", pd.Series([float("nan")] * len(players))).fillna(0)
+    + players.get("def_tackle_assists", pd.Series([float("nan")] * len(players))).fillna(0)
+)
+
+# Metric picker
+LB_METRICS = {
+    "Tackles (total)": ("_tackles_total", False),
+    "Solo tackles": ("def_tackles_solo", False),
+    "Tackles for loss": ("def_tackles_for_loss", False),
+    "Sacks": ("def_sacks", False),
+    "Interceptions": ("def_interceptions", False),
+    "Passes defended": ("def_pass_defended", False),
+    "Forced fumbles": ("def_fumbles_forced", False),
+    "Tackles per game": ("tackles_per_game", False),
+    "TFL per game": ("tfl_per_game", False),
+    "Sacks per game": ("sacks_per_game", False),
+    "Tackles per snap": ("tackles_per_snap", False),
+    "Solo tackle rate": ("solo_tackle_rate", False),
+    "Missed tackle % (lower better)": ("pfr_missed_tackle_pct", True),
+}
+sort_label, sort_col, sort_ascending = metric_picker(LB_METRICS, key="lb_metric_picker")
 total_weight = sum(effective_weights.values())
 if total_weight == 0:
     st.info("All sliders are at zero — slide at least one to the right to see rankings.")
-players = players.sort_values("score", ascending=False).reset_index(drop=True)
+if sort_col in players.columns:
+    players = players.sort_values(sort_col, ascending=sort_ascending, na_position="last").reset_index(drop=True)
+else:
+    players = players.sort_values("score", ascending=False).reset_index(drop=True)
 players.index = players.index + 1
 
 # ══════════════════════════════════════════════════════════════

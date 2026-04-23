@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS, display_abbr
 from career_arc import career_arc_section
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, metric_picker, score_players
 
 st.set_page_config(page_title="QB Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -339,9 +339,36 @@ qbs = df[df["attempts"].fillna(0) >= min_attempts].copy()
 
 if len(qbs) == 0: st.warning("No QBs match the current filter."); st.stop()
 qbs = score_players(qbs, effective_weights)
+
+# Metric picker — sort leaderboard by any nerd metric
+QB_METRICS = {
+    "Passing yards": ("passing_yards", False),
+    "Passing TDs": ("passing_tds", False),
+    "Attempts": ("attempts", False),
+    "Completions": ("completions", False),
+    "Completion %": ("completion_pct", False),
+    "Yards per attempt": ("yards_per_attempt", False),
+    "TD rate": ("td_rate", False),
+    "INT rate (lower better)": ("int_rate", True),
+    "Sack rate (lower better)": ("sack_rate", True),
+    "Turnover rate (lower better)": ("turnover_rate", True),
+    "EPA per play": ("pass_epa_per_play", False),
+    "CPOE": ("passing_cpoe", False),
+    "Pass success rate": ("pass_success_rate", False),
+    "First-down rate": ("first_down_rate", False),
+    "Air yards per attempt": ("air_yards_per_attempt", False),
+    "Passing yds per game": ("passing_yards_per_game", False),
+    "Passing TDs per game": ("passing_tds_per_game", False),
+    "Rushing yds per game": ("rush_yards_per_game", False),
+    "Rush EPA per carry": ("rush_epa_per_carry", False),
+}
+sort_label, sort_col, sort_ascending = metric_picker(QB_METRICS, key="qb_metric_picker")
 total_weight = sum(effective_weights.values())
 if total_weight == 0: st.info("All sliders are at zero — slide at least one to the right to see rankings.")
-qbs = qbs.sort_values("score", ascending=False).reset_index(drop=True)
+if sort_col in qbs.columns:
+    qbs = qbs.sort_values(sort_col, ascending=sort_ascending, na_position="last").reset_index(drop=True)
+else:
+    qbs = qbs.sort_values("score", ascending=False).reset_index(drop=True)
 qbs.index = qbs.index + 1
 
 # ══════════════════════════════════════════════════════════════

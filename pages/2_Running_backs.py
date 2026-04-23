@@ -39,6 +39,7 @@ from lib_shared import (
     compute_effective_weights,
     get_algorithm_by_slug,
     inject_css,
+    metric_picker,
     score_players,
 )
 
@@ -661,11 +662,38 @@ if len(filtered) == 0:
 
 filtered = score_players(filtered, effective_weights)
 
+# Metric picker — sort leaderboard by any nerd metric
+RB_METRICS = {
+    "Rushing yards": ("rush_yards", False),
+    "Rushing TDs": ("rush_tds", False),
+    "Carries": ("carries", False),
+    "Receptions": ("receptions", False),
+    "Yards per carry": ("yards_per_carry", False),
+    "EPA per rush": ("epa_per_rush", False),
+    "Rush success rate": ("rush_success_rate", False),
+    "Snap share": ("snap_share", False),
+    "Touches per game": ("touches_per_game", False),
+    "Targets per game": ("targets_per_game", False),
+    "Explosive run rate (10+)": ("explosive_run_rate", False),
+    "15+ yard run rate": ("explosive_15_rate", False),
+    "Red zone carry share": ("rz_carry_share", False),
+    "Goal-line TD rate": ("goal_line_td_rate", False),
+    "Yards after contact / att": ("yards_after_contact_per_att", False),
+    "Yards before contact / att": ("yards_before_contact_per_att", False),
+    "Broken tackles / att": ("broken_tackles_per_att", False),
+    "RYOE per attempt (NGS)": ("ryoe_per_att", False),
+    "Receiving EPA / target": ("rec_epa_per_target", False),
+}
+sort_label, sort_col, sort_ascending = metric_picker(RB_METRICS, key="rb_metric_picker")
+
 total_weight = sum(effective_weights.values())
 if total_weight == 0:
     st.info("All weights are zero — drag some sliders to start ranking.")
 
-filtered = filtered.sort_values("score", ascending=False).reset_index(drop=True)
+if sort_col in filtered.columns:
+    filtered = filtered.sort_values(sort_col, ascending=sort_ascending, na_position="last").reset_index(drop=True)
+else:
+    filtered = filtered.sort_values("score", ascending=False).reset_index(drop=True)
 filtered.index = filtered.index + 1
 
 # Compute sample size as % of group leader's carries

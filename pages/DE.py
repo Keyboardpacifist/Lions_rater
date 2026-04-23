@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS, display_abbr
 from career_arc import career_arc_section
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, metric_picker, score_players
 
 st.set_page_config(page_title="DE Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -358,10 +358,31 @@ if len(des) == 0:
     st.warning("No DEs found.")
     st.stop()
 des = score_players(des, effective_weights)
+
+# Metric picker — sort by any nerd metric
+DE_METRICS = {
+    "Sacks": ("def_sacks", False),
+    "QB hits": ("def_qb_hits", False),
+    "Tackles for loss": ("def_tackles_for_loss", False),
+    "Pressures (PFR)": ("pfr_pressures", False),
+    "Pressure rate": ("pressure_rate", False),
+    "Sacks per game": ("sacks_per_game", False),
+    "QB hits per game": ("qb_hits_per_game", False),
+    "TFL per game": ("tfl_per_game", False),
+    "Tackles per snap": ("tackles_per_snap", False),
+    "Forced fumbles per game": ("forced_fumbles_per_game", False),
+    "Passes defended per game": ("passes_defended_per_game", False),
+    "Solo tackle rate": ("solo_tackle_rate", False),
+    "Missed tackle % (lower better)": ("pfr_missed_tackle_pct", True),
+}
+sort_label, sort_col, sort_ascending = metric_picker(DE_METRICS, key="de_metric_picker")
 total_weight = sum(effective_weights.values())
 if total_weight == 0:
     st.info("All sliders are at zero — slide at least one to the right to see rankings.")
-des = des.sort_values("score", ascending=False).reset_index(drop=True)
+if sort_col in des.columns:
+    des = des.sort_values(sort_col, ascending=sort_ascending, na_position="last").reset_index(drop=True)
+else:
+    des = des.sort_values("score", ascending=False).reset_index(drop=True)
 des.index = des.index + 1
 
 # ══════════════════════════════════════════════════════════════
