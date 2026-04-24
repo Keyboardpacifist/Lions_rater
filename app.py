@@ -423,7 +423,31 @@ else:
     def load_college_position(fname):
         path = COLLEGE_DATA_DIR / fname
         if not path.exists(): return pd.DataFrame()
-        return pd.read_parquet(path)
+        df = pd.read_parquet(path)
+
+        # Merge in CFBD-enriched columns (EPA + usage + downs splits) when
+        # available. We match on (player_id, season). Existing columns win
+        # on collisions so the basic CFBD stats already in the file aren't
+        # overwritten by the enrichment file's potentially-different values.
+        pos_key = fname.replace("college_", "").replace("_all_seasons.parquet", "").lower()
+        adv_path = COLLEGE_DATA_DIR / f"college_{pos_key}_cfbd_advanced.parquet"
+        if adv_path.exists():
+            adv = pd.read_parquet(adv_path)
+            # Cols to bring across — anything advanced not already in the base
+            advanced_cols = [
+                c for c in adv.columns
+                if (c.startswith("epa_") or c.startswith("usage_"))
+            ]
+            if advanced_cols and "player_id" in adv.columns and "season" in adv.columns:
+                merge_keys = ["player_id", "season"]
+                # Coerce to string on both sides for a clean join
+                df["player_id"] = df["player_id"].astype(str)
+                adv["player_id"] = adv["player_id"].astype(str)
+                df = df.merge(
+                    adv[merge_keys + advanced_cols].drop_duplicates(subset=merge_keys),
+                    on=merge_keys, how="left",
+                )
+        return df
 
     @st.cache_data
     def load_enrichment(fname):
@@ -540,51 +564,97 @@ else:
             st.caption(f"📋 {n_combine} combine invites + recruits from 2022-2024 still playing.")
 
     # ── Position configs with bundles ─────────────────────
+    # Offensive positions also get CFBD-enriched z-cols (EPA per play, usage)
+    # via the merge in load_college_position(). We list them here so they
+    # appear in the metric picker and the radar / leaderboard hover.
     POSITION_FILES = {
         "QB": ("college_qb_all_seasons.parquet",
-               ["completion_pct_z", "td_rate_z", "int_rate_z", "yards_per_attempt_z", "pass_tds_z", "rush_yards_total_z"],
+               ["completion_pct_z", "td_rate_z", "int_rate_z", "yards_per_attempt_z", "pass_tds_z", "rush_yards_total_z",
+                "epa_per_play_avg_z", "epa_per_pass_avg_z", "epa_third_down_avg_z", "epa_passing_downs_avg_z",
+                "usage_overall_z", "usage_pass_z", "usage_third_down_z", "usage_passing_downs_z"],
                {"completion_pct_z": "Comp %", "td_rate_z": "TD rate", "int_rate_z": "INT rate",
-                "yards_per_attempt_z": "Yds/att", "pass_tds_z": "Pass TDs", "rush_yards_total_z": "Rush yds"}),
+                "yards_per_attempt_z": "Yds/att", "pass_tds_z": "Pass TDs", "rush_yards_total_z": "Rush yds",
+                "epa_per_play_avg_z": "EPA/play", "epa_per_pass_avg_z": "EPA/pass",
+                "epa_third_down_avg_z": "EPA on 3rd down", "epa_passing_downs_avg_z": "EPA on passing downs",
+                "usage_overall_z": "Snap usage %", "usage_pass_z": "Pass usage %",
+                "usage_third_down_z": "3rd-down usage %", "usage_passing_downs_z": "Passing-down usage %"}),
         "WR": ("college_wr_all_seasons.parquet",
-               ["rec_yards_total_z", "rec_tds_total_z", "receptions_total_z", "yards_per_rec_z"],
+               ["rec_yards_total_z", "rec_tds_total_z", "receptions_total_z", "yards_per_rec_z",
+                "epa_per_play_avg_z", "epa_per_pass_avg_z", "epa_third_down_avg_z",
+                "usage_overall_z", "usage_pass_z", "usage_third_down_z"],
                {"rec_yards_total_z": "Rec yds", "rec_tds_total_z": "Rec TDs",
-                "receptions_total_z": "Receptions", "yards_per_rec_z": "Yds/rec"}),
+                "receptions_total_z": "Receptions", "yards_per_rec_z": "Yds/rec",
+                "epa_per_play_avg_z": "EPA/play", "epa_per_pass_avg_z": "EPA/target (CFBD)",
+                "epa_third_down_avg_z": "EPA on 3rd down",
+                "usage_overall_z": "Snap usage %", "usage_pass_z": "Pass tgt %",
+                "usage_third_down_z": "3rd-down tgt %"}),
         "TE": ("college_te_all_seasons.parquet",
-               ["rec_yards_total_z", "rec_tds_total_z", "receptions_total_z", "yards_per_rec_z"],
+               ["rec_yards_total_z", "rec_tds_total_z", "receptions_total_z", "yards_per_rec_z",
+                "epa_per_play_avg_z", "epa_per_pass_avg_z",
+                "usage_overall_z", "usage_pass_z"],
                {"rec_yards_total_z": "Rec yds", "rec_tds_total_z": "Rec TDs",
-                "receptions_total_z": "Receptions", "yards_per_rec_z": "Yds/rec"}),
+                "receptions_total_z": "Receptions", "yards_per_rec_z": "Yds/rec",
+                "epa_per_play_avg_z": "EPA/play", "epa_per_pass_avg_z": "EPA/target (CFBD)",
+                "usage_overall_z": "Snap usage %", "usage_pass_z": "Pass tgt %"}),
         "RB": ("college_rb_all_seasons.parquet",
-               ["rush_yards_total_z", "rush_tds_total_z", "yards_per_carry_z", "total_yards_z", "receptions_total_z"],
+               ["rush_yards_total_z", "rush_tds_total_z", "yards_per_carry_z", "total_yards_z", "receptions_total_z",
+                "epa_per_play_avg_z", "epa_per_rush_avg_z", "epa_per_pass_avg_z",
+                "usage_overall_z", "usage_rush_z", "usage_pass_z"],
                {"rush_yards_total_z": "Rush yds", "rush_tds_total_z": "Rush TDs",
-                "yards_per_carry_z": "Yds/carry", "total_yards_z": "Total yds", "receptions_total_z": "Receptions"}),
+                "yards_per_carry_z": "Yds/carry", "total_yards_z": "Total yds", "receptions_total_z": "Receptions",
+                "epa_per_play_avg_z": "EPA/play", "epa_per_rush_avg_z": "EPA/rush",
+                "epa_per_pass_avg_z": "EPA/target (CFBD)",
+                "usage_overall_z": "Snap usage %", "usage_rush_z": "Rush usage %", "usage_pass_z": "Pass tgt %"}),
         "DE": ("college_def_all_seasons.parquet",
-                ["sacks_per_game_z", "tfl_per_game_z", "qb_hurries_per_game_z", "tackles_per_game_z", "pressure_rate_z"],
+                ["sacks_per_game_z", "tfl_per_game_z", "qb_hurries_per_game_z", "tackles_per_game_z",
+                 "pressure_rate_z", "splash_plays_per_game_z", "tfl_share_z",
+                 "pressure_conversion_rate_z"],
                 {"sacks_per_game_z": "Sacks/gm", "tfl_per_game_z": "TFL/gm",
                  "qb_hurries_per_game_z": "QB hurries/gm", "tackles_per_game_z": "Tackles/gm",
-                 "pressure_rate_z": "Pressure rate"}),
+                 "pressure_rate_z": "Pressure rate",
+                 "splash_plays_per_game_z": "Splash plays/gm",
+                 "tfl_share_z": "TFL share (% of tackles)",
+                 "pressure_conversion_rate_z": "Pressure conv rate (sacks/pressures)"}),
         "DT": ("college_def_all_seasons.parquet",
-                ["sacks_per_game_z", "tfl_per_game_z", "qb_hurries_per_game_z", "tackles_per_game_z", "pressure_rate_z"],
+                ["sacks_per_game_z", "tfl_per_game_z", "qb_hurries_per_game_z", "tackles_per_game_z",
+                 "pressure_rate_z", "splash_plays_per_game_z", "tfl_share_z",
+                 "pressure_conversion_rate_z"],
                 {"sacks_per_game_z": "Sacks/gm", "tfl_per_game_z": "TFL/gm",
                  "qb_hurries_per_game_z": "QB hurries/gm", "tackles_per_game_z": "Tackles/gm",
-                 "pressure_rate_z": "Pressure rate"}),
+                 "pressure_rate_z": "Pressure rate",
+                 "splash_plays_per_game_z": "Splash plays/gm",
+                 "tfl_share_z": "TFL share (% of tackles)",
+                 "pressure_conversion_rate_z": "Pressure conv rate (sacks/pressures)"}),
         "LB": ("college_def_all_seasons.parquet",
                 ["tackles_per_game_z", "solo_tackles_per_game_z", "tfl_per_game_z", "sacks_per_game_z",
-                 "pd_per_game_z", "int_per_game_z"],
+                 "pd_per_game_z", "int_per_game_z",
+                 "splash_plays_per_game_z", "tfl_share_z", "ball_production_per_game_z"],
                 {"tackles_per_game_z": "Tackles/gm", "solo_tackles_per_game_z": "Solo tkl/gm",
                  "tfl_per_game_z": "TFL/gm", "sacks_per_game_z": "Sacks/gm",
-                 "pd_per_game_z": "PD/gm", "int_per_game_z": "INT/gm"}),
+                 "pd_per_game_z": "PD/gm", "int_per_game_z": "INT/gm",
+                 "splash_plays_per_game_z": "Splash plays/gm",
+                 "tfl_share_z": "TFL share (penetration)",
+                 "ball_production_per_game_z": "Ball production/gm (PD+INT)"}),
         "CB": ("college_def_all_seasons.parquet",
                 ["pd_per_game_z", "int_per_game_z", "tackles_per_game_z",
-                 "solo_tackles_per_game_z", "tfl_per_game_z"],
+                 "solo_tackles_per_game_z", "tfl_per_game_z",
+                 "ball_production_per_game_z", "int_per_pd_ratio_z", "splash_plays_per_game_z"],
                 {"pd_per_game_z": "PD/gm", "int_per_game_z": "INT/gm",
                  "tackles_per_game_z": "Tackles/gm", "solo_tackles_per_game_z": "Solo tkl/gm",
-                 "tfl_per_game_z": "TFL/gm"}),
+                 "tfl_per_game_z": "TFL/gm",
+                 "ball_production_per_game_z": "Ball production/gm (PD+INT)",
+                 "int_per_pd_ratio_z": "INT-per-PD ratio (instinct)",
+                 "splash_plays_per_game_z": "Splash plays/gm"}),
         "S": ("college_def_all_seasons.parquet",
                 ["pd_per_game_z", "int_per_game_z", "tackles_per_game_z",
-                 "solo_tackles_per_game_z", "tfl_per_game_z"],
+                 "solo_tackles_per_game_z", "tfl_per_game_z",
+                 "splash_plays_per_game_z", "ball_production_per_game_z", "int_per_pd_ratio_z"],
                 {"pd_per_game_z": "PD/gm", "int_per_game_z": "INT/gm",
                  "tackles_per_game_z": "Tackles/gm", "solo_tackles_per_game_z": "Solo tkl/gm",
-                 "tfl_per_game_z": "TFL/gm"}),
+                 "tfl_per_game_z": "TFL/gm",
+                 "splash_plays_per_game_z": "Splash plays/gm",
+                 "ball_production_per_game_z": "Ball production/gm (PD+INT)",
+                 "int_per_pd_ratio_z": "INT-per-PD ratio (instinct)"}),
     }
 
     # NFL position -> college pos_group filter values (matches college_data.py).
@@ -981,9 +1051,11 @@ else:
         else:
             filtered = filtered.sort_values(score_col, ascending=False)
 
-        # Cap the leaderboard for FBS-wide views so the page stays usable
+        # Cap the leaderboard for non-school views so the page stays usable.
+        # 25 expanders × multiple sub-charts is the upper bound of "renders
+        # in a reasonable time"; bigger pools should drill into a school.
         if school_is_all:
-            filtered = filtered.head(50)
+            filtered = filtered.head(25)
 
         # ── Summary table ─────────────────────────────────
         display_rows = []
@@ -1041,12 +1113,9 @@ else:
             st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
 
         # ── Player expanders ──────────────────────────────
-        # Skip the heavy per-player panels in FBS-wide / conference-wide
-        # views (would render 50 expanders × 5 positions = 250 per page).
-        # Pick a school to drill into individual player detail.
+        # Top-25 cap above keeps these usable in FBS-wide / conference views.
         if school_is_all:
-            st.caption("💡 Pick a specific school in the dropdown above to expand individual player profiles (radar, career arc, recruiting, combine).")
-            continue
+            st.caption(f"💡 Showing top {len(filtered)} expanders below. Pick a specific school for the full roster.")
         for _, row in filtered.iterrows():
             name = row.get("player", "—")
             comp = row.get("composite_z", np.nan)
@@ -1258,11 +1327,41 @@ else:
                             st.caption(f"Portal: {' · '.join(portal_lines)}")
 
                 with pc2:
-                    # ── Radar chart ───────────────────────
+                    # ── Radar chart with year picker ─────
+                    college_career_df = df[df["player"] == name]
+                    radar_year_options = sorted(
+                        set(int(s) for s in college_career_df[season_col].dropna().unique()),
+                        reverse=True,
+                    )
+                    radar_year_options_full = (
+                        radar_year_options + (["All-career mean"] if len(radar_year_options) > 1 else [])
+                    )
+                    try:
+                        radar_default_idx = radar_year_options_full.index(int(selected_college_season))
+                    except (ValueError, TypeError):
+                        radar_default_idx = 0
+                    radar_year_choice = st.selectbox(
+                        "Radar season",
+                        options=radar_year_options_full,
+                        index=radar_default_idx,
+                        key=f"college_radar_year_{pos_name}_{name}",
+                        format_func=lambda v: f"Season {v}" if isinstance(v, int) else v,
+                    )
+                    if radar_year_choice == "All-career mean":
+                        radar_source = college_career_df.select_dtypes(include="number").mean()
+                    else:
+                        season_rows = college_career_df[college_career_df[season_col] == radar_year_choice]
+                        if len(season_rows) == 1:
+                            radar_source = season_rows.iloc[0]
+                        elif len(season_rows) > 1:
+                            radar_source = season_rows.select_dtypes(include="number").mean()
+                        else:
+                            radar_source = row
+
                     radar_axes, radar_values = [], []
                     for z_col, label in labels.items():
-                        if z_col not in row.index: continue
-                        z = row.get(z_col)
+                        if z_col not in radar_source.index: continue
+                        z = radar_source.get(z_col)
                         if pd.isna(z): continue
                         p = zscore_to_percentile(z)
                         radar_axes.append(label)

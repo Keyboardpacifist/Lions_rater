@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
 from career_arc import career_arc_section
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, radar_season_row, score_players
 
 st.set_page_config(page_title="Lions Kicker Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -250,6 +250,12 @@ with c2:
     st.markdown("**Kicker profile** (percentiles vs. league kickers)")
     st.caption("Solid blue = this player. Dashed gray = league kicker average.")
     all_kickers = load_kicker_data()
+    player_career = all_kickers[all_kickers["player_id"] == player.get("player_id")] if "player_id" in all_kickers.columns else all_kickers[0:0]
+    radar_row = radar_season_row(player_career, selected_season,
+                                  season_col="season_year",
+                                  key=f"k_radar_year_{player.get('player_id', '')}")
+    if radar_row is None:
+        radar_row = player
     season_pool = all_kickers[all_kickers["season_year"] == selected_season] if "season_year" in all_kickers.columns else all_kickers
     radar_bench = {z: season_pool[z].mean() for z in RADAR_STATS if z in season_pool.columns and season_pool[z].notna().any()}
     radar_bench_raw = {}
@@ -257,7 +263,7 @@ with c2:
         raw_col = RAW_COL_MAP.get(z)
         if raw_col and raw_col in season_pool.columns and season_pool[raw_col].notna().any():
             radar_bench_raw[z] = season_pool[raw_col].mean()
-    fig = build_radar_figure(player, stat_labels, stat_methodology, benchmark=radar_bench, benchmark_raw=radar_bench_raw)
+    fig = build_radar_figure(radar_row, stat_labels, stat_methodology, benchmark=radar_bench, benchmark_raw=radar_bench_raw)
     if fig: st.plotly_chart(fig, use_container_width=True)
 
 career_arc_section(
