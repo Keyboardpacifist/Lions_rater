@@ -666,6 +666,178 @@ else:
         "S":  ["DB"],
     }
 
+    # ── Typical-starter benchmark helpers ─────────────────
+    # Mirrors career_arc.COLLEGE_VOLUME_COL / COLLEGE_STARTER_TOP_N. The
+    # "typical starter" pool for a (season, position) is the top-N players
+    # by the position's natural volume column, after pos_group + games
+    # filters for defense.
+    COLLEGE_RADAR_VOLUME = {
+        "QB": "pass_att",
+        "WR": "receptions_total",
+        "TE": "receptions_total",
+        "RB": "carries_total",
+        "DE": "tackles_total",
+        "DT": "tackles_total",
+        "LB": "tackles_total",
+        "CB": "tackles_total",
+        "S":  "tackles_total",
+    }
+    COLLEGE_RADAR_TOP_N = 130
+    COLLEGE_RADAR_DEF_MIN_GAMES = 4  # matches derived_defense.py eligibility
+
+    def _typical_starter_pool(full_df, season, pos_name, season_col):
+        """Slice `full_df` down to the 'typical starting <position>' pool
+        for one season. Defense filters by pos_group + games >= 4 floor;
+        then top-N by the position's volume column (tackles for defense,
+        receptions for WR/TE, carries for RB, pass attempts for QB)."""
+        if season_col not in full_df.columns:
+            return full_df.iloc[0:0]
+        pool = full_df[full_df[season_col] == season]
+        if pos_name in COLLEGE_DEF_POS_FILTER and "pos_group" in pool.columns:
+            pool = pool[pool["pos_group"].isin(COLLEGE_DEF_POS_FILTER[pos_name])]
+            if "games" in pool.columns:
+                pool = pool[pool["games"].fillna(0) >= COLLEGE_RADAR_DEF_MIN_GAMES]
+        sort_col = COLLEGE_RADAR_VOLUME.get(pos_name)
+        if sort_col and sort_col in pool.columns:
+            pool = pool.sort_values(sort_col, ascending=False).head(COLLEGE_RADAR_TOP_N)
+        return pool
+
+    def _starter_label(pos_display):
+        """'Wide Receivers' -> 'Typical starting wide receiver'."""
+        base = pos_display.lower()
+        if base.endswith("s"):
+            base = base[:-1]
+        return f"Typical starting {base}"
+
+    def _render_player_radar(player_name, key_prefix, full_df, labels_dict,
+                              season_col, pos_name, pos_display, default_season,
+                              header_prefix=None):
+        """Render a season picker + radar polygon for one player, with the
+        typical-starter benchmark layered on top. Used both for the main
+        player and for the comparison player."""
+        career = full_df[full_df["player"] == player_name]
+        if len(career) == 0:
+            st.caption(f"No data found for {player_name}.")
+            return
+
+        year_options = sorted(
+            set(int(s) for s in career[season_col].dropna().unique()),
+            reverse=True,
+        )
+        year_options_full = (
+            year_options + (["All-career mean"] if len(year_options) > 1 else [])
+        )
+        try:
+            default_idx = year_options_full.index(int(default_season))
+        except (ValueError, TypeError):
+            default_idx = 0
+        year_choice = st.selectbox(
+            "Radar season",
+            options=year_options_full,
+            index=default_idx,
+            key=f"college_radar_year_{key_prefix}",
+            format_func=lambda v: f"Season {v}" if isinstance(v, int) else v,
+        )
+        if year_choice == "All-career mean":
+            radar_source = career.select_dtypes(include="number").mean()
+        else:
+            srows = career[career[season_col] == year_choice]
+            if len(srows) == 1:
+                radar_source = srows.iloc[0]
+            elif len(srows) > 1:
+                radar_source = srows.select_dtypes(include="number").mean()
+            else:
+                radar_source = career.iloc[0]
+
+        axes, vals, z_used = [], [], []
+        for z_col, label in labels_dict.items():
+            if z_col not in radar_source.index: continue
+            z = radar_source.get(z_col)
+            if pd.isna(z): continue
+            axes.append(label)
+            vals.append(zscore_to_percentile(z))
+            z_used.append(z_col)
+
+        if year_choice == "All-career mean":
+            bench_seasons = [int(s) for s in year_options]
+        else:
+            bench_seasons = [int(year_choice)]
+        bench_pcts, bench_raws = [], []
+        for z_col in z_used:
+            per_z, per_raw = [], []
+            raw_col = z_col.replace("_z", "")
+            for s in bench_seasons:
+                pool = _typical_starter_pool(full_df, s, pos_name, season_col)
+                if z_col in pool.columns:
+                    med_z = pool[z_col].dropna().median()
+                    if pd.notna(med_z): per_z.append(float(med_z))
+                if raw_col in pool.columns:
+                    med_raw = pool[raw_col].dropna().median()
+                    if pd.notna(med_raw): per_raw.append(float(med_raw))
+            bench_pcts.append(zscore_to_percentile(np.mean(per_z)) if per_z else None)
+            bench_raws.append(np.mean(per_raw) if per_raw else None)
+
+        if len(axes) < 3:
+            st.caption(f"Not enough metrics to render a radar for {player_name}.")
+            return
+
+        # Header is symmetric so the comparison stack reads the same on
+        # top and bottom — player name in the same spot for both rows.
+        suffix = f" ({header_prefix.lower()})" if header_prefix else ""
+        st.markdown(
+            f"**{player_name}** — Percentile profile vs. FBS {pos_display.lower()}{suffix}"
+        )
+        st.caption("50th = FBS average")
+
+        rfig = go.Figure()
+        rfig.add_trace(go.Scatterpolar(
+            r=vals + [vals[0]], theta=axes + [axes[0]],
+            fill="toself",
+            fillcolor="rgba(218, 165, 32, 0.25)",
+            line=dict(color="rgba(184, 134, 11, 0.9)", width=2),
+            marker=dict(size=6, color="rgba(184, 134, 11, 1)"),
+            name=player_name,
+            hovertemplate="<b>%{theta}</b><br>%{r:.0f}th pctl<extra></extra>",
+        ))
+        bench_label = _starter_label(pos_display)
+        has_bench = any(p is not None for p in bench_pcts)
+        if has_bench:
+            bv_clean = [p if p is not None else 50 for p in bench_pcts]
+            bench_hover = []
+            for ax, pct, raw in zip(axes, bv_clean, bench_raws):
+                raw_str = f"median: {raw:.2f} · " if raw is not None else ""
+                bench_hover.append(
+                    f"<b>{ax}</b><br>{bench_label}<br>{raw_str}{pct:.0f}th percentile"
+                )
+            bench_hover.append(bench_hover[0])
+            rfig.add_trace(go.Scatterpolar(
+                r=bv_clean + [bv_clean[0]],
+                theta=axes + [axes[0]],
+                mode="lines+markers",
+                line=dict(color="rgba(102, 102, 102, 0.9)", width=2, dash="dot"),
+                marker=dict(size=10, color="rgba(102, 102, 102, 0.95)",
+                            symbol="diamond", line=dict(width=2, color="white")),
+                name=bench_label,
+                hovertext=bench_hover, hoverinfo="text",
+            ))
+        rfig.update_layout(
+            polar=dict(
+                radialaxis=dict(visible=True, range=[0, 100],
+                                tickvals=[25, 50, 75, 100],
+                                ticktext=["25th", "50th", "75th", "100th"],
+                                tickfont=dict(size=9, color="#888"), gridcolor="#ddd"),
+                angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"),
+                bgcolor="rgba(0,0,0,0)",
+            ),
+            showlegend=has_bench,
+            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01,
+                        bgcolor="rgba(255,255,255,0.7)", bordercolor="#ccc",
+                        borderwidth=1, font=dict(size=10)),
+            margin=dict(l=60, r=60, t=20, b=20),
+            height=320, paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(rfig, use_container_width=True, key=f"radar_{key_prefix}")
+
     # ── Bundle definitions by position ────────────────────
     COLLEGE_BUNDLES = {
         "QB": {
@@ -889,75 +1061,193 @@ else:
         return " · ".join(parts) if parts else None
 
     # ── Helper: build career line chart ───────────────────
-    def build_career_chart(player_name, df, season_col, z_cols, labels, unique_key=""):
-        """Build career line chart with metric dropdown."""
+    # Color palette for multi-metric mode (first slot is the gold we use
+    # in single-metric mode, so single-then-multi visually carries over).
+    MULTI_METRIC_COLORS = [
+        "#B8860B", "#1f77b4", "#2ca02c", "#d62728", "#9467bd",
+        "#17becf", "#e377c2", "#8c564b", "#bcbd22", "#7f7f7f",
+    ]
+
+    def build_career_chart(player_name, df, season_col, z_cols, labels, unique_key="",
+                            pos_name=None, pos_display=None):
+        """Build career line chart with single- or multi-metric mode.
+
+        Single metric (default): selectbox + one gold line + dashed-gray
+        typical-starter benchmark.
+        Multi-metric: multiselect + one colored line per metric, no
+        benchmark (each metric has its own scale, so a single dotted line
+        wouldn't make sense), legend below the chart.
+        """
         all_player = df[df["player"] == player_name].sort_values(season_col)
         if len(all_player) < 2: return
 
-        # Compute composite for each season
         available_z = [c for c in z_cols if c in all_player.columns]
         all_player["composite_z"] = all_player[available_z].mean(axis=1)
 
         seasons = [int(s) for s in all_player[season_col].tolist()]
         teams = all_player["team"].tolist()
 
-        # Build metric options
         metric_options = {"Composite score": all_player["composite_z"].tolist()}
+        metric_to_col = {"Composite score": "composite_z"}
         for z_col in z_cols:
             if z_col in all_player.columns and all_player[z_col].notna().any():
                 label = labels.get(z_col, z_col.replace("_z", ""))
                 metric_options[label] = all_player[z_col].tolist()
+                metric_to_col[label] = z_col
+        all_metric_labels = list(metric_options.keys())
 
-        selected_metric = st.selectbox("Metric", options=list(metric_options.keys()),
-                                        index=0, key=f"college_metric_{player_name}_{unique_key}",
-                                        label_visibility="collapsed")
+        # ── Multi-metric toggle ───────────────────────────
+        multi_metric = st.checkbox(
+            "📊 Show multiple metrics",
+            key=f"multi_metric_{player_name}_{unique_key}",
+            help=("Overlay multiple metrics on the same chart. "
+                  "Each metric draws as its own colored line; the typical "
+                  "starter benchmark is hidden in this mode."),
+        )
 
-        values = metric_options[selected_metric]
-        percentiles = [zscore_to_percentile(v) if pd.notna(v) else None for v in values]
-
-        colors = []
-        for v in values:
-            if pd.isna(v): colors.append("#ccc")
-            elif v >= 1.0: colors.append("#B8860B")
-            elif v >= 0.0: colors.append("#DAA520")
-            elif v >= -1.0: colors.append("#CD853F")
-            else: colors.append("#A0522D")
-
-        hover_text = []
-        for s, v, p, t in zip(seasons, values, percentiles, teams):
-            if pd.notna(v):
-                pct_str = f"top {100 - int(p)}%" if p and p >= 50 else f"bottom {int(p)}%" if p else "—"
-                hover_text.append(f"<b>{s}</b> ({t})<br>{selected_metric}: {v:+.2f}<br>{pct_str} of FBS")
-            else:
-                hover_text.append(f"<b>{s}</b> ({t})<br>No data")
+        if multi_metric:
+            # `st.pills` renders every option as a clickable button/pill
+            # so the user can see all available metrics at once and
+            # toggle them on/off individually — closer to the "click
+            # buttons to add lines" behaviour than a multiselect caret.
+            # Default: just the composite so the starting state is one
+            # line and the user adds from there.
+            selected_metrics = st.pills(
+                "Metrics to overlay — click to add or remove lines",
+                options=all_metric_labels,
+                default=["Composite score"] if "Composite score" in all_metric_labels else all_metric_labels[:1],
+                selection_mode="multi",
+                key=f"multi_metric_pills_{player_name}_{unique_key}",
+            )
+            if not selected_metrics:
+                st.caption("Click at least one metric button above.")
+                return
+        else:
+            selected_metric = st.selectbox(
+                "Metric", options=all_metric_labels, index=0,
+                key=f"college_metric_{player_name}_{unique_key}",
+                label_visibility="collapsed",
+            )
+            selected_metrics = [selected_metric]
 
         fig = go.Figure()
         fig.add_hline(y=0, line_dash="dash", line_color="#888", line_width=1,
                       annotation_text="FBS avg", annotation_position="bottom left",
                       annotation_font_size=10, annotation_font_color="#888")
 
-        fig.add_trace(go.Scatter(
-            x=seasons, y=values, mode="lines+markers",
-            line=dict(color="#B8860B", width=3),
-            marker=dict(size=12, color=colors, line=dict(width=2, color="white")),
-            hovertext=hover_text, hoverinfo="text",
-        ))
+        # Plot each selected metric
+        all_y_for_axis = []
+        for i, metric in enumerate(selected_metrics):
+            values = metric_options[metric]
+            color = MULTI_METRIC_COLORS[i % len(MULTI_METRIC_COLORS)]
+            percentiles = [zscore_to_percentile(v) if pd.notna(v) else None for v in values]
 
-        all_valid = [v for v in values if pd.notna(v)]
-        if all_valid:
-            y_max = max(max(all_valid) + 0.5, 2.0)
-            y_min = min(min(all_valid) - 0.5, -2.0)
+            if multi_metric:
+                # Uniform color across the line — varying-marker-color in
+                # single mode is a player-by-player heat cue that doesn't
+                # translate when several metrics share the chart.
+                marker_colors = color
+                line_w = 2.5
+                marker_sz = 9
+            else:
+                marker_colors = [
+                    "#ccc" if pd.isna(v)
+                    else "#B8860B" if v >= 1.0
+                    else "#DAA520" if v >= 0.0
+                    else "#CD853F" if v >= -1.0
+                    else "#A0522D"
+                    for v in values
+                ]
+                line_w = 3
+                marker_sz = 12
+
+            hover_text = []
+            for s, v, p, t in zip(seasons, values, percentiles, teams):
+                if pd.notna(v):
+                    pct_str = f"top {100 - int(p)}%" if p and p >= 50 else f"bottom {int(p)}%" if p else "—"
+                    hover_text.append(f"<b>{s}</b> ({t})<br>{metric}: {v:+.2f}<br>{pct_str} of FBS")
+                else:
+                    hover_text.append(f"<b>{s}</b> ({t})<br>No data")
+
+            fig.add_trace(go.Scatter(
+                x=seasons, y=values, mode="lines+markers",
+                name=metric,
+                line=dict(color=color, width=line_w),
+                marker=dict(size=marker_sz, color=marker_colors,
+                            line=dict(width=2, color="white")),
+                hovertext=hover_text, hoverinfo="text",
+                showlegend=multi_metric,
+            ))
+            all_y_for_axis.extend(v for v in values if pd.notna(v))
+
+        # ── Typical-starter benchmark (single-metric mode only) ──
+        bench_xs = []
+        if not multi_metric and pos_name:
+            bench_col = metric_to_col.get(selected_metrics[0])
+            bench_ys, bench_hover = [], []
+            for s in seasons:
+                pool = _typical_starter_pool(df, s, pos_name, season_col)
+                if len(pool) == 0:
+                    continue
+                if bench_col == "composite_z":
+                    pool_avail = [c for c in z_cols if c in pool.columns]
+                    if not pool_avail: continue
+                    series = pool[pool_avail].mean(axis=1)
+                elif bench_col in pool.columns:
+                    series = pool[bench_col]
+                else:
+                    continue
+                med = series.dropna().median()
+                if pd.isna(med): continue
+                bench_xs.append(s)
+                bench_ys.append(float(med))
+                bench_hover.append(
+                    f"<b>{s} typical starter</b><br>{selected_metrics[0]}: {med:+.2f}"
+                )
+            if bench_xs:
+                starter_label = _starter_label(pos_display) if pos_display else "Typical starter"
+                fig.add_trace(go.Scatter(
+                    x=bench_xs, y=bench_ys, mode="lines+markers",
+                    line=dict(color="#666", width=2, dash="dot"),
+                    marker=dict(size=10, color="#666", symbol="diamond",
+                                line=dict(width=2, color="white")),
+                    hovertext=bench_hover, hoverinfo="text",
+                    name=starter_label, showlegend=True,
+                ))
+                all_y_for_axis.extend(bench_ys)
+
+        if all_y_for_axis:
+            y_max = max(max(all_y_for_axis) + 0.5, 2.0)
+            y_min = min(min(all_y_for_axis) - 0.5, -2.0)
             fig.add_hrect(y0=1.0, y1=y_max, fillcolor="rgba(184,134,11,0.05)", line_width=0)
             fig.add_hrect(y0=-1.0, y1=y_min, fillcolor="rgba(160,82,45,0.05)", line_width=0)
+
+        # Layout: legend at bottom in multi-metric mode, top-left otherwise.
+        if multi_metric:
+            legend_kwargs = dict(orientation="h", yanchor="top", y=-0.18,
+                                  xanchor="center", x=0.5,
+                                  bgcolor="rgba(255,255,255,0.7)",
+                                  bordercolor="#ccc", borderwidth=1,
+                                  font=dict(size=10))
+            chart_height, bottom_margin = 360, 80
+            y_title = "Z-score (vs. FBS avg)"
+        else:
+            legend_kwargs = dict(yanchor="top", y=0.99, xanchor="left", x=0.01,
+                                  bgcolor="rgba(255,255,255,0.7)",
+                                  bordercolor="#ccc", borderwidth=1,
+                                  font=dict(size=10))
+            chart_height, bottom_margin = 300, 50
+            y_title = selected_metrics[0]
 
         fig.update_layout(
             xaxis=dict(title="Season", tickmode="array", tickvals=seasons,
                        ticktext=[str(s) for s in seasons], gridcolor="#eee"),
-            yaxis=dict(title=selected_metric, gridcolor="#eee",
+            yaxis=dict(title=y_title, gridcolor="#eee",
                        zeroline=True, zerolinecolor="#888", zerolinewidth=1),
-            height=300, margin=dict(l=50, r=20, t=20, b=50),
+            height=chart_height, margin=dict(l=50, r=20, t=20, b=bottom_margin),
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            showlegend=False,
+            showlegend=multi_metric or bool(bench_xs),
+            legend=legend_kwargs,
         )
         st.plotly_chart(fig, use_container_width=True, key=f"career_chart_{unique_key}")
 
@@ -1327,79 +1617,102 @@ else:
                             st.caption(f"Portal: {' · '.join(portal_lines)}")
 
                 with pc2:
-                    # ── Radar chart with year picker ─────
-                    college_career_df = df[df["player"] == name]
-                    radar_year_options = sorted(
-                        set(int(s) for s in college_career_df[season_col].dropna().unique()),
-                        reverse=True,
+                    # ── Radar chart (factored helper) ─────
+                    _render_player_radar(
+                        player_name=name,
+                        key_prefix=f"{pos_name}_{name}",
+                        full_df=df, labels_dict=labels, season_col=season_col,
+                        pos_name=pos_name, pos_display=pos_display,
+                        default_season=selected_college_season,
                     )
-                    radar_year_options_full = (
-                        radar_year_options + (["All-career mean"] if len(radar_year_options) > 1 else [])
-                    )
-                    try:
-                        radar_default_idx = radar_year_options_full.index(int(selected_college_season))
-                    except (ValueError, TypeError):
-                        radar_default_idx = 0
-                    radar_year_choice = st.selectbox(
-                        "Radar season",
-                        options=radar_year_options_full,
-                        index=radar_default_idx,
-                        key=f"college_radar_year_{pos_name}_{name}",
-                        format_func=lambda v: f"Season {v}" if isinstance(v, int) else v,
-                    )
-                    if radar_year_choice == "All-career mean":
-                        radar_source = college_career_df.select_dtypes(include="number").mean()
-                    else:
-                        season_rows = college_career_df[college_career_df[season_col] == radar_year_choice]
-                        if len(season_rows) == 1:
-                            radar_source = season_rows.iloc[0]
-                        elif len(season_rows) > 1:
-                            radar_source = season_rows.select_dtypes(include="number").mean()
-                        else:
-                            radar_source = row
 
-                    radar_axes, radar_values = [], []
-                    for z_col, label in labels.items():
-                        if z_col not in radar_source.index: continue
-                        z = radar_source.get(z_col)
-                        if pd.isna(z): continue
-                        p = zscore_to_percentile(z)
-                        radar_axes.append(label)
-                        radar_values.append(p)
-
-                    if len(radar_axes) >= 3:
-                        st.markdown(f"**Percentile profile** vs. FBS {pos_display.lower()}")
-                        st.caption("50th = FBS average")
-                        rfig = go.Figure()
-                        rfig.add_trace(go.Scatterpolar(
-                            r=radar_values + [radar_values[0]],
-                            theta=radar_axes + [radar_axes[0]],
-                            fill="toself",
-                            fillcolor="rgba(218, 165, 32, 0.25)",
-                            line=dict(color="rgba(184, 134, 11, 0.9)", width=2),
-                            marker=dict(size=6, color="rgba(184, 134, 11, 1)"),
-                            hovertemplate="<b>%{theta}</b><br>%{r:.0f}th pctl<extra></extra>",
-                        ))
-                        rfig.update_layout(
-                            polar=dict(
-                                radialaxis=dict(visible=True, range=[0, 100],
-                                                tickvals=[25, 50, 75, 100],
-                                                ticktext=["25th", "50th", "75th", "100th"],
-                                                tickfont=dict(size=9, color="#888"), gridcolor="#ddd"),
-                                angularaxis=dict(tickfont=dict(size=11), gridcolor="#ddd"),
-                                bgcolor="rgba(0,0,0,0)",
-                            ),
-                            showlegend=False, margin=dict(l=60, r=60, t=20, b=20),
-                            height=320, paper_bgcolor="rgba(0,0,0,0)",
+                # ── Compare to another player (radar + line chart) ──
+                compare_active = st.checkbox(
+                    "🔍 Compare to another player",
+                    key=f"compare_active_{pos_name}_{name}",
+                    help=("Stack a second player's radar and line chart "
+                          "below the originals. Pick the same player to "
+                          "compare different seasons on the radar."),
+                )
+                compare_name = None
+                if compare_active:
+                    # Same-position pool only — radar axes are position-specific.
+                    pos_players = sorted(set(df["player"].dropna().unique()))
+                    if pos_players:
+                        # Default: first non-current player so the UI is
+                        # useful immediately; user can also pick the same
+                        # player to compare different seasons.
+                        default_compare = next(
+                            (p for p in pos_players if p != name), pos_players[0]
                         )
-                        st.plotly_chart(rfig, use_container_width=True, key=f"radar_{pos_name}_{name}")
+                        compare_name = st.selectbox(
+                            f"Comparison {pos_display[:-1].lower() if pos_display.endswith('s') else pos_display.lower()}",
+                            options=pos_players,
+                            index=pos_players.index(default_compare),
+                            key=f"compare_select_{pos_name}_{name}",
+                        )
+                    else:
+                        st.caption("No other players available to compare.")
+
+                # ── Compare radar (stacked directly below radar A) ──
+                if compare_name:
+                    cmp_pc1, cmp_pc2 = st.columns([1, 1])
+                    with cmp_pc1:
+                        # Compact profile strip for player B so the
+                        # stats-vs-radar layout matches player A's row.
+                        cmp_career = df[df["player"] == compare_name]
+                        if len(cmp_career) > 0:
+                            latest_season = int(cmp_career[season_col].max())
+                            latest_row = cmp_career[cmp_career[season_col] == latest_season].iloc[0]
+                            cmp_school = latest_row.get("team", "")
+                            cmp_conf = latest_row.get("conference", "")
+                            st.markdown(
+                                f"**{compare_name}** — {latest_season} {cmp_school}"
+                                + (f"  \n_{cmp_conf}_" if cmp_conf else "")
+                            )
+                            cmp_avail_z = [c for c in z_cols if c in cmp_career.columns]
+                            if cmp_avail_z:
+                                cmp_comp = latest_row[cmp_avail_z].mean()
+                                if pd.notna(cmp_comp):
+                                    cmp_pct = zscore_to_percentile(cmp_comp)
+                                    st.caption(
+                                        f"{latest_season} composite: {cmp_comp:+.2f} "
+                                        f"({format_percentile(cmp_pct)} of FBS {pos_display.lower()})"
+                                    )
+                    with cmp_pc2:
+                        _render_player_radar(
+                            player_name=compare_name,
+                            key_prefix=f"{pos_name}_{compare_name}_cmp_for_{name}",
+                            full_df=df, labels_dict=labels, season_col=season_col,
+                            pos_name=pos_name, pos_display=pos_display,
+                            default_season=selected_college_season,
+                            header_prefix="Comparison:",
+                        )
 
                 # ── Career line chart with metric dropdown ─
                 all_player_career = df[df["player"] == name].sort_values(season_col)
                 if len(all_player_career) >= 2:
-                    st.markdown("**College career arc**")
-                    build_career_chart(name, df, season_col, z_cols, labels, unique_key=f"{pos_name}_{name}")
-                    st.caption("Each point = one season vs. all FBS players at this position. 0.00 = FBS average.")
+                    st.markdown(f"**College career arc — {name}**")
+                    build_career_chart(name, df, season_col, z_cols, labels,
+                                        unique_key=f"{pos_name}_{name}",
+                                        pos_name=pos_name, pos_display=pos_display)
+                    st.caption(
+                        f"Each point = one season vs. all FBS players at this position. 0.00 = FBS average. "
+                        f"Dashed gray = {_starter_label(pos_display).lower()} (median of top {COLLEGE_RADAR_TOP_N} starters per season)."
+                    )
+
+                # ── Compare line chart (stacked below line chart A) ──
+                if compare_name:
+                    cmp_career = df[df["player"] == compare_name].sort_values(season_col)
+                    if len(cmp_career) >= 2:
+                        st.markdown(f"**College career arc — {compare_name}** (comparison)")
+                        build_career_chart(
+                            compare_name, df, season_col, z_cols, labels,
+                            unique_key=f"{pos_name}_{compare_name}_cmp_for_{name}",
+                            pos_name=pos_name, pos_display=pos_display,
+                        )
+                    elif len(cmp_career) == 1:
+                        st.caption(f"{compare_name} has only one season of data — no career arc to plot.")
 
                 # ── Statistical comps + college-to-pro prediction ─
                 try:
