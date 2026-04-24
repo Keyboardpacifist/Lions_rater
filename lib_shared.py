@@ -364,3 +364,61 @@ def metric_picker(metrics, default_label="Your score", key="metric_picker",
     selected = st.selectbox(label, options=options, index=default_idx, key=key)
     col, ascending = full[selected]
     return selected, col, ascending
+
+
+def radar_season_row(career_df, current_season, season_col="season_year",
+                      key="radar_year", label="Radar season"):
+    """Render a season dropdown above a radar chart and return the row
+    (Series) to use for the radar values.
+
+    Options: each season the player played, plus "All-career mean".
+    For traded players (multiple stints in a season), the season's row
+    is averaged across stints.
+
+    Args:
+        career_df: DataFrame containing all of this player's rows
+                   (already filtered to the one player).
+        current_season: the season currently selected on the page —
+                        used as the default selection.
+        season_col: column name for season year.
+        key: streamlit widget key.
+        label: dropdown label.
+
+    Returns:
+        pandas Series with the row values to plot.
+    """
+    import streamlit as st
+    import pandas as pd
+
+    if career_df is None or len(career_df) == 0 or season_col not in career_df.columns:
+        return None
+
+    seasons = sorted(set(int(s) for s in career_df[season_col].dropna().unique()), reverse=True)
+    if not seasons:
+        return None
+
+    options = [int(s) for s in seasons]
+    if len(seasons) > 1:
+        options = options + ["All-career mean"]
+
+    try:
+        default_idx = options.index(int(current_season))
+    except (ValueError, TypeError):
+        default_idx = 0
+
+    def _fmt(v):
+        return f"Season {v}" if isinstance(v, int) else v
+
+    selected = st.selectbox(label, options=options, index=default_idx,
+                             key=key, format_func=_fmt)
+
+    if selected == "All-career mean":
+        numeric = career_df.select_dtypes(include="number").mean()
+        return numeric
+
+    season_rows = career_df[career_df[season_col] == selected]
+    if len(season_rows) == 0:
+        return career_df.iloc[0]
+    if len(season_rows) == 1:
+        return season_rows.iloc[0]
+    return season_rows.select_dtypes(include="number").mean()

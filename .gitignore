@@ -39,6 +39,10 @@ coverage.xml
 
 # Data pipeline cache
 .data_cache/
+tools/cfbd_pipeline/.cache/
+
+# Local data archives (not for git)
+data.zip
 
 # Sensitive files — never commit these
 *.pdf

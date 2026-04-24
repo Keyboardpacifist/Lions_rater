@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS, display_abbr
 from career_arc import career_arc_section
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, metric_picker, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, metric_picker, radar_season_row, score_players
 
 st.set_page_config(page_title="WR Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -512,17 +512,22 @@ with c1:
 with c2:
     st.markdown("**Percentile profile vs. all league WRs**")
     st.caption("Solid blue = this player. Dashed gray = top-32 starter average.")
-    # Build the starter benchmark for this season
+    # Per-player career history → year picker for the radar
+    player_career = all_wrs_full[all_wrs_full["player_id"] == player.get("player_id")]
+    radar_row = radar_season_row(player_career, selected_season,
+                                  season_col="season_year",
+                                  key=f"wr_radar_year_{player.get('player_id', '')}")
+    if radar_row is None:
+        radar_row = player
     season_pool = all_wrs_full[all_wrs_full["season_year"] == selected_season]
     top32 = season_pool.sort_values("off_snaps", ascending=False).head(32)
     radar_bench = {z: top32[z].mean() for z in RADAR_STATS if z in top32.columns and top32[z].notna().any()}
-    # Raw means for the same stats (so hover shows e.g. "yds/target: 8.4")
     radar_bench_raw = {}
     for z in RADAR_STATS:
         raw_col = RAW_COL_MAP.get(z)
         if raw_col and raw_col in top32.columns and top32[raw_col].notna().any():
             radar_bench_raw[z] = top32[raw_col].mean()
-    fig = build_radar_figure(player, stat_labels, stat_methodology,
+    fig = build_radar_figure(radar_row, stat_labels, stat_methodology,
                               benchmark=radar_bench, benchmark_raw=radar_bench_raw)
     if fig: st.plotly_chart(fig, use_container_width=True)
 
