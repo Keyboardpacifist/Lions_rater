@@ -48,7 +48,104 @@ if mode == "NFL":
     current_idx = team_options.index(st.session_state.selected_team) if st.session_state.selected_team in team_options else 0
     AVAILABLE_SEASONS = list(range(2025, 2015, -1))
 
-    col_team, col_season, col_spacer = st.columns([2, 1, 3])
+    # ── Player index (cached) for quick search ────────────
+    # Hardcoded (position, file, optional row filter) so the search box
+    # can render BEFORE NFL_POSITION_CONFIGS is defined further down.
+    # Only positions surfaced on the landing leaderboard; jumping to a
+    # position the landing doesn't render would silently fail.
+    NFL_PLAYER_INDEX_FILES = [
+        ("QB", "league_qb_all_seasons.parquet", None),
+        ("WR", "league_wr_all_seasons.parquet", ("position", "WR")),
+        ("TE", "league_te_all_seasons.parquet", ("position", "TE")),
+        ("RB", "league_rb_all_seasons.parquet", None),
+        ("DE", "league_de_all_seasons.parquet", None),
+        ("DT", "league_dt_all_seasons.parquet", None),
+        ("LB", "league_lb_all_seasons.parquet", None),
+        ("Punter", "league_p_all_seasons.parquet", None),
+    ]
+
+    @st.cache_data
+    def _build_nfl_player_index():
+        """Returns sorted list of (player_name, recent_team, recent_season,
+        position_key). One row per player, using the most recent season
+        for the jump target so the leaderboard contains them."""
+        DATA_DIR_LOCAL = Path(__file__).resolve().parent / "data"
+        rows = []
+        for pos_key, fname, filt in NFL_PLAYER_INDEX_FILES:
+            path = DATA_DIR_LOCAL / fname
+            if not path.exists(): continue
+            try:
+                df = pd.read_parquet(path)
+            except Exception:
+                continue
+            if filt:
+                fcol, fval = filt
+                if fcol in df.columns:
+                    df = df[df[fcol] == fval]
+            name_col = "player_display_name" if "player_display_name" in df.columns else "player_name"
+            team_col = "recent_team" if "recent_team" in df.columns else "team"
+            season_col_l = "season_year" if "season_year" in df.columns else "season"
+            if name_col not in df.columns or season_col_l not in df.columns: continue
+            latest = df.sort_values(season_col_l, ascending=False).drop_duplicates(name_col)
+            for _, r in latest.iterrows():
+                n = r.get(name_col)
+                if pd.isna(n) or not str(n).strip(): continue
+                t = r.get(team_col, "")
+                s = r.get(season_col_l)
+                rows.append((str(n).strip(),
+                              str(t) if pd.notna(t) else "",
+                              int(s) if pd.notna(s) else None,
+                              pos_key))
+        rows.sort(key=lambda x: x[0].lower())
+        return rows
+
+    nfl_index = _build_nfl_player_index()
+    nfl_search_options = [
+        f"{n} — {display_abbr(t) if t else '?'} · {p}" + (f" ({s})" if s else "")
+        for n, t, s, p in nfl_index
+    ]
+
+    # Nonce makes the search box's `key` change after every successful
+    # pick, which forces Streamlit to re-instantiate the widget with its
+    # `index=0` default. Setting `st.session_state.<same_key>` from inside
+    # the widget's own callback is unreliable in Streamlit — the nonce
+    # trick sidesteps that by giving the next render a fresh key.
+    if "nfl_search_nonce" not in st.session_state:
+        st.session_state.nfl_search_nonce = 0
+    _nfl_search_key = f"nfl_player_search_{st.session_state.nfl_search_nonce}"
+
+    def _on_nfl_search_change():
+        choice = st.session_state.get(_nfl_search_key)
+        if not choice or choice not in nfl_search_options:
+            return
+        idx = nfl_search_options.index(choice)
+        if idx < 0 or idx >= len(nfl_index): return
+        sel_name, sel_team, sel_season, sel_pos = nfl_index[idx]
+        target_team_label = (
+            f"{display_abbr(sel_team)} — {NFL_TEAMS.get(sel_team, sel_team)}"
+            if sel_team and sel_team in NFL_TEAMS else None
+        )
+        if target_team_label and target_team_label in team_labels:
+            st.session_state.landing_team_v2 = target_team_label
+        if sel_season:
+            st.session_state.landing_season = sel_season
+        st.session_state.landing_position = sel_pos
+        st.session_state.nfl_search_target = sel_name
+        # Bump nonce → next render uses a NEW key → widget shows blank.
+        st.session_state.nfl_search_nonce += 1
+
+    col_search, col_team, col_season = st.columns([3, 2, 1])
+    with col_search:
+        st.selectbox(
+            "🔎 Search any NFL player",
+            options=nfl_search_options,
+            index=None,
+            placeholder="🔎 Type a player name...",
+            key=_nfl_search_key,
+            on_change=_on_nfl_search_change,
+            label_visibility="collapsed",
+            help="Type a name and pick a player. The box clears automatically after each pick — no backspacing needed.",
+        )
     with col_team:
         selected_label = st.selectbox("Team", options=team_labels, index=current_idx,
                                        key="landing_team_v2", label_visibility="collapsed")
@@ -282,59 +379,113 @@ if mode == "NFL":
         st.markdown(f"### {selected_season} {team_name}")
         st.caption("Pick a position and a metric to see how the roster stacks up.")
 
+    ALL_POSITIONS_LABEL_NFL = "🏈 All positions"
+    position_options_nfl = [ALL_POSITIONS_LABEL_NFL] + list(NFL_POSITION_CONFIGS.keys())
+
     col_pos, col_metric = st.columns([1, 2])
     with col_pos:
-        selected_pos = st.selectbox("Position", list(NFL_POSITION_CONFIGS.keys()),
+        selected_pos = st.selectbox("Position", position_options_nfl,
                                      index=0, key="landing_position")
-    cfg = NFL_POSITION_CONFIGS[selected_pos]
-    with col_metric:
-        sort_label, sort_col, sort_asc = metric_picker(
-            cfg["metrics"], key=f"landing_metric_{selected_pos}", label="🔍 Sort leaderboard by"
-        )
+
+    if selected_pos == ALL_POSITIONS_LABEL_NFL:
+        # Multi-position mode: no global metric picker — each position's
+        # leaderboard uses the first metric in its own config.
+        positions_to_iter = list(NFL_POSITION_CONFIGS.items())
+        sort_label_global = None
+    else:
+        cfg_sel = NFL_POSITION_CONFIGS[selected_pos]
+        with col_metric:
+            sort_label_global, sort_col_global, sort_asc_global = metric_picker(
+                cfg_sel["metrics"], key=f"landing_metric_{selected_pos}", label="🔍 Sort leaderboard by"
+            )
+        positions_to_iter = [(selected_pos, cfg_sel)]
 
     DATA_DIR = Path(__file__).resolve().parent / "data"
-    data_path = DATA_DIR / cfg["file"]
-    if not data_path.exists():
-        st.warning(f"Data file missing: {cfg['file']}")
-    else:
+
+    def _fmt(col, val):
+        if pd.isna(val):
+            return "—"
+        if "rate" in col or "share" in col or "_pct" in col or col == "pin_rate":
+            return f"{val*100:.1f}%" if abs(val) < 2 else f"{val:.1f}%"
+        if col in ("epa_per_target", "pass_epa_per_play", "epa_per_rush", "punt_epa", "passing_cpoe", "yac_above_exp"):
+            return f"{val:+.2f}"
+        if col in ("yards_per_carry", "yards_per_target", "avg_distance", "avg_net", "yards_after_contact_per_att"):
+            return f"{val:.2f}"
+        if isinstance(val, float) and val == int(val):
+            return f"{int(val)}"
+        if isinstance(val, float):
+            return f"{val:.1f}"
+        return str(val)
+
+    all_pos_mode = (selected_pos == ALL_POSITIONS_LABEL_NFL)
+    if all_pos_mode:
+        st.caption("Showing the top of every position. Pick a single position above to unlock the metric picker and a deeper leaderboard.")
+
+    # ── Active player-search filter (with clear button) ──
+    nfl_search_target = st.session_state.get("nfl_search_target")
+    if nfl_search_target:
+        b_msg, b_btn = st.columns([5, 1])
+        with b_msg:
+            st.info(f"🔍 Filtered to **{nfl_search_target}** — leaderboard shows only this player.")
+        with b_btn:
+            if st.button("❌ Clear filter", key="clear_nfl_search_filter"):
+                st.session_state.pop("nfl_search_target", None)
+                st.rerun()
+
+    for pos_iter_name, cfg_iter in positions_to_iter:
+        if all_pos_mode:
+            # First metric in the position's config = that leaderboard's
+            # default sort when no global metric picker is shown.
+            default_metric_label = list(cfg_iter["metrics"].keys())[0]
+            sort_col_iter, sort_asc_iter = cfg_iter["metrics"][default_metric_label]
+            sort_label_iter = default_metric_label
+            st.markdown(f"#### {cfg_iter['noun'].title()}")
+        else:
+            sort_col_iter, sort_asc_iter = sort_col_global, sort_asc_global
+            sort_label_iter = sort_label_global
+
+        data_path = DATA_DIR / cfg_iter["file"]
+        if not data_path.exists():
+            st.warning(f"Data file missing: {cfg_iter['file']}")
+            continue
         ldf = pl.read_parquet(str(data_path)).to_pandas()
-        if cfg["filter"]:
-            fcol, fval = cfg["filter"]
+        if cfg_iter["filter"]:
+            fcol, fval = cfg_iter["filter"]
             ldf = ldf[ldf[fcol] == fval]
         ldf = filter_by_team_and_season(ldf, selected_team, selected_season,
                                           team_col="recent_team", season_col="season_year")
-        if cfg["snap_col"] in ldf.columns:
-            ldf = ldf[ldf[cfg["snap_col"]].fillna(0) >= cfg["min_snaps"]]
+        if cfg_iter["snap_col"] in ldf.columns:
+            ldf = ldf[ldf[cfg_iter["snap_col"]].fillna(0) >= cfg_iter["min_snaps"]]
+
+        # Player-search filter — overrides the snap floor and other
+        # filters so the searched player always shows. Match on either
+        # `player_display_name` or `player_name`, whichever the parquet has.
+        if nfl_search_target:
+            name_col_l = "player_display_name" if "player_display_name" in ldf.columns else "player_name"
+            if name_col_l in ldf.columns:
+                ldf = ldf[ldf[name_col_l] == nfl_search_target]
 
         if len(ldf) == 0:
-            st.info(f"No {cfg['noun']} found for this team/season.")
+            st.info(f"No {cfg_iter['noun']} found for this team/season.")
+            continue
+
+        if sort_col_iter in ldf.columns:
+            ldf = ldf.sort_values(sort_col_iter, ascending=sort_asc_iter, na_position="last")
+        # All-positions: top 10 per group so the stacked page stays
+        # skimmable; single-position: top 25 for depth.
+        head_size = 10 if all_pos_mode else 25
+        ldf = ldf.head(head_size).reset_index(drop=True)
+        ldf.index = ldf.index + 1
+
+        display = pd.DataFrame({"#": ldf.index})
+        for label, col in cfg_iter["cols"]:
+            if col in ldf.columns:
+                display[label] = ldf[col].apply(lambda v, c=col: _fmt(c, v))
+        st.dataframe(display, use_container_width=True, hide_index=True)
+        if not all_pos_mode:
+            st.caption(f"Showing top {len(ldf)} {cfg_iter['noun']} sorted by **{sort_label_iter}**. Click into the position page from the sidebar for the full feature set.")
         else:
-            if sort_col in ldf.columns:
-                ldf = ldf.sort_values(sort_col, ascending=sort_asc, na_position="last")
-            ldf = ldf.head(25).reset_index(drop=True)
-            ldf.index = ldf.index + 1
-
-            def _fmt(col, val):
-                if pd.isna(val):
-                    return "—"
-                if "rate" in col or "share" in col or "_pct" in col or col == "pin_rate":
-                    return f"{val*100:.1f}%" if abs(val) < 2 else f"{val:.1f}%"
-                if col in ("epa_per_target", "pass_epa_per_play", "epa_per_rush", "punt_epa", "passing_cpoe", "yac_above_exp"):
-                    return f"{val:+.2f}"
-                if col in ("yards_per_carry", "yards_per_target", "avg_distance", "avg_net", "yards_after_contact_per_att"):
-                    return f"{val:.2f}"
-                if isinstance(val, float) and val == int(val):
-                    return f"{int(val)}"
-                if isinstance(val, float):
-                    return f"{val:.1f}"
-                return str(val)
-
-            display = pd.DataFrame({"#": ldf.index})
-            for label, col in cfg["cols"]:
-                if col in ldf.columns:
-                    display[label] = ldf[col].apply(lambda v, c=col: _fmt(c, v))
-            st.dataframe(display, use_container_width=True, hide_index=True)
-            st.caption(f"Showing top {len(ldf)} {cfg['noun']} sorted by **{sort_label}**. Click into the position page from the sidebar for the full feature set.")
+            st.caption(f"Sorted by default metric: **{sort_label_iter}**.")
     st.divider()
     st.markdown("### Pick a position")
     st.markdown("**Offense:** QB · WR · TE · RB · OL\n\n**Defense:** DE · DT · LB · CB · S\n\n"
@@ -471,9 +622,134 @@ else:
     if "college_school_v2" not in st.session_state:
         st.session_state.college_school_v2 = ALL_SCHOOLS_LABEL
 
-    COLLEGE_POSITIONS_FOR_TOP = ["QB", "WR", "TE", "RB", "DE", "DT", "LB", "CB", "S"]
+    ALL_POSITIONS_LABEL_COLLEGE = "🏈 All positions"
+    COLLEGE_POSITIONS_FOR_TOP = [ALL_POSITIONS_LABEL_COLLEGE, "QB", "WR", "TE", "RB", "DE", "DT", "LB", "CB", "S"]
 
-    col_school, col_conf, col_season, col_position = st.columns([2, 2, 1, 1])
+    # ── Player index (cached) for quick search ────────────
+    # Hardcoded so the search can render before POSITION_FILES is
+    # defined further down. Defensive parquet is shared across DE/DT/
+    # LB/CB/S — we read it once and dispatch via pos_group.
+    COLLEGE_PLAYER_INDEX_FILES = [
+        ("QB", "college_qb_all_seasons.parquet", None),
+        ("WR", "college_wr_all_seasons.parquet", None),
+        ("TE", "college_te_all_seasons.parquet", None),
+        ("RB", "college_rb_all_seasons.parquet", None),
+    ]
+    COLLEGE_DEF_INDEX_MAP = {
+        "EDGE": "DE", "DL": "DT", "LB": "LB", "CB": "CB", "DB": "S",
+    }
+
+    @st.cache_data
+    def _build_college_player_index():
+        """Returns sorted list of (player_name, recent_team, recent_season,
+        position_key, position_label_for_dropdown) for every FBS player
+        in our position parquets. The 5th tuple field exists so defensive
+        UNKNOWN-pos_group players can show as "Def" in the dropdown while
+        still routing the click to a real defensive position page."""
+        rows = []
+        for pos_key, fname, _filt in COLLEGE_PLAYER_INDEX_FILES:
+            path = COLLEGE_DATA_DIR / fname
+            if not path.exists(): continue
+            try:
+                df = pd.read_parquet(path)
+            except Exception:
+                continue
+            season_col_l = "season" if "season" in df.columns else "season_year"
+            if "player" not in df.columns or season_col_l not in df.columns: continue
+            latest = df.sort_values(season_col_l, ascending=False).drop_duplicates("player")
+            for _, r in latest.iterrows():
+                n = r.get("player")
+                if pd.isna(n) or not str(n).strip(): continue
+                t = r.get("team", "")
+                s = r.get(season_col_l)
+                rows.append((str(n).strip(),
+                              str(t) if pd.notna(t) else "",
+                              int(s) if pd.notna(s) else None,
+                              pos_key,
+                              pos_key))
+        # Defense: one shared parquet, dispatch per pos_group. A large
+        # majority of defensive rows have pos_group = 'UNKNOWN' (CFBD
+        # coverage gap — listed_position is also null for those). The
+        # leaderboard render includes UNKNOWN rows under every defensive
+        # position, so for the search we route UNKNOWN to DE (any
+        # defensive slot works — they'll appear in its leaderboard) and
+        # label them as "Def" so the user knows the position is fuzzy.
+        def_path = COLLEGE_DATA_DIR / "college_def_all_seasons.parquet"
+        if def_path.exists():
+            try:
+                ddf = pd.read_parquet(def_path)
+                season_col_l = "season" if "season" in ddf.columns else "season_year"
+                if "player" in ddf.columns and "pos_group" in ddf.columns and season_col_l in ddf.columns:
+                    # One entry per (player, pos_group) using most recent season.
+                    ddf_sorted = ddf.sort_values(season_col_l, ascending=False).drop_duplicates(["player", "pos_group"])
+                    for _, r in ddf_sorted.iterrows():
+                        n = r.get("player")
+                        pg = r.get("pos_group")
+                        if pd.isna(n): continue
+                        if pd.notna(pg) and pg in COLLEGE_DEF_INDEX_MAP:
+                            pos_key = COLLEGE_DEF_INDEX_MAP[pg]
+                            pos_label_for_option = pos_key
+                        else:
+                            # UNKNOWN / missing pos_group → land on DE;
+                            # leaderboard includes UNKNOWN under all 5.
+                            pos_key = "DE"
+                            pos_label_for_option = "Def"
+                        t = r.get("team", "")
+                        s = r.get(season_col_l)
+                        rows.append((str(n).strip(),
+                                      str(t) if pd.notna(t) else "",
+                                      int(s) if pd.notna(s) else None,
+                                      pos_key,
+                                      pos_label_for_option))
+            except Exception:
+                pass
+        rows.sort(key=lambda x: x[0].lower())
+        return rows
+
+    college_index = _build_college_player_index()
+    college_search_options = [
+        f"{n} — {t or '?'} · {disp}" + (f" ({s})" if s else "")
+        for n, t, s, _p, disp in college_index
+    ]
+
+    # Nonce-keyed widget: bumping the nonce changes the widget's key,
+    # which forces Streamlit to re-instantiate it with its `index=0`
+    # default. This is the reliable way to "clear" a selectbox — setting
+    # st.session_state for the same key from inside the widget's own
+    # on_change callback is unreliable.
+    if "college_search_nonce" not in st.session_state:
+        st.session_state.college_search_nonce = 0
+    _college_search_key = f"college_player_search_{st.session_state.college_search_nonce}"
+
+    def _on_college_search_change():
+        choice = st.session_state.get(_college_search_key)
+        if not choice or choice not in college_search_options:
+            return
+        idx = college_search_options.index(choice)
+        if idx < 0 or idx >= len(college_index): return
+        sel_name, sel_team, sel_season, sel_pos, _disp = college_index[idx]
+        if sel_team and sel_team in schools:
+            st.session_state.college_school_v2 = sel_team
+        if sel_season and sel_season in COLLEGE_SEASONS:
+            st.session_state.college_season_landing = sel_season
+        if sel_pos in COLLEGE_POSITIONS_FOR_TOP:
+            st.session_state.college_position_top = sel_pos
+        st.session_state.expand_college_player = sel_name
+        # Bump nonce → next render uses a NEW key → widget shows blank.
+        st.session_state.college_search_nonce += 1
+
+    col_search_c, col_school, col_conf, col_season, col_position = st.columns([3, 2, 2, 1, 1])
+    with col_search_c:
+        st.selectbox(
+            "🔎 Search any college player",
+            options=college_search_options,
+            index=None,
+            placeholder="🔎 Type a player name...",
+            key=_college_search_key,
+            on_change=_on_college_search_change,
+            label_visibility="collapsed",
+            help="Type a name and pick a player. The box clears automatically after each pick — no backspacing needed.",
+        )
     with col_school:
         selected_school = st.selectbox("School", options=schools,
                                         index=schools.index(st.session_state.college_school_v2) if st.session_state.college_school_v2 in schools else 0,
@@ -521,28 +797,45 @@ else:
         "CB": ("games",            "Min games played",     6, 1, 15,   1),
         "S":  ("games",            "Min games played",     6, 1, 15,   1),
     }
-    vol_col, vol_label, vol_default, vol_min, vol_max, vol_step = POS_VOLUME.get(
-        selected_position, ("games", "Min games played", 6, 1, 15, 1)
-    )
+    all_pos_mode_college = (selected_position == ALL_POSITIONS_LABEL_COLLEGE)
 
-    col_g, col_d1, col_d2 = st.columns([2, 2, 3])
-    with col_g:
-        min_volume = st.slider(
-            vol_label,
-            min_value=vol_min, max_value=vol_max, value=vol_default, step=vol_step,
-            key=f"college_min_volume_{selected_position}",
-            help="Filter out low-volume players (college's snap-equivalent — varies by position).",
+    if all_pos_mode_college:
+        # All-positions mode: no single volume slider fits — the loop
+        # applies each position's own default floor inline below.
+        vol_col, min_volume = None, 0
+        col_g, col_d1, col_d2 = st.columns([2, 2, 3])
+        with col_g:
+            st.caption("Volume filter: per-position defaults (pick a single position to customize).")
+        with col_d1:
+            prospects_only = st.checkbox(
+                "🎯 2026 draft prospects only",
+                value=False,
+                key="college_2026_filter",
+                help="Two-layer filter: nflverse combine invites (~319 declared prospects) "
+                     "PLUS the heuristic of recruits from 2022-2024 who played in 2025.",
+            )
+    else:
+        vol_col, vol_label, vol_default, vol_min, vol_max, vol_step = POS_VOLUME.get(
+            selected_position, ("games", "Min games played", 6, 1, 15, 1)
         )
-    with col_d1:
-        prospects_only = st.checkbox(
-            "🎯 2026 draft prospects only",
-            value=False,
-            key="college_2026_filter",
-            help="Two-layer filter: nflverse combine invites (~319 declared prospects) "
-                 "PLUS the heuristic of recruits from 2022-2024 who played in 2025. "
-                 "Combine invites are the most reliable signal; recruit-year heuristic "
-                 "catches smaller-school prospects who weren't invited.",
-        )
+        col_g, col_d1, col_d2 = st.columns([2, 2, 3])
+        with col_g:
+            min_volume = st.slider(
+                vol_label,
+                min_value=vol_min, max_value=vol_max, value=vol_default, step=vol_step,
+                key=f"college_min_volume_{selected_position}",
+                help="Filter out low-volume players (college's snap-equivalent — varies by position).",
+            )
+        with col_d1:
+            prospects_only = st.checkbox(
+                "🎯 2026 draft prospects only",
+                value=False,
+                key="college_2026_filter",
+                help="Two-layer filter: nflverse combine invites (~319 declared prospects) "
+                     "PLUS the heuristic of recruits from 2022-2024 who played in 2025. "
+                     "Combine invites are the most reliable signal; recruit-year heuristic "
+                     "catches smaller-school prospects who weren't invited.",
+            )
     draft_class_set = load_draft_class(2026) if prospects_only else set()
     if prospects_only and recruiting_df is not None and len(recruiting_df) > 0 and "recruit_year" in recruiting_df.columns:
         # Heuristic pool: recruits from 2022-2024 (covers 4-year + redshirt 5th-years)
@@ -903,33 +1196,43 @@ else:
     }
 
     # ── Sidebar: position selector + sliders ──────────────
-    # Position is now driven by the top-bar dropdown so the sliders apply
-    # to whatever the user picked up there.
+    # Position is driven by the top-bar dropdown so the sliders apply
+    # to whatever the user picked up there. In all-positions mode, the
+    # sliders are hidden (they only make sense for one position at a time).
     st.sidebar.header("What matters to you?")
-    st.sidebar.caption(f"Adjust what you value for **{selected_position}** — change the position dropdown at the top of the page to switch.")
-    active_pos = selected_position if selected_position in COLLEGE_BUNDLES else "QB"
-
-    bundles = COLLEGE_BUNDLES[active_pos]
+    active_pos = selected_position if selected_position in COLLEGE_BUNDLES else None
     bundle_weights = {}
-    st.sidebar.markdown("---")
-    for bk, bundle in bundles.items():
-        st.sidebar.markdown(f"**{bundle['label']}**")
-        st.sidebar.caption(f"_{bundle['why']}_")
-        if f"college_bundle_{active_pos}_{bk}" not in st.session_state:
-            st.session_state[f"college_bundle_{active_pos}_{bk}"] = 50
-        bundle_weights[bk] = st.sidebar.slider(
-            bundle["label"], 0, 100, step=5,
-            key=f"college_bundle_{active_pos}_{bk}",
-            label_visibility="collapsed",
+    if active_pos is None:
+        st.sidebar.caption(
+            "Pick a single position at the top of the page to unlock the "
+            "bundle sliders. In **All positions** mode, leaderboards sort "
+            "by each position's composite z-score."
         )
+    else:
+        st.sidebar.caption(f"Adjust what you value for **{active_pos}** — change the position dropdown at the top of the page to switch.")
+        bundles = COLLEGE_BUNDLES[active_pos]
+        st.sidebar.markdown("---")
+        for bk, bundle in bundles.items():
+            st.sidebar.markdown(f"**{bundle['label']}**")
+            st.sidebar.caption(f"_{bundle['why']}_")
+            if f"college_bundle_{active_pos}_{bk}" not in st.session_state:
+                st.session_state[f"college_bundle_{active_pos}_{bk}"] = 50
+            bundle_weights[bk] = st.sidebar.slider(
+                bundle["label"], 0, 100, step=5,
+                key=f"college_bundle_{active_pos}_{bk}",
+                label_visibility="collapsed",
+            )
 
     # ── Compute effective weights from bundles ────────────
+    # In all-positions mode there are no bundles/sliders, so this is a
+    # no-op and `effective_weights` stays empty (no per-player score).
     effective_weights = {}
-    for bk, bundle in bundles.items():
-        bw = bundle_weights.get(bk, 0)
-        if bw == 0: continue
-        for stat, internal_w in bundle["stats"].items():
-            effective_weights[stat] = effective_weights.get(stat, 0) + bw * internal_w
+    if active_pos is not None:
+        for bk, bundle in COLLEGE_BUNDLES[active_pos].items():
+            bw = bundle_weights.get(bk, 0)
+            if bw == 0: continue
+            for stat, internal_w in bundle["stats"].items():
+                effective_weights[stat] = effective_weights.get(stat, 0) + bw * internal_w
 
     # ── Scoring function ─────────────────────────────────
     def score_college_players(df, weights):
@@ -1256,8 +1559,25 @@ else:
     # ══════════════════════════════════════════════════════
     from lib_shared import metric_picker as _metric_picker
 
-    # Only render the position picked from the top dropdown
-    positions_to_render = [(p, POSITION_FILES[p]) for p in [selected_position] if p in POSITION_FILES]
+    # All-positions mode: render every position's leaderboard/expanders.
+    # Single-position mode: render only the picked position.
+    if all_pos_mode_college:
+        positions_to_render = [(p, POSITION_FILES[p]) for p in POSITION_FILES]
+    else:
+        positions_to_render = [(p, POSITION_FILES[p]) for p in [selected_position] if p in POSITION_FILES]
+
+    # ── Active player-search filter (with clear button) ──
+    # Set by the search callback above; persists until the user clears
+    # it. Filters every position's leaderboard down to just this player.
+    college_search_target = st.session_state.get("expand_college_player")
+    if college_search_target:
+        b_msg, b_btn = st.columns([5, 1])
+        with b_msg:
+            st.info(f"🔍 Filtered to **{college_search_target}** — leaderboards below show only this player.")
+        with b_btn:
+            if st.button("❌ Clear filter", key="clear_college_search_filter"):
+                st.session_state.pop("expand_college_player", None)
+                st.rerun()
 
     for pos_name, (fname, z_cols, labels) in positions_to_render:
         df = load_college_position(fname)
@@ -1277,9 +1597,24 @@ else:
             mask = mask & (df["pos_group"].isin(allowed))
         filtered = df[mask].copy()
 
-        # Volume filter (college's snap-equivalent — column varies by position)
-        if vol_col in filtered.columns and min_volume > 0:
-            filtered = filtered[filtered[vol_col].fillna(0) >= min_volume]
+        # Volume filter. In single-position mode the user sets `min_volume`
+        # above; in all-positions mode we fall back to each position's
+        # default floor from POS_VOLUME.
+        if all_pos_mode_college:
+            pos_vol = POS_VOLUME.get(pos_name)
+            if pos_vol:
+                _vc, _, _vd, _, _, _ = pos_vol
+                if _vc in filtered.columns and _vd > 0:
+                    filtered = filtered[filtered[_vc].fillna(0) >= _vd]
+        else:
+            if vol_col and vol_col in filtered.columns and min_volume > 0:
+                filtered = filtered[filtered[vol_col].fillna(0) >= min_volume]
+
+        # Player-search filter — overrides everything; show only the
+        # searched player. Skips the volume/prospects filters above by
+        # being applied last (and idempotently).
+        if college_search_target:
+            filtered = filtered[filtered["player"] == college_search_target]
 
         # 2026 draft prospect filter — keep only rows whose (last name, team)
         # appears in the prospect set (combine invites + heuristic).
@@ -1344,8 +1679,10 @@ else:
         # Cap the leaderboard for non-school views so the page stays usable.
         # 25 expanders × multiple sub-charts is the upper bound of "renders
         # in a reasonable time"; bigger pools should drill into a school.
+        # All-positions × all-schools = 9 × 25 = 225 expanders, so we
+        # tighten the cap to 10 in that mode to keep the page snappy.
         if school_is_all:
-            filtered = filtered.head(25)
+            filtered = filtered.head(10 if all_pos_mode_college else 25)
 
         # ── Summary table ─────────────────────────────────
         display_rows = []
@@ -1416,7 +1753,12 @@ else:
             rec = get_recruiting_info(name)
             stars_tag = f" {star_display(rec['stars'])}" if rec is not None and pd.notna(rec.get("stars")) else ""
 
-            with st.expander(f"**{name}**{pos_tag}{score_tag}{stars_tag}"):
+            # Auto-open the row that the player-search box jumped to.
+            # Marker stays set until the user clicks "Clear filter" —
+            # that's also what keeps the leaderboard filtered down to
+            # this player (handled above before this loop).
+            _expanded = (st.session_state.get("expand_college_player") == name)
+            with st.expander(f"**{name}**{pos_tag}{score_tag}{stars_tag}", expanded=_expanded):
 
                 # ── Recruiting header ─────────────────────
                 if rec is not None:
