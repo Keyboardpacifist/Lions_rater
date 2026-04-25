@@ -846,6 +846,8 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
                         hoverinfo="text",
                     ))
 
+                # Legend below the chart (horizontal) so it doesn't cover
+                # the angular axis labels — was unreadable on phones.
                 radar_fig.update_layout(
                     polar=dict(
                         radialaxis=dict(visible=True, range=[0, 100],
@@ -856,11 +858,12 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
                         bgcolor="rgba(0,0,0,0)",
                     ),
                     showlegend=any(p is not None for p in radar_bench_pcts),
-                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01,
-                                bgcolor="rgba(255,255,255,0.7)", bordercolor="#ccc",
-                                borderwidth=1, font=dict(size=10)),
-                    margin=dict(l=60, r=60, t=20, b=20),
-                    height=350, paper_bgcolor="rgba(0,0,0,0)",
+                    legend=dict(orientation="h", yanchor="top", y=-0.05,
+                                xanchor="center", x=0.5,
+                                bgcolor="rgba(255,255,255,0)", bordercolor="rgba(0,0,0,0)",
+                                font=dict(size=10)),
+                    margin=dict(l=60, r=60, t=20, b=70),
+                    height=400, paper_bgcolor="rgba(0,0,0,0)",
                 )
                 st.plotly_chart(radar_fig, use_container_width=True)
             else:

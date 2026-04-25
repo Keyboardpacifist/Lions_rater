@@ -103,3 +103,10 @@ def roster(year: int, verbose: bool = False) -> list:
     """All-FBS rosters for one season. Used to disambiguate F.LastName
     targets against full names."""
     return get("/roster", {"year": year}, verbose=verbose)
+
+
+def team_advanced(year: int, verbose: bool = False) -> list:
+    """Per-team advanced season stats — line yards, stuff rate, success
+    rate, etc. Used to derive team-level OL quality (no per-player OL
+    stats are published in the free CFBD API)."""
+    return get("/stats/season/advanced", {"year": year}, verbose=verbose)

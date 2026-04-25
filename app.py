@@ -11,6 +11,18 @@ import plotly.graph_objects as go
 
 st.set_page_config(page_title="NFL Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 
+# Fresh-session reset — clear detail-mode markers from any prior browser
+# session so the page always loads into the leaderboard view, never into
+# a stale player profile. Filter widgets (school, season, position) and
+# slider settings are intentionally NOT cleared.
+if "_app_session_initialized_v2" not in st.session_state:
+    _STALE_DETAIL_KEYS = ("expand_college_player", "nfl_search_target",
+                          "_college_filter_ctx", "_last_mode")
+    for _k in list(st.session_state.keys()):
+        if _k in _STALE_DETAIL_KEYS or _k.startswith("lb_selected_"):
+            st.session_state.pop(_k, None)
+    st.session_state._app_session_initialized_v2 = True
+
 COLLEGE_DATA_DIR = Path(__file__).resolve().parent / "data" / "college"
 
 # ── Mode toggle ───────────────────────────────────────────────
@@ -19,6 +31,16 @@ with col_title:
     st.markdown("<h1 style='margin:0; padding:4px 0;'>🏈 NFL Rater</h1>", unsafe_allow_html=True)
 with col_toggle:
     mode = st.radio("Mode", ["NFL", "College"], horizontal=True, key="mode_toggle", label_visibility="collapsed")
+
+# Toggling NFL ↔ College should drop any sticky detail markers from
+# the prior mode so the new mode lands on its leaderboard.
+_prev_mode = st.session_state.get("_last_mode")
+if _prev_mode is not None and _prev_mode != mode:
+    for _k in list(st.session_state.keys()):
+        if (_k.startswith("lb_selected_") or _k == "expand_college_player"
+                or _k == "nfl_search_target"):
+            st.session_state.pop(_k, None)
+st.session_state._last_mode = mode
 
 st.markdown("---")
 
@@ -571,10 +593,20 @@ else:
         return sorted(confs)
 
     @st.cache_data
-    def load_college_position(fname):
+    def _load_college_position_cached(fname, mtime):
+        # `mtime` is part of the cache key — when the parquet is
+        # regenerated (e.g., after a fresh data pull), the cache busts
+        # automatically without needing to restart Streamlit.
         path = COLLEGE_DATA_DIR / fname
         if not path.exists(): return pd.DataFrame()
         df = pd.read_parquet(path)
+        return df
+
+    def load_college_position(fname):
+        path = COLLEGE_DATA_DIR / fname
+        mtime = path.stat().st_mtime if path.exists() else 0
+        df = _load_college_position_cached(fname, mtime)
+        if df.empty: return df
 
         # Merge in CFBD-enriched columns (EPA + usage + downs splits) when
         # available. We match on (player_id, season). Existing columns win
@@ -623,7 +655,7 @@ else:
         st.session_state.college_school_v2 = ALL_SCHOOLS_LABEL
 
     ALL_POSITIONS_LABEL_COLLEGE = "🏈 All positions"
-    COLLEGE_POSITIONS_FOR_TOP = [ALL_POSITIONS_LABEL_COLLEGE, "QB", "WR", "TE", "RB", "DE", "DT", "LB", "CB", "S"]
+    COLLEGE_POSITIONS_FOR_TOP = [ALL_POSITIONS_LABEL_COLLEGE, "QB", "WR", "TE", "RB", "OL", "DE", "DT", "LB", "CB", "S"]
 
     # ── Player index (cached) for quick search ────────────
     # Hardcoded so the search can render before POSITION_FILES is
@@ -634,6 +666,10 @@ else:
         ("WR", "college_wr_all_seasons.parquet", None),
         ("TE", "college_te_all_seasons.parquet", None),
         ("RB", "college_rb_all_seasons.parquet", None),
+        # OL — identity-only roster from CFBD; no per-player stats. The
+        # search dropdown labels them with their granular position
+        # (OT/G/C/OL) but routes the click to the umbrella OL page.
+        ("OL", "college_ol_roster.parquet", None),
     ]
     COLLEGE_DEF_INDEX_MAP = {
         "EDGE": "DE", "DL": "DT", "LB": "LB", "CB": "CB", "DB": "S",
@@ -662,25 +698,39 @@ else:
                 if pd.isna(n) or not str(n).strip(): continue
                 t = r.get("team", "")
                 s = r.get(season_col_l)
+                # OL roster has a granular `position` column (OT/G/C/OL) —
+                # show it in the search dropdown so the user gets more info,
+                # but route the click to the umbrella OL leaderboard.
+                gran_pos = r.get("position") if pos_key == "OL" else None
+                pos_label = (str(gran_pos).strip() if (gran_pos and not pd.isna(gran_pos))
+                              else pos_key)
                 rows.append((str(n).strip(),
                               str(t) if pd.notna(t) else "",
                               int(s) if pd.notna(s) else None,
                               pos_key,
-                              pos_key))
-        # Defense: one shared parquet, dispatch per pos_group. A large
-        # majority of defensive rows have pos_group = 'UNKNOWN' (CFBD
-        # coverage gap — listed_position is also null for those). The
-        # leaderboard render includes UNKNOWN rows under every defensive
-        # position, so for the search we route UNKNOWN to DE (any
-        # defensive slot works — they'll appear in its leaderboard) and
-        # label them as "Def" so the user knows the position is fuzzy.
+                              pos_label))
+        # Defense: one shared parquet, dispatch per pos_group. CFBD's
+        # defensive table contains any player with a defensive stat, so
+        # OL/QB/TE who recorded a fumble-recovery tackle slip in too.
+        # For UNKNOWN-pos_group rows (~65% of the file), require a
+        # minimum defensive footprint before surfacing them as "Def" —
+        # otherwise Blake Miller (Clemson OL, 2 tackles ever) shows up
+        # in the safety/LB search results.
+        def _has_defensive_footprint(r):
+            def _v(k):
+                v = r.get(k)
+                return v if v is not None and not pd.isna(v) else 0
+            return (_v("tackles_total") >= 5
+                    or _v("sacks") >= 1
+                    or _v("interceptions") >= 1
+                    or _v("passes_deflected") >= 1)
+
         def_path = COLLEGE_DATA_DIR / "college_def_all_seasons.parquet"
         if def_path.exists():
             try:
                 ddf = pd.read_parquet(def_path)
                 season_col_l = "season" if "season" in ddf.columns else "season_year"
                 if "player" in ddf.columns and "pos_group" in ddf.columns and season_col_l in ddf.columns:
-                    # One entry per (player, pos_group) using most recent season.
                     ddf_sorted = ddf.sort_values(season_col_l, ascending=False).drop_duplicates(["player", "pos_group"])
                     for _, r in ddf_sorted.iterrows():
                         n = r.get("player")
@@ -690,8 +740,11 @@ else:
                             pos_key = COLLEGE_DEF_INDEX_MAP[pg]
                             pos_label_for_option = pos_key
                         else:
-                            # UNKNOWN / missing pos_group → land on DE;
-                            # leaderboard includes UNKNOWN under all 5.
+                            # UNKNOWN: only include if the player has a
+                            # real defensive footprint, otherwise it's
+                            # an offensive/ST player who fluked a stat.
+                            if not _has_defensive_footprint(r):
+                                continue
                             pos_key = "DE"
                             pos_label_for_option = "Def"
                         t = r.get("team", "")
@@ -791,6 +844,9 @@ else:
         "WR": ("receptions_total", "Min receptions",      15, 0, 150,  5),
         "TE": ("receptions_total", "Min receptions",      10, 0, 100,  2),
         "RB": ("carries_total",    "Min carries",         50, 0, 400,  10),
+        # OL has no game stats — filter by weight so the user can scope
+        # to draftable size (NFL OL median ~310 lbs, smallest ~280).
+        "OL": ("weight",           "Min weight (lbs)",   270, 200, 400, 5),
         "DE": ("games",            "Min games played",     6, 1, 15,   1),
         "DT": ("games",            "Min games played",     6, 1, 15,   1),
         "LB": ("games",            "Min games played",     6, 1, 15,   1),
@@ -898,6 +954,21 @@ else:
                 "epa_per_play_avg_z": "EPA/play", "epa_per_rush_avg_z": "EPA/rush",
                 "epa_per_pass_avg_z": "EPA/target (CFBD)",
                 "usage_overall_z": "Snap usage %", "usage_rush_z": "Rush usage %", "usage_pass_z": "Pass tgt %"}),
+        # OL — identity from CFBD roster + team-level proxy stats from
+        # CFBD /stats/season/advanced. There are no per-player OL grades
+        # in the free API, so each metric is the OL UNIT'S team-level
+        # rank assigned to every OL on that team-season. Labels carry
+        # the "(Team)" tag everywhere so users never mistake them for
+        # individual grades. Stuff-rate is inverted so positive z = better.
+        "OL": ("college_ol_roster.parquet",
+               ["line_yards_z", "stuff_rate_avoid_z", "power_success_z",
+                "std_downs_success_z", "rushing_ppa_z", "passing_ppa_z"],
+               {"line_yards_z":      "(Team) Run-block line yds/rush",
+                "stuff_rate_avoid_z":"(Team) Stuff-rate avoidance",
+                "power_success_z":   "(Team) Short-yardage convert %",
+                "std_downs_success_z":"(Team) Standard-downs success %",
+                "rushing_ppa_z":     "(Team) Rushing PPA",
+                "passing_ppa_z":     "(Team) Passing PPA (pass-pro proxy)"}),
         "DE": ("college_def_all_seasons.parquet",
                 ["sacks_per_game_z", "tfl_per_game_z", "qb_hurries_per_game_z", "tackles_per_game_z",
                  "pressure_rate_z", "splash_plays_per_game_z", "tfl_share_z",
@@ -1113,6 +1184,10 @@ else:
                 name=bench_label,
                 hovertext=bench_hover, hoverinfo="text",
             ))
+        # Legend goes BELOW the chart (horizontal) instead of overlaying the
+        # top-left corner — the prior placement covered angular axis labels,
+        # especially bad on phone widths where the legend occupied the
+        # whole top row.
         rfig.update_layout(
             polar=dict(
                 radialaxis=dict(visible=True, range=[0, 100],
@@ -1123,11 +1198,12 @@ else:
                 bgcolor="rgba(0,0,0,0)",
             ),
             showlegend=has_bench,
-            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01,
-                        bgcolor="rgba(255,255,255,0.7)", bordercolor="#ccc",
-                        borderwidth=1, font=dict(size=10)),
-            margin=dict(l=60, r=60, t=20, b=20),
-            height=320, paper_bgcolor="rgba(0,0,0,0)",
+            legend=dict(orientation="h", yanchor="top", y=-0.05,
+                        xanchor="center", x=0.5,
+                        bgcolor="rgba(255,255,255,0)", bordercolor="rgba(0,0,0,0)",
+                        font=dict(size=10)),
+            margin=dict(l=60, r=60, t=20, b=70),
+            height=380, paper_bgcolor="rgba(0,0,0,0)",
         )
         st.plotly_chart(rfig, use_container_width=True, key=f"radar_{key_prefix}")
 
@@ -1566,20 +1642,59 @@ else:
     else:
         positions_to_render = [(p, POSITION_FILES[p]) for p in [selected_position] if p in POSITION_FILES]
 
-    # ── Active player-search filter (with clear button) ──
-    # Set by the search callback above; persists until the user clears
-    # it. Filters every position's leaderboard down to just this player.
+    # ── Detail mode resolution ────────────────────────────
+    # Detail mode is triggered ONLY by an explicit name click. The
+    # search bar narrows the leaderboard but never auto-enters detail —
+    # otherwise stale `expand_college_player` from a previous search
+    # would dump the user into a player profile on reload.
+    #
+    # ALSO: when the user changes the high-level filter context
+    # (school / conference / season / position), clear any sticky
+    # click-detail markers so navigating around always lands in the
+    # leaderboard view for the new context, not in a stale player.
+    _filter_ctx = (selected_school, selected_conf,
+                    int(selected_college_season) if selected_college_season else None,
+                    selected_position)
+    _prev_ctx = st.session_state.get("_college_filter_ctx")
+    if _prev_ctx is not None and _prev_ctx != _filter_ctx:
+        for _p in POSITION_FILES:
+            st.session_state.pop(f"lb_selected_{_p}", None)
+    st.session_state._college_filter_ctx = _filter_ctx
+
     college_search_target = st.session_state.get("expand_college_player")
-    if college_search_target:
+    detail_pos, detail_player = None, None
+    for _p, _ in positions_to_render:
+        _sel = st.session_state.get(f"lb_selected_{_p}")
+        if _sel:
+            detail_pos, detail_player = _p, _sel
+            break
+
+    if detail_pos:
+        if st.button("← Back to leaderboards", key="back_to_lb_master", type="primary"):
+            for _p, _ in positions_to_render:
+                st.session_state.pop(f"lb_selected_{_p}", None)
+            st.rerun()
+    elif college_search_target:
+        # Search-filter active but no detail click — show a clear banner
+        # so the user knows the leaderboard is narrowed and can drop the filter.
         b_msg, b_btn = st.columns([5, 1])
         with b_msg:
-            st.info(f"🔍 Filtered to **{college_search_target}** — leaderboards below show only this player.")
+            st.info(
+                f"🔍 Filtered to **{college_search_target}** — click their name "
+                f"in the leaderboard to view their profile."
+            )
         with b_btn:
             if st.button("❌ Clear filter", key="clear_college_search_filter"):
                 st.session_state.pop("expand_college_player", None)
                 st.rerun()
 
     for pos_name, (fname, z_cols, labels) in positions_to_render:
+        # In detail mode, only the position that owns the selected player
+        # renders anything. Other positions skip entirely so the page is
+        # just header + back button + that one player's profile.
+        if detail_pos and pos_name != detail_pos:
+            continue
+
         df = load_college_position(fname)
         if len(df) == 0: continue
 
@@ -1645,105 +1760,163 @@ else:
             score_label_text = "Score"
 
         pos_display = {"QB": "Quarterbacks", "WR": "Wide Receivers", "TE": "Tight Ends",
-                       "RB": "Running Backs",
+                       "RB": "Running Backs", "OL": "Offensive Linemen",
                        "DE": "Defensive Ends", "DT": "Defensive Tackles",
                        "LB": "Linebackers", "CB": "Cornerbacks", "S": "Safeties"}[pos_name]
         pos_col = "pos_group" if pos_name in COLLEGE_DEF_POS_FILTER and "pos_group" in filtered.columns else None
 
         active_marker = " ← your sliders" if is_active else ""
-        st.markdown(f"#### {pos_display}{active_marker}")
-
-        # Per-position metric picker — sort the leaderboard by any nerd stat
-        position_metrics = {}
-        for z_col, label in labels.items():
-            raw_col = z_col.replace("_z", "")
-            if z_col in filtered.columns:
-                position_metrics[label + " (z)"] = (z_col, False)
-            if raw_col in filtered.columns:
-                position_metrics[label] = (raw_col, False)
-        # Default to composite ("Your score" if active, "Score" otherwise)
-        col_metric_label, col_sort, col_asc = _metric_picker(
-            position_metrics,
-            default_label=score_label_text if score_col != "composite_z" else "Your score",
-            key=f"college_metric_{pos_name}",
-            label=f"🔍 Sort {pos_display.lower()} by",
-        )
-        # If user picked "Your score" but there's no slider score, fall back to composite_z
-        if col_sort == "score":
-            col_sort = score_col
-        if col_sort in filtered.columns:
-            filtered = filtered.sort_values(col_sort, ascending=col_asc, na_position="last")
+        in_detail_mode_here = (detail_pos == pos_name)
+        # Header style: in detail mode, lead with the player name; in
+        # browse mode, the position group name.
+        if in_detail_mode_here:
+            st.markdown(f"#### {detail_player} — {pos_display}")
         else:
-            filtered = filtered.sort_values(score_col, ascending=False)
+            st.markdown(f"#### {pos_display}{active_marker}")
 
-        # Cap the leaderboard for non-school views so the page stays usable.
-        # 25 expanders × multiple sub-charts is the upper bound of "renders
-        # in a reasonable time"; bigger pools should drill into a school.
-        # All-positions × all-schools = 9 × 25 = 225 expanders, so we
-        # tighten the cap to 10 in that mode to keep the page snappy.
-        if school_is_all:
-            filtered = filtered.head(10 if all_pos_mode_college else 25)
-
-        # ── Summary table ─────────────────────────────────
-        display_rows = []
-        for _, row in filtered.iterrows():
-            name = row.get("player", "—")
-            comp = row.get(score_col, np.nan)
-            pct = zscore_to_percentile(comp)
-
-            entry = {"Player": name}
-            if pos_col and pd.notna(row.get(pos_col)):
-                entry["Pos"] = row[pos_col]
-
-            # Add recruiting stars
-            rec = get_recruiting_info(name)
-            if rec is not None and pd.notna(rec.get("stars")):
-                entry["Stars"] = star_display(rec["stars"])
-
-            # Add draft eligibility
-            if rec is not None and pd.notna(rec.get("recruit_year")):
-                elig_year = int(rec["recruit_year"]) + 3
-                if elig_year <= 2025:
-                    entry["Elig"] = f"✅ {elig_year}"
-                elif elig_year == 2026:
-                    entry["Elig"] = f"🟡 {elig_year}"
-                else:
-                    entry["Elig"] = f"🔒 {elig_year}"
-
-            # Add combine highlights
-            comb = get_combine_info(name, selected_school)
-            if comb is not None:
-                if pd.notna(comb.get("ht")): entry["Ht"] = comb["ht"]
-                if pd.notna(comb.get("wt")): entry["Wt"] = int(comb["wt"])
-                if pd.notna(comb.get("forty")): entry["40"] = f"{comb['forty']:.2f}"
-            
-            if pd.notna(comp):
-                entry[score_label_text] = f"{'+' if comp >= 0 else ''}{comp:.2f}"
-                entry["Pctl"] = format_percentile(pct)
-            else:
-                entry[score_label_text] = "—"
-                entry["Pctl"] = "—"
-
+        if not in_detail_mode_here:
+            # Per-position metric picker — sort the leaderboard by any nerd stat.
+            # Skipped for OL since there are no per-player stats; it sorts by
+            # weight (largest first) so the leaderboard surfaces draftable size.
+            position_metrics = {}
             for z_col, label in labels.items():
                 raw_col = z_col.replace("_z", "")
-                raw = row.get(raw_col)
-                if pd.notna(raw):
-                    if "rate" in raw_col or "pct" in raw_col:
-                        entry[label] = f"{raw:.1%}" if raw < 1 else f"{raw:.1f}%"
+                if z_col in filtered.columns:
+                    position_metrics[label + " (z)"] = (z_col, False)
+                if raw_col in filtered.columns:
+                    position_metrics[label] = (raw_col, False)
+            col_metric_label, col_sort, col_asc = _metric_picker(
+                position_metrics,
+                default_label=score_label_text if score_col != "composite_z" else "Your score",
+                key=f"college_metric_{pos_name}",
+                label=f"🔍 Sort {pos_display.lower()} by",
+            )
+            # OL: prominent caption that every metric below is team-level.
+            if pos_name == "OL":
+                st.caption(
+                    "ℹ️ **OL metrics are team-level** — every OL on a team gets the same z-score. "
+                    "Use these to find players on quality OL units, then combine with measurables "
+                    "(height/weight/40) and recruiting stars to evaluate the individual player."
+                )
+            # If user picked "Your score" but there's no slider score, fall back to composite_z
+            if col_sort == "score":
+                col_sort = score_col
+            if col_sort in filtered.columns:
+                filtered = filtered.sort_values(col_sort, ascending=col_asc, na_position="last")
+            else:
+                filtered = filtered.sort_values(score_col, ascending=False)
+
+            # Cap the leaderboard for non-school views so the page stays usable.
+            if school_is_all:
+                filtered = filtered.head(10 if all_pos_mode_college else 25)
+
+        if in_detail_mode_here:
+            # Detail-only view: skip the leaderboard build/render entirely
+            # and render just this one player's profile below.
+            if detail_player in filtered["player"].values:
+                detail_rows = filtered[filtered["player"] == detail_player]
+            else:
+                # Player not in current filter (probably a stale click
+                # from before the user changed school/conference/etc.).
+                # Silently clear the marker and rerun in browse mode —
+                # better UX than showing a warning the user has to dismiss.
+                st.session_state.pop(f"lb_selected_{pos_name}", None)
+                st.rerun()
+        else:
+            # ── Browse view: build the leaderboard rows ──
+            display_rows = []
+            for _, row in filtered.iterrows():
+                name = row.get("player", "—")
+                comp = row.get(score_col, np.nan)
+                pct = zscore_to_percentile(comp)
+
+                entry = {"Player": name}
+                if pos_col and pd.notna(row.get(pos_col)):
+                    entry["Pos"] = row[pos_col]
+
+                rec = get_recruiting_info(name)
+                if rec is not None and pd.notna(rec.get("stars")):
+                    entry["Stars"] = star_display(rec["stars"])
+
+                if rec is not None and pd.notna(rec.get("recruit_year")):
+                    elig_year = int(rec["recruit_year"]) + 3
+                    if elig_year <= 2025:
+                        entry["Elig"] = f"✅ {elig_year}"
+                    elif elig_year == 2026:
+                        entry["Elig"] = f"🟡 {elig_year}"
                     else:
-                        entry[label] = f"{raw:.1f}" if isinstance(raw, float) else str(int(raw))
+                        entry["Elig"] = f"🔒 {elig_year}"
+
+                comb = get_combine_info(name, selected_school)
+                if comb is not None:
+                    if pd.notna(comb.get("ht")): entry["Ht"] = comb["ht"]
+                    if pd.notna(comb.get("wt")): entry["Wt"] = int(comb["wt"])
+                    if pd.notna(comb.get("forty")): entry["40"] = f"{comb['forty']:.2f}"
+
+                if pd.notna(comp):
+                    entry[score_label_text] = f"{'+' if comp >= 0 else ''}{comp:.2f}"
+                    entry["Pctl"] = format_percentile(pct)
                 else:
-                    entry[label] = "—"
-            display_rows.append(entry)
+                    entry[score_label_text] = "—"
+                    entry["Pctl"] = "—"
 
-        if display_rows:
-            st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
+                for z_col, label in labels.items():
+                    raw_col = z_col.replace("_z", "")
+                    raw = row.get(raw_col)
+                    if pd.notna(raw):
+                        if "rate" in raw_col or "pct" in raw_col:
+                            entry[label] = f"{raw:.1%}" if raw < 1 else f"{raw:.1f}%"
+                        else:
+                            entry[label] = f"{raw:.1f}" if isinstance(raw, float) else str(int(raw))
+                    else:
+                        entry[label] = "—"
+                display_rows.append(entry)
 
-        # ── Player expanders ──────────────────────────────
-        # Top-25 cap above keeps these usable in FBS-wide / conference views.
-        if school_is_all:
-            st.caption(f"💡 Showing top {len(filtered)} expanders below. Pick a specific school for the full roster.")
-        for _, row in filtered.iterrows():
+            # ── Click-to-detail leaderboard ────────────
+            _lb_sel_key = f"lb_selected_{pos_name}"
+            if display_rows:
+                _PREFERRED = ["Player", "Pos", "Stars", "Elig", "Ht", "Wt", "40",
+                              score_label_text, "Pctl"]
+                _all_keys = set().union(*(d.keys() for d in display_rows))
+                visible_cols = [c for c in _PREFERRED if c in _all_keys]
+                visible_cols += [c for c in display_rows[0].keys() if c not in visible_cols and c in _all_keys]
+
+                def _w(c):
+                    if c == "Player": return 2.4
+                    if c in ("Pos", "Stars", "Elig"): return 0.7
+                    if c in ("Ht", "Wt", "40"): return 0.6
+                    if c in (score_label_text, "Pctl"): return 0.8
+                    return 0.9
+                weights = [0.4] + [_w(c) for c in visible_cols]
+
+                _hdrs = st.columns(weights)
+                _hdrs[0].markdown("**#**")
+                for _i_h, _c_h in enumerate(visible_cols):
+                    _hdrs[_i_h + 1].markdown(f"**{_c_h}**")
+
+                for _i_r, _row_data in enumerate(display_rows):
+                    _row_cols = st.columns(weights)
+                    _row_cols[0].markdown(f"_{_i_r + 1}_")
+                    for _j, _c in enumerate(visible_cols):
+                        _val = _row_data.get(_c, "—")
+                        _val_str = "—" if _val is None or (isinstance(_val, float) and pd.isna(_val)) else str(_val)
+                        if _c == "Player":
+                            if _row_cols[_j + 1].button(
+                                _val_str,
+                                key=f"lb_btn_{pos_name}_{_i_r}_{_val_str}",
+                                type="tertiary",
+                                use_container_width=True,
+                            ):
+                                st.session_state[_lb_sel_key] = _val_str
+                                st.rerun()
+                        else:
+                            _row_cols[_j + 1].markdown(_val_str)
+
+            # In browse mode, no detail card — user has to click a name.
+            detail_rows = filtered.iloc[0:0]
+            st.caption(f"💡 Click any **player name** above to see their full profile.")
+
+        for _, row in detail_rows.iterrows():
             name = row.get("player", "—")
             comp = row.get("composite_z", np.nan)
             pos_tag = f" ({row[pos_col]})" if pos_col and pd.notna(row.get(pos_col)) else ""
@@ -1753,12 +1926,9 @@ else:
             rec = get_recruiting_info(name)
             stars_tag = f" {star_display(rec['stars'])}" if rec is not None and pd.notna(rec.get("stars")) else ""
 
-            # Auto-open the row that the player-search box jumped to.
-            # Marker stays set until the user clicks "Clear filter" —
-            # that's also what keeps the leaderboard filtered down to
-            # this player (handled above before this loop).
-            _expanded = (st.session_state.get("expand_college_player") == name)
-            with st.expander(f"**{name}**{pos_tag}{score_tag}{stars_tag}", expanded=_expanded):
+            # Header used to be the expander label; now it's an h3 above the card.
+            st.markdown(f"### {name}{pos_tag}{score_tag}{stars_tag}")
+            with st.container(border=True):
 
                 # ── Recruiting header ─────────────────────
                 if rec is not None:
@@ -1960,13 +2130,20 @@ else:
 
                 with pc2:
                     # ── Radar chart (factored helper) ─────
-                    _render_player_radar(
-                        player_name=name,
-                        key_prefix=f"{pos_name}_{name}",
-                        full_df=df, labels_dict=labels, season_col=season_col,
-                        pos_name=pos_name, pos_display=pos_display,
-                        default_season=selected_college_season,
-                    )
+                    if z_cols:
+                        if pos_name == "OL":
+                            st.caption(
+                                "📋 _Radar shows **team-level** OL unit metrics "
+                                "(every OL on this team-season has the same z-scores). "
+                                "Use it to gauge the quality of the unit, not the individual._"
+                            )
+                        _render_player_radar(
+                            player_name=name,
+                            key_prefix=f"{pos_name}_{name}",
+                            full_df=df, labels_dict=labels, season_col=season_col,
+                            pos_name=pos_name, pos_display=pos_display,
+                            default_season=selected_college_season,
+                        )
 
                 # ── Compare to another player (radar + line chart) ──
                 compare_active = st.checkbox(
@@ -2022,18 +2199,20 @@ else:
                                         f"({format_percentile(cmp_pct)} of FBS {pos_display.lower()})"
                                     )
                     with cmp_pc2:
-                        _render_player_radar(
-                            player_name=compare_name,
-                            key_prefix=f"{pos_name}_{compare_name}_cmp_for_{name}",
-                            full_df=df, labels_dict=labels, season_col=season_col,
-                            pos_name=pos_name, pos_display=pos_display,
-                            default_season=selected_college_season,
-                            header_prefix="Comparison:",
-                        )
+                        if z_cols:
+                            _render_player_radar(
+                                player_name=compare_name,
+                                key_prefix=f"{pos_name}_{compare_name}_cmp_for_{name}",
+                                full_df=df, labels_dict=labels, season_col=season_col,
+                                pos_name=pos_name, pos_display=pos_display,
+                                default_season=selected_college_season,
+                                header_prefix="Comparison:",
+                            )
 
                 # ── Career line chart with metric dropdown ─
+                # Skipped for OL (no z_cols → would draw an empty NaN line).
                 all_player_career = df[df["player"] == name].sort_values(season_col)
-                if len(all_player_career) >= 2:
+                if z_cols and len(all_player_career) >= 2:
                     st.markdown(f"**College career arc — {name}**")
                     build_career_chart(name, df, season_col, z_cols, labels,
                                         unique_key=f"{pos_name}_{name}",
@@ -2044,7 +2223,7 @@ else:
                     )
 
                 # ── Compare line chart (stacked below line chart A) ──
-                if compare_name:
+                if compare_name and z_cols:
                     cmp_career = df[df["player"] == compare_name].sort_values(season_col)
                     if len(cmp_career) >= 2:
                         st.markdown(f"**College career arc — {compare_name}** (comparison)")
