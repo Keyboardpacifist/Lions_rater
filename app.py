@@ -1712,36 +1712,40 @@ else:
             mask = mask & (df["pos_group"].isin(allowed))
         filtered = df[mask].copy()
 
-        # Volume filter. In single-position mode the user sets `min_volume`
-        # above; in all-positions mode we fall back to each position's
-        # default floor from POS_VOLUME.
-        if all_pos_mode_college:
-            pos_vol = POS_VOLUME.get(pos_name)
-            if pos_vol:
-                _vc, _, _vd, _, _, _ = pos_vol
-                if _vc in filtered.columns and _vd > 0:
-                    filtered = filtered[filtered[_vc].fillna(0) >= _vd]
-        else:
-            if vol_col and vol_col in filtered.columns and min_volume > 0:
-                filtered = filtered[filtered[vol_col].fillna(0) >= min_volume]
-
-        # Player-search filter — overrides everything; show only the
-        # searched player. Skips the volume/prospects filters above by
-        # being applied last (and idempotently).
+        # Player-search overrides the volume + prospects filters.
+        # Searching for someone by name should always show that player,
+        # otherwise a default volume floor (e.g., TE >= 10 receptions)
+        # silently strips low-snap players from the search result and
+        # leaves the user staring at a "Filtered to X" banner with no
+        # row to click.
         if college_search_target:
             filtered = filtered[filtered["player"] == college_search_target]
+        else:
+            # Volume filter. In single-position mode the user sets
+            # `min_volume` above; in all-positions mode we fall back to
+            # each position's default floor from POS_VOLUME.
+            if all_pos_mode_college:
+                pos_vol = POS_VOLUME.get(pos_name)
+                if pos_vol:
+                    _vc, _, _vd, _, _, _ = pos_vol
+                    if _vc in filtered.columns and _vd > 0:
+                        filtered = filtered[filtered[_vc].fillna(0) >= _vd]
+            else:
+                if vol_col and vol_col in filtered.columns and min_volume > 0:
+                    filtered = filtered[filtered[vol_col].fillna(0) >= min_volume]
 
-        # 2026 draft prospect filter — keep only rows whose (last name, team)
-        # appears in the prospect set (combine invites + heuristic).
-        if prospects_only and len(draft_class_set) > 0:
-            def _is_prospect(row):
-                name = str(row.get("player", "") or "")
-                team = str(row.get("team", "") or "")
-                last = name.split()[-1].lower() if name else ""
-                if not last:
-                    return False
-                return (last, team.lower()) in draft_class_set or (last, "") in draft_class_set
-            filtered = filtered[filtered.apply(_is_prospect, axis=1)]
+            # 2026 draft prospect filter — keep only rows whose (last
+            # name, team) appears in the prospect set. Also bypassed
+            # when searching by name.
+            if prospects_only and len(draft_class_set) > 0:
+                def _is_prospect(row):
+                    name = str(row.get("player", "") or "")
+                    team = str(row.get("team", "") or "")
+                    last = name.split()[-1].lower() if name else ""
+                    if not last:
+                        return False
+                    return (last, team.lower()) in draft_class_set or (last, "") in draft_class_set
+                filtered = filtered[filtered.apply(_is_prospect, axis=1)]
 
         if len(filtered) == 0: continue
 
