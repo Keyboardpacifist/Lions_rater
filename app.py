@@ -537,8 +537,10 @@ else:
         return f"bottom {int(pct)}%"
 
     def star_display(stars):
+        # Compact form: "5⭐" instead of "⭐⭐⭐⭐⭐". The 5-emoji string
+        # was eating ~80px of column width on mobile.
         if pd.isna(stars) or stars is None: return ""
-        return "⭐" * int(stars)
+        return f"{int(stars)}⭐"
 
     # ── Cached data loaders ───────────────────────────────
     ALL_SCHOOLS_LABEL = "🏫 All schools"
@@ -1810,9 +1812,11 @@ else:
             else:
                 filtered = filtered.sort_values(score_col, ascending=False)
 
-            # Cap the leaderboard for non-school views so the page stays usable.
+            # Cap the leaderboard to top 6 — keeps the page short on
+            # mobile and matches Brett's "half a dozen options" request.
+            # Specific-school views still show the full school roster.
             if school_is_all:
-                filtered = filtered.head(10 if all_pos_mode_college else 25)
+                filtered = filtered.head(6)
 
         if in_detail_mode_here:
             # Detail-only view: skip the leaderboard build/render entirely
