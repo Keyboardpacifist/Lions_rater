@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
 from career_arc import career_arc_section
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, render_master_detail_leaderboard, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, render_master_detail_leaderboard, render_player_stat_bar, render_player_year_picker, score_players
 
 st.set_page_config(page_title="Lions Safety Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -358,15 +358,65 @@ player = ranked[ranked["player_name"] == selected].iloc[0]
 warn = sample_size_warning(player.get("def_snaps", 0))
 if warn: st.warning(warn)
 
+# ── Unified Season picker — drives stat bar + bundle table + radar ──
+all_safeties_full = load_safety_data()
+player_career = all_safeties_full[all_safeties_full["player_id"] == player.get("player_id")] if "player_id" in all_safeties_full.columns else all_safeties_full[0:0]
+
+st.markdown(f"### {selected}")
+
+_yr = render_player_year_picker(
+    career_df=player_career,
+    default_season=selected_season,
+    season_col="season_year",
+    team_col="team",
+    key_prefix=f"safety_{player.get('player_id') or selected}",
+)
+view_row = _yr["view_row"] if _yr["view_row"] is not None else player
+year_choice = _yr["year_choice"]
+
+if total_weight > 0:
+    _view_score = sum(view_row.get(z, 0) * (w / total_weight)
+                       for z, w in effective_weights.items()
+                       if pd.notna(view_row.get(z)))
+else:
+    _view_score = float("nan")
+
+SAFETY_STAT_SPECS = [
+    ("def_snaps", "{:.0f}", "Snaps"),
+    ("games", "{:.0f}", "G"),
+    ("interceptions_per_game", "{:.2f}", "INT/G"),
+    ("passes_defended_per_game", "{:.2f}", "PD/G"),
+    ("solo_tackle_rate", "{:.1%}", "Solo Tkl%"),
+    ("forced_fumbles_per_game", "{:.2f}", "FF/G"),
+]
+NFL_SUM_COLS = {"off_snaps", "def_snaps", "snaps", "games", "targets",
+                "receptions", "rec_yards", "rec_tds",
+                "attempts", "completions", "passing_yards", "passing_tds",
+                "passing_interceptions", "rushing_yards", "rushing_tds",
+                "carries", "rushing_attempts", "tackles", "def_tackles",
+                "def_sacks", "def_qb_hits", "def_tackles_for_loss",
+                "def_tackles_solo", "def_tackle_assists", "def_interceptions",
+                "sacks", "tfls", "tackles_for_loss",
+                "interceptions", "passes_defensed",
+                "passes_defended", "qb_hits", "fg_made", "fg_attempts",
+                "fg_att", "xp_made", "punts", "punt_yards", "total_yards"}
+_team_disp = _yr["team_str"] if _yr["team_str"] else ""
+_ctx = (f"{_yr['season_str']} · {_team_disp}" if _team_disp else _yr["season_str"])
+render_player_stat_bar(
+    view_row=view_row,
+    career_df=player_career,
+    stat_specs=SAFETY_STAT_SPECS,
+    ctx_str=_ctx,
+    sum_cols=NFL_SUM_COLS,
+    is_career_view=_yr["is_career_view"],
+)
+
 c1, c2 = st.columns([1, 1])
 with c1:
-    st.markdown(f"### {selected}")
-    st.caption(f"{int(player.get('games') or 0)} games · {int(player.get('def_snaps') or 0)} defensive snaps")
-
-    player_score = player["score"]
-    player_pct = format_percentile(zscore_to_percentile(player_score))
-    sign = "+" if player_score >= 0 else ""
-    st.markdown(f"**Your score: {sign}{player_score:.2f} ({player_pct})**")
+    _sign = "+" if pd.notna(_view_score) and _view_score >= 0 else ""
+    _pct = format_percentile(zscore_to_percentile(_view_score)) if pd.notna(_view_score) else "—"
+    _score_str = f"{_sign}{_view_score:.2f}" if pd.notna(_view_score) else "—"
+    st.markdown(f"**Your score: {_score_str} ({_pct})**")
     st.markdown("_This score is based on your slider settings. Change the sliders and this number changes._")
 
     st.markdown("---")
@@ -379,9 +429,9 @@ with c1:
             bw = bundle_weights.get(bk, 0)
             if bw == 0: continue
             contribution = sum(
-                player.get(z, 0) * (bw * internal / total_weight)
+                view_row.get(z, 0) * (bw * internal / total_weight)
                 for z, internal in bundle["stats"].items()
-                if pd.notna(player.get(z)) and total_weight > 0
+                if pd.notna(view_row.get(z)) and total_weight > 0
             )
             bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
         if bundle_rows:
@@ -393,8 +443,8 @@ with c1:
             for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
             for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
                 raw_col = RAW_COL_MAP.get(z_col)
-                z = player.get(z_col)
-                raw = player.get(raw_col) if raw_col else None
+                z = view_row.get(z_col)
+                raw = view_row.get(raw_col) if raw_col else None
                 pct = zscore_to_percentile(z) if pd.notna(z) else None
                 stat_rows.append({"Stat": stat_labels.get(z_col, z_col), "Value": f"{raw:.3f}" if pd.notna(raw) else "—", "Percentile": f"{int(pct)}th" if pct is not None else "—"})
             st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
@@ -402,8 +452,8 @@ with c1:
         rows = []
         for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
             raw_col = RAW_COL_MAP.get(z_col)
-            z = player.get(z_col)
-            raw = player.get(raw_col) if raw_col else None
+            z = view_row.get(z_col)
+            raw = view_row.get(raw_col) if raw_col else None
             w = effective_weights.get(z_col, 0)
             contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
             pct = zscore_to_percentile(z) if pd.notna(z) else None
@@ -413,7 +463,8 @@ with c1:
 with c2:
     st.markdown("**Percentile profile vs. all league safeties**")
     st.caption("50th = league average. Higher = better.")
-    fig = build_radar_figure(player, stat_labels, stat_methodology)
+    radar_row = view_row if view_row is not None else player
+    fig = build_radar_figure(radar_row, stat_labels, stat_methodology)
     if fig: st.plotly_chart(fig, use_container_width=True)
 
 career_arc_section(

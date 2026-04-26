@@ -415,6 +415,107 @@ def _build_per_stint_chart(history_df, value_col, season_col, team_col,
     return fig
 
 
+_MULTI_METRIC_COLORS_NFL = [
+    "#0076B6", "#1f77b4", "#2ca02c", "#d62728", "#9467bd",
+    "#17becf", "#e377c2", "#8c564b", "#bcbd22", "#7f7f7f",
+]
+
+
+def _build_multi_metric_nfl_chart(history_df, season_col, metric_columns,
+                                    selected_metrics, population_label):
+    """Multi-metric overlay of an NFL player's career arc.
+
+    Each selected metric is drawn as its own colored line. Per-stint
+    team coloring (used by the single-metric chart) is dropped here —
+    line colors are reserved for distinguishing metrics, not teams.
+    The typical-starter benchmark is also dropped because each metric
+    has its own scale.
+    """
+    if history_df.empty or not selected_metrics:
+        return None
+    seasons = [int(s) for s in history_df[season_col].tolist()]
+    fig = go.Figure()
+    fig.add_hline(y=0, line_dash="dash", line_color="#888", line_width=1,
+                  annotation_text=f"{population_label} avg",
+                  annotation_position="bottom left",
+                  annotation_font_size=10, annotation_font_color="#888")
+    plotted = 0
+    for i, metric in enumerate(selected_metrics):
+        col = metric_columns.get(metric)
+        if col is None or col not in history_df.columns:
+            continue
+        values = history_df[col].tolist()
+        color = _MULTI_METRIC_COLORS_NFL[i % len(_MULTI_METRIC_COLORS_NFL)]
+        hover = []
+        for s, v in zip(seasons, values):
+            if pd.notna(v):
+                hover.append(f"<b>{s}</b><br>{metric}: {v:+.2f}")
+            else:
+                hover.append(f"<b>{s}</b><br>No data")
+        fig.add_trace(go.Scatter(
+            x=seasons, y=values, mode="lines+markers", name=metric,
+            line=dict(color=color, width=2.5),
+            marker=dict(size=8, color=color, line=dict(width=1.5, color="white")),
+            hovertext=hover, hoverinfo="text",
+        ))
+        plotted += 1
+    if plotted == 0:
+        return None
+    fig.update_layout(
+        xaxis=dict(title="Season", tickmode="array", tickvals=seasons,
+                   ticktext=[str(s) for s in seasons], gridcolor="#eee"),
+        yaxis=dict(title="Z-score (vs. NFL avg)", gridcolor="#eee",
+                   zeroline=True, zerolinecolor="#888", zerolinewidth=1),
+        height=380, margin=dict(l=50, r=20, t=20, b=80),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="top", y=-0.18,
+                    xanchor="center", x=0.5,
+                    bgcolor="rgba(255,255,255,0.7)",
+                    bordercolor="#ccc", borderwidth=1,
+                    font=dict(size=10)),
+    )
+    return fig
+
+
+def _render_nfl_career_chart(*, history_df, season_col, team_col, league_df,
+                              z_score_cols, stat_labels, population_label,
+                              selected_metrics, multi_metric, key_suffix):
+    """Render the NFL career arc chart for one player.
+
+    Single-metric mode → per-stint team-colored chart with starter
+    benchmark. Multi-metric mode → overlay each metric as its own line.
+    Returns the rendered Plotly figure (or None if no data).
+    """
+    nfl_metric_columns = {"Composite score": "composite_z"}
+    for z_col in z_score_cols:
+        if z_col in history_df.columns and history_df[z_col].notna().any():
+            label = stat_labels.get(z_col, z_col.replace("_z", "").replace("_", " ").title())
+            nfl_metric_columns[label] = z_col
+
+    if multi_metric:
+        return _build_multi_metric_nfl_chart(
+            history_df, season_col=season_col,
+            metric_columns=nfl_metric_columns,
+            selected_metrics=selected_metrics,
+            population_label=population_label,
+        )
+
+    value_col = nfl_metric_columns.get(selected_metrics[0], "composite_z")
+    league_for_bench = league_df.copy()
+    if value_col == "composite_z":
+        league_for_bench["composite_z"] = league_for_bench.apply(
+            lambda row: compute_composite_score(row, z_score_cols), axis=1)
+    return _build_per_stint_chart(
+        history_df, value_col=value_col,
+        season_col=season_col, team_col=team_col,
+        population_label=population_label,
+        fallback_color="#0076B6",
+        league_df=league_for_bench,
+        benchmark_top_n=32,
+    )
+
+
 def _build_line_chart(seasons, values, teams, color, label, population_label):
     """Build a single line chart for either NFL or college data."""
     try:
@@ -616,44 +717,65 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
         if n_stints >= 2:
             # Build metric options — each stint is one row
             nfl_metric_options = ["Composite score"]
-            nfl_metric_columns = {"Composite score": "composite_z"}
-
             for z_col in z_score_cols:
                 if z_col in nfl_history.columns and nfl_history[z_col].notna().any():
                     label = stat_labels.get(z_col, z_col.replace("_z", "").replace("_", " ").title())
                     nfl_metric_options.append(label)
-                    nfl_metric_columns[label] = z_col
 
-            selected_nfl_metric = st.selectbox(
-                "Metric",
-                options=nfl_metric_options,
-                index=0,
-                key=f"nfl_career_metric_{player_name}",
-                label_visibility="collapsed",
+            # ── Multi-metric toggle ──────────────────────
+            nfl_multi_metric = st.checkbox(
+                "📊 Show multiple metrics on this chart",
+                key=f"nfl_career_multi_{player_name}",
+                help=("Plot multiple metrics on the same chart, each in "
+                      "a different color. Drops the per-stint team "
+                      "coloring and the typical-starter benchmark "
+                      "(each metric has its own scale)."),
             )
 
-            value_col = nfl_metric_columns[selected_nfl_metric]
-            # For the benchmark line, the league_df needs a column matching the
-            # selected metric. composite_z is computed per-row above on
-            # nfl_history but not on the full league_df — recompute it on the fly.
-            league_for_bench = league_df.copy()
-            if value_col == "composite_z":
-                league_for_bench["composite_z"] = league_for_bench.apply(
-                    lambda row: compute_composite_score(row, z_score_cols), axis=1)
-            fig = _build_per_stint_chart(
-                nfl_history, value_col=value_col,
-                season_col=nfl_season_col, team_col=team_col,
+            if nfl_multi_metric:
+                selected_nfl_metrics = st.pills(
+                    "Metrics to overlay — click to add or remove lines",
+                    options=nfl_metric_options,
+                    default=["Composite score"],
+                    selection_mode="multi",
+                    key=f"nfl_career_pills_{player_name}",
+                )
+                if not selected_nfl_metrics:
+                    st.caption("Click at least one metric pill above.")
+                    selected_nfl_metrics = ["Composite score"]
+                metric_caption_label = "selected metrics"
+            else:
+                selected_nfl_metric = st.selectbox(
+                    "Metric",
+                    options=nfl_metric_options,
+                    index=0,
+                    key=f"nfl_career_metric_{player_name}",
+                    label_visibility="collapsed",
+                )
+                selected_nfl_metrics = [selected_nfl_metric]
+                metric_caption_label = selected_nfl_metric.lower()
+
+            fig = _render_nfl_career_chart(
+                history_df=nfl_history, season_col=nfl_season_col,
+                team_col=team_col, league_df=league_df,
+                z_score_cols=z_score_cols, stat_labels=stat_labels,
                 population_label=f"NFL {position_label}",
-                fallback_color="#0076B6",
-                league_df=league_for_bench,
-                benchmark_top_n=32,
+                selected_metrics=selected_nfl_metrics,
+                multi_metric=nfl_multi_metric,
+                key_suffix=player_name,
             )
             if fig is not None:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True,
+                                  key=f"nfl_chart_main_{player_name}")
                 n_traded_seasons = (
                     nfl_history.groupby(nfl_season_col).size().gt(1).sum()
                 )
-                if n_traded_seasons:
+                if nfl_multi_metric:
+                    st.caption(
+                        f"Each line is one metric across this player's NFL "
+                        f"career. 0.00 = league average for that metric."
+                    )
+                elif n_traded_seasons:
                     st.caption(
                         f"Each marker is a (season, team) stint. "
                         f"Marker color = team primary; outline = team secondary. "
@@ -662,9 +784,58 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
                     )
                 else:
                     st.caption(
-                        f"Each marker is one NFL season's {selected_nfl_metric.lower()} vs. all NFL {position_label}. "
+                        f"Each marker is one NFL season's {metric_caption_label} vs. all NFL {position_label}. "
                         f"Marker color = team primary; outline = team secondary. 0.00 = league average."
                     )
+
+            # ── Compare to another player ─────────────────
+            nfl_compare = st.checkbox(
+                "🔍 Compare to another NFL player",
+                key=f"nfl_career_compare_{player_name}",
+                help=("Stack a second player's career arc directly below "
+                      "this one. Same metric(s) and chart style apply to both."),
+            )
+            if nfl_compare and name_col in league_df.columns:
+                # All players in the position pool, by name; default to a
+                # non-self player so the dropdown is useful immediately.
+                all_pos_players = sorted(set(
+                    str(n) for n in league_df[name_col].dropna().unique() if str(n).strip()
+                ))
+                default_cmp = next((p for p in all_pos_players if p != player_name),
+                                    all_pos_players[0] if all_pos_players else None)
+                if default_cmp:
+                    compare_name_nfl = st.selectbox(
+                        f"Comparison {position_label[:-1].lower() if position_label.endswith('s') else position_label.lower()}",
+                        options=all_pos_players,
+                        index=all_pos_players.index(default_cmp),
+                        key=f"nfl_career_compare_select_{player_name}",
+                    )
+                    if compare_name_nfl:
+                        cmp_history = find_player_history(
+                            league_df, None, compare_name_nfl,
+                            id_col=id_col, name_col=name_col,
+                        )
+                        if len(cmp_history) > 0:
+                            cmp_history = cmp_history.sort_values(nfl_season_col).reset_index(drop=True)
+                            cmp_history["composite_z"] = cmp_history.apply(
+                                lambda row: compute_composite_score(row, z_score_cols), axis=1)
+                            st.markdown(f"**NFL career arc — {compare_name_nfl}** (comparison)")
+                            cmp_fig = _render_nfl_career_chart(
+                                history_df=cmp_history, season_col=nfl_season_col,
+                                team_col=team_col, league_df=league_df,
+                                z_score_cols=z_score_cols, stat_labels=stat_labels,
+                                population_label=f"NFL {position_label}",
+                                selected_metrics=selected_nfl_metrics,
+                                multi_metric=nfl_multi_metric,
+                                key_suffix=f"{player_name}__cmp",
+                            )
+                            if cmp_fig is not None:
+                                st.plotly_chart(cmp_fig, use_container_width=True,
+                                                  key=f"nfl_chart_cmp_{player_name}_{compare_name_nfl}")
+                            else:
+                                st.caption(f"_No multi-season NFL data for {compare_name_nfl}._")
+                        else:
+                            st.caption(f"_No NFL history found for {compare_name_nfl}._")
         elif n_stints == 1:
             nfl_values = nfl_history["composite_z"].tolist()
             score = nfl_values[0]

@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
 from career_arc import career_arc_section
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, radar_season_row, render_master_detail_leaderboard, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, radar_season_row, render_master_detail_leaderboard, render_player_stat_bar, render_player_year_picker, score_players
 
 st.set_page_config(page_title="Lions Kicker Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -242,24 +242,74 @@ if selected is None:
 st.subheader("Player detail")
 player = ranked[ranked["player_name"] == selected].iloc[0]
 
+# ── Unified Season picker — drives stat bar + bundle table + radar ──
+all_kickers = load_kicker_data()
+player_career = all_kickers[all_kickers["player_id"] == player.get("player_id")] if "player_id" in all_kickers.columns else all_kickers[0:0]
+
+st.markdown(f"### {selected}")
+
+_yr = render_player_year_picker(
+    career_df=player_career,
+    default_season=selected_season,
+    season_col="season_year",
+    team_col="recent_team",
+    key_prefix=f"k_{player.get('player_id') or selected}",
+)
+view_row = _yr["view_row"] if _yr["view_row"] is not None else player
+year_choice = _yr["year_choice"]
+
+if total_weight > 0:
+    _view_score = sum(view_row.get(z, 0) * (w / total_weight)
+                       for z, w in effective_weights.items()
+                       if pd.notna(view_row.get(z)))
+else:
+    _view_score = float("nan")
+
+K_STAT_SPECS = [
+    ("fg_made", "{:.0f}", "FGM"),
+    ("fg_att", "{:.0f}", "Att"),
+    ("fg_pct", "{:.1%}", "FG%"),
+    ("long_fg", "{:.0f}", "Long"),
+    ("xp_made", "{:.0f}", "XP"),
+    ("games", "{:.0f}", "G"),
+]
+NFL_SUM_COLS = {"off_snaps", "def_snaps", "snaps", "games", "targets",
+                "receptions", "rec_yards", "rec_tds",
+                "attempts", "completions", "passing_yards", "passing_tds",
+                "passing_interceptions", "rushing_yards", "rushing_tds",
+                "carries", "rushing_attempts", "tackles", "def_tackles",
+                "sacks", "tfls", "tackles_for_loss",
+                "interceptions", "def_interceptions", "passes_defensed",
+                "passes_defended", "qb_hits", "fg_made", "fg_attempts",
+                "fg_att", "xp_made", "xp_att", "punts", "punt_yards",
+                "total_yards", "clutch_att", "clutch_made"}
+_team_disp = _yr["team_str"] if _yr["team_str"] else ""
+_ctx = (f"{_yr['season_str']} · {_team_disp}" if _team_disp else _yr["season_str"])
+render_player_stat_bar(
+    view_row=view_row,
+    career_df=player_career,
+    stat_specs=K_STAT_SPECS,
+    ctx_str=_ctx,
+    sum_cols=NFL_SUM_COLS,
+    is_career_view=_yr["is_career_view"],
+)
+
 c1, c2 = st.columns([1, 1])
 with c1:
-    st.markdown(f"### {selected}")
-    st.caption(f"{int(player.get('games') or 0)} games · {int(player.get('fg_made') or 0)}/{int(player.get('fg_att') or 0)} FG · Long: {int(player.get('long_fg') or 0)} yds · {int(player.get('clutch_att') or 0)} clutch attempts")
-    st.markdown(f"**Your score:** {format_score(player['score'])}")
+    st.markdown(f"**Your score:** {format_score(_view_score)}")
     st.markdown("---"); st.markdown("**How your score breaks down**")
     bundle_rows = []
     for bk, bundle in active_bundles.items():
         bw = bundle_weights.get(bk, 0)
         if bw == 0: continue
-        contribution = sum(player.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(player.get(z)) and total_weight > 0)
+        contribution = sum(view_row.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(view_row.get(z)) and total_weight > 0)
         bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
     if bundle_rows: st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
     with st.expander("🔬 See the underlying stats"):
         stat_rows = []; shown = set()
         for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
         for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
-            raw_col = RAW_COL_MAP.get(z_col); z = player.get(z_col); raw = player.get(raw_col) if raw_col else None
+            raw_col = RAW_COL_MAP.get(z_col); z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
             if raw_col in ("fg_pct", "fg_40_pct", "clutch_pct", "xp_pct"):
                 raw_fmt = f"{raw:.1%}" if pd.notna(raw) else "—"
             else:
@@ -270,13 +320,7 @@ with c1:
 with c2:
     st.markdown("**Kicker profile** (percentiles vs. league kickers)")
     st.caption("Solid blue = this player. Dashed gray = league kicker average.")
-    all_kickers = load_kicker_data()
-    player_career = all_kickers[all_kickers["player_id"] == player.get("player_id")] if "player_id" in all_kickers.columns else all_kickers[0:0]
-    radar_row = radar_season_row(player_career, selected_season,
-                                  season_col="season_year",
-                                  key=f"k_radar_year_{player.get('player_id', '')}")
-    if radar_row is None:
-        radar_row = player
+    radar_row = view_row if view_row is not None else player
     season_pool = all_kickers[all_kickers["season_year"] == selected_season] if "season_year" in all_kickers.columns else all_kickers
     radar_bench = {z: season_pool[z].mean() for z in RADAR_STATS if z in season_pool.columns and season_pool[z].notna().any()}
     radar_bench_raw = {}
