@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
 from career_arc import career_arc_section
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, render_master_detail_leaderboard, score_players
 
 st.set_page_config(page_title="CB Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -302,29 +302,31 @@ players.index = players.index + 1
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 ranked = players.copy()
 
+# ── Master/detail click-to-detail leaderboard ──────────────────
 st.markdown("""
 **How to read the score:** 0.00 = league average · Positive = above average · Negative = below average.
 The percentile shows where this player ranks among all qualifying CBs league-wide.
 """)
 
+# Top scorer banner (browse-only)
+_top_html = None
+_top_warn = None
 if len(ranked) > 0:
-    top = ranked.iloc[0]
-    top_name = top.get("player_name", "—")
-    top_score = top["score"]
-    top_pct = format_percentile(zscore_to_percentile(top_score))
-    sign = "+" if top_score >= 0 else ""
-    st.markdown(
+    _top = ranked.iloc[0]
+    _top_name = _top.get("player_name", "—")
+    _top_score = _top["score"]
+    _top_pct = format_percentile(zscore_to_percentile(_top_score))
+    _sign = "+" if _top_score >= 0 else ""
+    _top_html = (
         f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;"
         f"margin-bottom:8px;font-size:1.1rem;'>"
         f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span>"
-        f" &nbsp;·&nbsp; <strong>{top_name}</strong>"
+        f" &nbsp;·&nbsp; <strong>{_top_name}</strong>"
         f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>"
-        f"{sign}{top_score:.2f}</span>"
-        f" <span style='opacity:0.85;'>({top_pct})</span></div>",
-        unsafe_allow_html=True,
+        f"{_sign}{_top_score:.2f}</span>"
+        f" <span style='opacity:0.85;'>({_top_pct})</span></div>"
     )
-    warn = sample_size_warning(top.get("def_snaps", 0))
-    if warn: st.warning(warn)
+    _top_warn = sample_size_warning(_top.get("def_snaps", 0))
 
 display_df = pd.DataFrame({
     "Rank": ranked.index,
@@ -335,16 +337,24 @@ display_df = pd.DataFrame({
     ),
     "Your score": ranked["score"].apply(format_score),
 })
-st.dataframe(display_df, use_container_width=True, hide_index=True)
-st.caption("⚠️ = under 300 snaps — small sample, treat with caution.")
 
-# ══════════════════════════════════════════════════════════════
-# PLAYER DETAIL
-# ══════════════════════════════════════════════════════════════
-st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-selected = st.selectbox("Pick a player to see their full breakdown", options=ranked["player_name"].tolist(), index=0)
+selected = render_master_detail_leaderboard(
+    display_df=display_df,
+    name_col="Player",
+    key_prefix="cb",
+    team=selected_team,
+    season=selected_season,
+    top_banner_html=_top_html,
+    top_banner_warn=_top_warn,
+    leaderboard_caption=(
+        "⚠️ = under 300 snaps — small sample, treat with caution. "
+        "**Click any player name above** to view their profile."
+    ),
+)
+if selected is None:
+    st.stop()
+
 player = ranked[ranked["player_name"] == selected].iloc[0]
-
 warn = sample_size_warning(player.get("def_snaps", 0))
 if warn: st.warning(warn)
 

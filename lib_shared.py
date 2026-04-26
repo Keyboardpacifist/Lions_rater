@@ -422,3 +422,149 @@ def radar_season_row(career_df, current_season, season_col="season_year",
     if len(season_rows) == 1:
         return season_rows.iloc[0]
     return season_rows.select_dtypes(include="number").mean()
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Master/detail click-to-detail leaderboard
+# ──────────────────────────────────────────────────────────────────────
+
+def render_master_detail_leaderboard(
+    *,
+    display_df,
+    name_col,
+    key_prefix,
+    team,
+    season,
+    top_banner_html=None,
+    top_banner_warn=None,
+    leaderboard_caption=None,
+    top_n=6,
+):
+    """Click-to-detail master/detail leaderboard for an NFL position page.
+
+    Renders one of two views:
+      - BROWSE: optional top banner + clickable-name leaderboard (capped
+        to `top_n` with a "Show all" button) + caption.
+      - DETAIL: a primary "← Back to leaderboard" button at the top.
+
+    Returns:
+      str | None — selected player name when in DETAIL view (caller
+      should render the player's full detail card next), or None when in
+      BROWSE view (caller should `st.stop()` to skip the detail card).
+
+    Args:
+      display_df: pd.DataFrame whose rows are leaderboard rows. Must
+        contain a column matching `name_col` for the click handler.
+        Other columns are rendered as plain markdown.
+      name_col: column in `display_df` whose values are the player names
+        used for the click button + the returned selection. Often
+        "Player" if you've renamed the column for display, or the raw
+        column name like "player_display_name".
+      key_prefix: short string unique per page (e.g. "qb", "wr", "ol").
+        Used to scope all session-state keys + widget keys.
+      team, season: current page filter context. When either changes
+        across reruns, all sticky detail markers for this page are
+        cleared so the user lands back in browse for the new context.
+      top_banner_html: optional HTML to render above the leaderboard
+        in browse mode (e.g., "#1 of 23 — Player Name — +1.50" card).
+      top_banner_warn: optional warning string shown right after the
+        banner (e.g. small-sample warning for the #1 player).
+      leaderboard_caption: optional caption rendered below the
+        leaderboard table.
+      top_n: row cap in browse mode before the "Show all" button
+        appears. Defaults to 6 to match the College mode pattern.
+    """
+    import streamlit as st
+
+    sel_key = f"{key_prefix}_selected_player_{team}_{season}"
+    expand_key = f"{key_prefix}_lb_expanded_{team}_{season}"
+    ctx_key = f"_{key_prefix}_filter_ctx"
+
+    # Filter-ctx auto-clear: when the page's (team, season) changed
+    # from the previous render, drop any sticky detail markers for
+    # this position so navigation always lands the user in the new
+    # leaderboard, not in a stale player.
+    cur_ctx = (str(team), int(season) if season is not None else None)
+    prev_ctx = st.session_state.get(ctx_key)
+    if prev_ctx is not None and prev_ctx != cur_ctx:
+        for _k in list(st.session_state.keys()):
+            if _k.startswith(f"{key_prefix}_selected_player_") or \
+               _k.startswith(f"{key_prefix}_lb_expanded_"):
+                st.session_state.pop(_k, None)
+    st.session_state[ctx_key] = cur_ctx
+
+    # Detail-mode is active iff the marker names a player still in the
+    # current leaderboard. Stale markers (player no longer present) get
+    # silently dropped so the user falls back into browse mode.
+    name_pool = (display_df[name_col].tolist()
+                 if name_col in display_df.columns else [])
+    marker = st.session_state.get(sel_key)
+    in_detail = bool(marker and marker in name_pool)
+    if marker and not in_detail:
+        st.session_state.pop(sel_key, None)
+
+    if in_detail:
+        # Detail view — caller renders the full card.
+        if st.button("← Back to leaderboard", type="primary",
+                      key=f"{key_prefix}_back_to_lb_{team}_{season}"):
+            st.session_state.pop(sel_key, None)
+            st.rerun()
+        return marker
+
+    # Browse view — render the leaderboard ourselves and signal None.
+    if top_banner_html:
+        st.markdown(top_banner_html, unsafe_allow_html=True)
+    if top_banner_warn:
+        st.warning(top_banner_warn)
+
+    # Cap rows; offer "Show all" if there's more than top_n.
+    expanded = st.session_state.get(expand_key, False)
+    visible_df = (display_df if expanded else display_df.head(top_n)).reset_index(drop=True)
+    cols_list = list(visible_df.columns)
+
+    def _w(c):
+        if c == name_col: return 2.4
+        if c in ("Rank", "#"): return 0.4
+        if c in ("Your score", "Score", "Pctl", "Percentile"): return 0.8
+        return 0.7
+
+    weights = [_w(c) for c in cols_list]
+
+    hdrs = st.columns(weights)
+    for i_h, c_h in enumerate(cols_list):
+        hdrs[i_h].markdown(f"**{c_h}**")
+
+    for i_r, row in visible_df.iterrows():
+        row_cols = st.columns(weights)
+        for j, c in enumerate(cols_list):
+            val = row[c]
+            try:
+                is_nan = isinstance(val, float) and pd.isna(val)
+            except Exception:
+                is_nan = False
+            val_str = "—" if val is None or is_nan else str(val)
+            if c == name_col:
+                if row_cols[j].button(
+                    val_str,
+                    key=f"{key_prefix}_lb_btn_{team}_{season}_{i_r}_{val_str}",
+                    type="tertiary",
+                    use_container_width=True,
+                ):
+                    st.session_state[sel_key] = val_str
+                    st.rerun()
+            else:
+                row_cols[j].markdown(val_str)
+
+    if not expanded and len(display_df) > top_n:
+        if st.button(
+            f"Show all {len(display_df)} players →",
+            key=f"{key_prefix}_show_all_{team}_{season}",
+            use_container_width=True,
+        ):
+            st.session_state[expand_key] = True
+            st.rerun()
+
+    if leaderboard_caption:
+        st.caption(leaderboard_caption)
+
+    return None

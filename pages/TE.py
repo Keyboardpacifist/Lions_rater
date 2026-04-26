@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS, display_abbr
 from career_arc import career_arc_section
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, metric_picker, radar_season_row, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, metric_picker, radar_season_row, render_master_detail_leaderboard, score_players
 
 st.set_page_config(page_title="TE Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -287,16 +287,27 @@ players.index = players.index + 1
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 ranked = players.copy()
 
+# ── Master/detail click-to-detail leaderboard ──────────────────
 st.markdown("**How to read the score:** 0.00 = league average TE. The percentile shows where this player ranks among all qualifying TEs (100+ snaps).")
 
+# Top scorer banner (browse-only)
+_top_html = None
+_top_warn = None
 if len(ranked) > 0:
-    top = ranked.iloc[0]
-    top_name = top.get("player_display_name", "—"); top_score = top["score"]
-    top_pct = format_percentile(zscore_to_percentile(top_score))
-    sign = "+" if top_score >= 0 else ""
-    st.markdown(f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;margin-bottom:8px;font-size:1.1rem;'><span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span> &nbsp;·&nbsp; <strong>{top_name}</strong> &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span> <span style='opacity:0.85;'>({top_pct})</span></div>", unsafe_allow_html=True)
-    warn = sample_size_warning(top.get("off_snaps", 0))
-    if warn: st.warning(warn)
+    _top = ranked.iloc[0]
+    _top_score = _top["score"]
+    _top_pct = format_percentile(zscore_to_percentile(_top_score))
+    _sign = "+" if _top_score >= 0 else ""
+    _top_html = (
+        f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;"
+        f"margin-bottom:8px;font-size:1.1rem;'>"
+        f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span>"
+        f" &nbsp;·&nbsp; <strong>{_top.get('player_display_name', '—')}</strong>"
+        f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>"
+        f"{_sign}{_top_score:.2f}</span>"
+        f" <span style='opacity:0.85;'>({_top_pct})</span></div>"
+    )
+    _top_warn = sample_size_warning(_top.get("off_snaps", 0))
 
 def _fmt_int(v): return f"{int(v)}" if pd.notna(v) else "—"
 def _fmt_pct(v): return f"{v*100:.1f}%" if pd.notna(v) else "—"
@@ -314,11 +325,25 @@ display_df = pd.DataFrame({
     "YAC/exp": ranked.get("yac_above_exp", pd.Series([float("nan")]*len(ranked))).apply(lambda v: _fmt_signed(v, 1)),
     "Your score": ranked["score"].apply(format_score),
 })
-st.dataframe(display_df, use_container_width=True, hide_index=True)
-st.caption("⚠️ = under 300 snaps. **Tgt%** = share of team's targets · **EPA/tgt** = Expected Points Added per target · **YAC/exp** = yards-after-catch above NGS expectation.")
 
-st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-selected = st.selectbox("Pick a tight end to see their full breakdown", options=ranked["player_display_name"].tolist(), index=0)
+selected = render_master_detail_leaderboard(
+    display_df=display_df,
+    name_col="Player",
+    key_prefix="te",
+    team=selected_team,
+    season=selected_season,
+    top_banner_html=_top_html,
+    top_banner_warn=_top_warn,
+    leaderboard_caption=(
+        "⚠️ = under 300 snaps. **Tgt%** = share of team's targets · "
+        "**EPA/tgt** = Expected Points Added per target · "
+        "**YAC/exp** = yards-after-catch above NGS expectation. "
+        "**Click any player name above** to view their profile."
+    ),
+)
+if selected is None:
+    st.stop()
+
 player = ranked[ranked["player_display_name"] == selected].iloc[0]
 warn = sample_size_warning(player.get("off_snaps", 0))
 if warn: st.warning(warn)

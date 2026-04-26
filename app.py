@@ -15,13 +15,19 @@ st.set_page_config(page_title="NFL Rater", page_icon="🏈", layout="wide", init
 # session so the page always loads into the leaderboard view, never into
 # a stale player profile. Filter widgets (school, season, position) and
 # slider settings are intentionally NOT cleared.
-if "_app_session_initialized_v2" not in st.session_state:
+if "_app_session_initialized_v3" not in st.session_state:
     _STALE_DETAIL_KEYS = ("expand_college_player", "nfl_search_target",
                           "_college_filter_ctx", "_last_mode")
+    # Detail-marker prefixes used across pages:
+    #   lb_selected_*           — College mode landing
+    #   wr_selected_player_*    — pages/WR.py master/detail
+    #   <pos>_selected_player_* — same pattern as we port to other pages
+    #   <pos>_lb_expanded_*     — "show all" toggles
+    _STALE_PREFIXES = ("lb_selected_", "_selected_player_", "_lb_expanded_")
     for _k in list(st.session_state.keys()):
-        if _k in _STALE_DETAIL_KEYS or _k.startswith("lb_selected_"):
+        if _k in _STALE_DETAIL_KEYS or any(p in _k for p in _STALE_PREFIXES):
             st.session_state.pop(_k, None)
-    st.session_state._app_session_initialized_v2 = True
+    st.session_state._app_session_initialized_v3 = True
 
 COLLEGE_DATA_DIR = Path(__file__).resolve().parent / "data" / "college"
 
@@ -595,6 +601,25 @@ else:
         return sorted(confs)
 
     @st.cache_data
+    def _load_pos_group_overrides(mtime):
+        # mtime keys the cache so edits to the JSON file refresh.
+        path = COLLEGE_DATA_DIR / "pos_group_overrides.json"
+        if not path.exists():
+            return {}
+        import json
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            return {}
+        # Drop comment/metadata keys (anything starting with _).
+        return {k: v for k, v in data.items() if not k.startswith("_")}
+
+    def _pos_group_overrides():
+        path = COLLEGE_DATA_DIR / "pos_group_overrides.json"
+        m = path.stat().st_mtime if path.exists() else 0
+        return _load_pos_group_overrides(m)
+
+    @st.cache_data
     def _load_college_position_cached(fname, mtime):
         # `mtime` is part of the cache key — when the parquet is
         # regenerated (e.g., after a fresh data pull), the cache busts
@@ -609,6 +634,19 @@ else:
         mtime = path.stat().st_mtime if path.exists() else 0
         df = _load_college_position_cached(fname, mtime)
         if df.empty: return df
+
+        # Apply manual pos_group overrides for the defensive parquet —
+        # CFBD occasionally miscategorizes edge rushers as interior DL
+        # (e.g., Eric O'Neill). The overrides JSON lets us correct
+        # these without re-running the data pipeline.
+        if fname == "college_def_all_seasons.parquet" and "pos_group" in df.columns:
+            overrides = _pos_group_overrides()
+            if overrides:
+                df = df.copy()
+                df["pos_group"] = df.apply(
+                    lambda r: overrides.get(r.get("player"), r.get("pos_group")),
+                    axis=1,
+                )
 
         # Merge in CFBD-enriched columns (EPA + usage + downs splits) when
         # available. We match on (player_id, season). Existing columns win
@@ -678,7 +716,7 @@ else:
     }
 
     @st.cache_data
-    def _build_college_player_index():
+    def _build_college_player_index(_overrides_mtime=0):
         """Returns sorted list of (player_name, recent_team, recent_season,
         position_key, position_label_for_dropdown) for every FBS player
         in our position parquets. The 5th tuple field exists so defensive
@@ -733,6 +771,16 @@ else:
                 ddf = pd.read_parquet(def_path)
                 season_col_l = "season" if "season" in ddf.columns else "season_year"
                 if "player" in ddf.columns and "pos_group" in ddf.columns and season_col_l in ddf.columns:
+                    # Apply pos_group overrides BEFORE drop_duplicates
+                    # so a corrected EDGE doesn't get deduped against a
+                    # stale DL row for the same player.
+                    _pg_overrides = _pos_group_overrides()
+                    if _pg_overrides:
+                        ddf = ddf.copy()
+                        ddf["pos_group"] = ddf.apply(
+                            lambda r: _pg_overrides.get(r.get("player"), r.get("pos_group")),
+                            axis=1,
+                        )
                     ddf_sorted = ddf.sort_values(season_col_l, ascending=False).drop_duplicates(["player", "pos_group"])
                     for _, r in ddf_sorted.iterrows():
                         n = r.get("player")
@@ -761,7 +809,12 @@ else:
         rows.sort(key=lambda x: x[0].lower())
         return rows
 
-    college_index = _build_college_player_index()
+    # Pass the overrides JSON mtime as the cache key so editing
+    # pos_group_overrides.json forces a fresh search-index rebuild
+    # (otherwise stale cached results keep mislabeling players).
+    _overrides_path = COLLEGE_DATA_DIR / "pos_group_overrides.json"
+    _overrides_mtime = _overrides_path.stat().st_mtime if _overrides_path.exists() else 0
+    college_index = _build_college_player_index(_overrides_mtime)
     college_search_options = [
         f"{n} — {t or '?'} · {disp}" + (f" ({s})" if s else "")
         for n, t, s, _p, disp in college_index
@@ -1936,6 +1989,71 @@ else:
 
             # Header used to be the expander label; now it's an h3 above the card.
             st.markdown(f"### {name}{pos_tag}{score_tag}{stars_tag}")
+
+            # ── Counting-stats line (right under the name) ──
+            # Per-position raw season totals so users get an at-a-glance
+            # read on volume + production before the radar/stats below.
+            _COUNTING_BY_POS = {
+                "QB": [("pass_att", "{:.0f}", "att"),
+                       ("pass_yards", "{:.0f}", "yds"),
+                       ("pass_tds", "{:.0f}", "TD"),
+                       ("pass_ints", "{:.0f}", "INT"),
+                       ("rush_yards_total", "{:.0f}", "rush yds")],
+                "WR": [("receptions_total", "{:.0f}", "rec"),
+                       ("rec_yards_total", "{:.0f}", "yds"),
+                       ("rec_tds_total", "{:.0f}", "TD")],
+                "TE": [("receptions_total", "{:.0f}", "rec"),
+                       ("rec_yards_total", "{:.0f}", "yds"),
+                       ("rec_tds_total", "{:.0f}", "TD")],
+                "RB": [("carries_total", "{:.0f}", "car"),
+                       ("rush_yards_total", "{:.0f}", "rush yds"),
+                       ("rush_tds_total", "{:.0f}", "rush TD"),
+                       ("receptions_total", "{:.0f}", "rec")],
+                "DE": [("games", "{:.0f}", "G"),
+                       ("tackles_total", "{:.0f}", "tkl"),
+                       ("sacks", "{:.1f}", "sk"),
+                       ("tfl", "{:.1f}", "TFL"),
+                       ("qb_hurries", "{:.0f}", "QH")],
+                "DT": [("games", "{:.0f}", "G"),
+                       ("tackles_total", "{:.0f}", "tkl"),
+                       ("sacks", "{:.1f}", "sk"),
+                       ("tfl", "{:.1f}", "TFL"),
+                       ("qb_hurries", "{:.0f}", "QH")],
+                "LB": [("games", "{:.0f}", "G"),
+                       ("tackles_total", "{:.0f}", "tkl"),
+                       ("tfl", "{:.1f}", "TFL"),
+                       ("sacks", "{:.1f}", "sk"),
+                       ("interceptions", "{:.0f}", "INT"),
+                       ("passes_deflected", "{:.0f}", "PD")],
+                "CB": [("games", "{:.0f}", "G"),
+                       ("tackles_total", "{:.0f}", "tkl"),
+                       ("interceptions", "{:.0f}", "INT"),
+                       ("passes_deflected", "{:.0f}", "PD"),
+                       ("tfl", "{:.1f}", "TFL")],
+                "S":  [("games", "{:.0f}", "G"),
+                       ("tackles_total", "{:.0f}", "tkl"),
+                       ("interceptions", "{:.0f}", "INT"),
+                       ("passes_deflected", "{:.0f}", "PD"),
+                       ("tfl", "{:.1f}", "TFL")],
+                "OL": [("class_year", "{:.0f}", "yr"),
+                       ("height", "{:.0f}", "in"),
+                       ("weight", "{:.0f}", "lbs")],
+            }
+            _counting_parts = []
+            for _col, _fmt, _lbl in _COUNTING_BY_POS.get(pos_name, []):
+                _v = row.get(_col)
+                if pd.notna(_v):
+                    try:
+                        _counting_parts.append(f"{_fmt.format(_v)} {_lbl}")
+                    except (ValueError, TypeError):
+                        pass
+            if _counting_parts:
+                _season = int(row.get(season_col)) if pd.notna(row.get(season_col)) else ""
+                _team = row.get("team", "")
+                _ctx = " · ".join(x for x in [str(_season) if _season else "", _team] if x)
+                _ctx_str = f"**{_ctx}** · " if _ctx else ""
+                st.caption(f"{_ctx_str}{' · '.join(_counting_parts)}")
+
             with st.container(border=True):
 
                 # ── Recruiting header ─────────────────────
