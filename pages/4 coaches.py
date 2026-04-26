@@ -40,6 +40,8 @@ from lib_shared import (
     compute_effective_weights,
     get_algorithm_by_slug,
     inject_css,
+    render_master_detail_leaderboard,
+    render_player_card,
     score_players,
 )
 
@@ -630,7 +632,10 @@ if hide_small:
     ranked = ranked.sort_values("score", ascending=False).reset_index(drop=True)
     ranked.index = ranked.index + 1
 
-# Top-ranked highlight banner
+# Top-ranked highlight banner — built up-front so we can pass it
+# into the master/detail leaderboard helper.
+_top_html = None
+_top_warn = None
 if len(ranked) > 0:
     top = ranked.iloc[0]
     top_name = top.get("coach_name", "—")
@@ -640,25 +645,16 @@ if len(ranked) > 0:
     badge = sample_size_badge(top_games)
     sign = "+" if top_score >= 0 else ""
     team_part = f" ({top_team})" if top_team else ""
-    st.markdown(
+    _top_html = (
         f"<div style='background:#0076B6;color:white;padding:14px 20px;"
         f"border-radius:8px;margin-bottom:8px;font-size:1.1rem;'>"
         f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span>"
         f" &nbsp;·&nbsp; <strong>{top_name}</strong>{team_part} {badge}"
         f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span>"
         f" <span style='opacity:0.85;'>({format_percentile(zscore_to_percentile(top_score))})</span>"
-        f"</div>",
-        unsafe_allow_html=True,
+        f"</div>"
     )
-    warn = sample_size_caption(top_games)
-    if warn:
-        st.warning(warn)
-
-st.caption(
-    "⚠️ Coaches with short tenures have noisier scores — extreme values "
-    "reflect small sample sizes. "
-    "🔴 = severe small sample (<2 full seasons), 🟡 = caution (2–3 seasons)."
-)
+    _top_warn = sample_size_caption(top_games)
 
 display_df = pd.DataFrame({
     "Rank": ranked.index,
@@ -670,27 +666,32 @@ display_df = pd.DataFrame({
     "Your score": ranked["score"].apply(format_score),
 })
 
-st.dataframe(
-    display_df,
-    use_container_width=True,
-    hide_index=True,
+selected = render_master_detail_leaderboard(
+    display_df=display_df,
+    name_col="Coach",
+    key_prefix="coach",
+    team=("hide" if hide_small else "all"),
+    season=0,
+    top_banner_html=_top_html,
+    top_banner_warn=_top_warn,
+    leaderboard_caption=(
+        "⚠️ Coaches with short tenures have noisier scores — extreme values "
+        "reflect small sample sizes. "
+        "🔴 = severe small sample (<2 full seasons), 🟡 = caution (2–3 seasons). "
+        "**Click any coach name** above to view their full card."
+    ),
 )
-
 with st.expander("ℹ️ How is this score calculated?"):
     st.markdown(SCORE_EXPLAINER)
+
+if selected is None:
+    st.stop()  # browse mode — leaderboard rendered, no detail to show
 
 
 # ============================================================
 # Coach detail
 # ============================================================
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.subheader("Coach detail")
-
-selected = st.selectbox(
-    "Pick a coach to see how their score breaks down",
-    options=ranked["coach_name"].tolist(),
-    index=0,
-)
 
 coach = ranked[ranked["coach_name"] == selected].iloc[0]
 
@@ -699,17 +700,32 @@ warn = sample_size_caption(coach.get("games_as_hc", 0))
 if warn:
     st.warning(warn)
 
+# ── Trading-card visual (coach variant) ────────────────────────
+HC_STAT_SPECS = [
+    ("seasons_as_hc", "{:.0f}", "Seasons"),
+    ("games_as_hc", "{:.0f}", "Games"),
+    ("wins", "{:.0f}", "Wins"),
+    ("losses", "{:.0f}", "Losses"),
+    ("close_game_win_pct", "{:.1%}", "Close W%"),
+    ("ats_win_pct", "{:.1%}", "ATS W%"),
+]
+_first = coach.get("first_season")
+_last = coach.get("last_season")
+_tenure = (f"{int(_first)}–{int(_last)}"
+           if pd.notna(_first) and pd.notna(_last) else "")
+_team_abbr = coach.get("team") if pd.notna(coach.get("team")) else None
+render_player_card(
+    player_name=selected,
+    position_label="HEAD COACH",
+    team_abbr=_team_abbr,
+    season_str=_tenure,
+    score=coach.get("score"),
+    stat_specs=HC_STAT_SPECS,
+    view_row=coach,
+)
+
 c1, c2 = st.columns([1, 1])
 with c1:
-    team = coach.get("team", "") if pd.notna(coach.get("team")) else ""
-    st.markdown(f"### {selected}")
-    st.caption(
-        f"**{team}** · "
-        f"{int(coach.get('seasons_as_hc') or 0)} seasons · "
-        f"{int(coach.get('games_as_hc') or 0)} games as HC"
-    )
-    st.markdown(f"**Your score:** {format_score(coach['score'])}")
-    st.markdown("---")
     st.markdown("**How your score breaks down**")
 
     if not advanced_mode:
