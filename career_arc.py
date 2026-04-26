@@ -263,7 +263,7 @@ def _build_per_stint_chart(history_df, value_col, season_col, team_col,
 
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="#888", line_width=1,
-                  annotation_text=f"{population_label} avg",
+                  annotation_text=f"Avg starter ({population_label})",
                   annotation_position="bottom left",
                   annotation_font_size=10, annotation_font_color="#888")
 
@@ -436,7 +436,7 @@ def _build_multi_metric_nfl_chart(history_df, season_col, metric_columns,
     seasons = [int(s) for s in history_df[season_col].tolist()]
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="#888", line_width=1,
-                  annotation_text=f"{population_label} avg",
+                  annotation_text=f"Avg starter ({population_label})",
                   annotation_position="bottom left",
                   annotation_font_size=10, annotation_font_color="#888")
     plotted = 0
@@ -544,7 +544,7 @@ def _build_line_chart(seasons, values, teams, color, label, population_label):
 
     fig = go.Figure()
     fig.add_hline(y=0, line_dash="dash", line_color="#888", line_width=1,
-                  annotation_text=f"{population_label} avg", annotation_position="bottom left",
+                  annotation_text=f"Avg starter ({population_label})", annotation_position="bottom left",
                   annotation_font_size=10, annotation_font_color="#888")
 
     fig.add_trace(go.Scatter(
@@ -773,7 +773,7 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
                 if nfl_multi_metric:
                     st.caption(
                         f"Each line is one metric across this player's NFL "
-                        f"career. 0.00 = league average for that metric."
+                        f"career. 0.00 = avg starter for that metric."
                     )
                 elif n_traded_seasons:
                     st.caption(
@@ -785,7 +785,7 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
                 else:
                     st.caption(
                         f"Each marker is one NFL season's {metric_caption_label} vs. all NFL {position_label}. "
-                        f"Marker color = team primary; outline = team secondary. 0.00 = league average."
+                        f"Marker color = team primary; outline = team secondary. 0.00 = avg starter."
                     )
 
             # ── Compare to another player ─────────────────
@@ -936,7 +936,7 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
 
         with cc2:
             st.markdown(f"**College percentile profile** vs. FBS {position_label}")
-            st.caption("50th = FBS average. Higher = better.")
+            st.caption("50th = avg starter. Higher = better. (Z-scores baselined on starters at this position.)")
 
             radar_axes, radar_values, radar_z_cols_used = [], [], []
             for z_col in cz_cols:
@@ -1122,4 +1122,4 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
                 f" · Dashed gray = {starter_label.lower()} (median of top {COLLEGE_STARTER_TOP_N} by volume per season)."
                 if bench else ""
             )
-            st.caption(f"Each point is one college season's {selected_col_metric.lower()} vs. all FBS {position_label}. 0.00 = FBS average.{cap_extra}")
+            st.caption(f"Each point is one college season's {selected_col_metric.lower()} vs. all FBS {position_label}. 0.00 = avg starter.{cap_extra}")

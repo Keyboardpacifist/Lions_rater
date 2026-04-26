@@ -531,8 +531,32 @@ if mode == "NFL":
             st.info(f"No {cfg_iter['noun']} found for this team/season.")
             continue
 
-        if sort_col_iter in ldf.columns:
-            ldf = ldf.sort_values(sort_col_iter, ascending=sort_asc_iter, na_position="last")
+        # ── Click-to-sort header state ──
+        # Active header sort overrides the metric-picker sort. First
+        # click = best→worst, second on same column = worst→best.
+        _hdr_sort_col_key = f"_nfl_lb_sort_col_{pos_iter_name}_{selected_team}_{selected_season}"
+        _hdr_sort_asc_key = f"_nfl_lb_sort_asc_{pos_iter_name}_{selected_team}_{selected_season}"
+        _label_to_ldf_col = {label: col for label, col in cfg_iter["cols"]}
+        _active_hdr_sort = st.session_state.get(_hdr_sort_col_key)
+        _active_hdr_asc = bool(st.session_state.get(_hdr_sort_asc_key, False))
+
+        if _active_hdr_sort and _active_hdr_sort in _label_to_ldf_col:
+            _hdr_sort_col_real = _label_to_ldf_col[_active_hdr_sort]
+            if _hdr_sort_col_real in ldf.columns:
+                ldf = ldf.sort_values(_hdr_sort_col_real,
+                                       ascending=_active_hdr_asc,
+                                       na_position="last")
+        elif sort_col_iter in ldf.columns:
+            ldf = ldf.sort_values(sort_col_iter, ascending=sort_asc_iter,
+                                   na_position="last")
+
+        def _on_nfl_landing_hdr(col_label,
+                                  ck=_hdr_sort_col_key, ak=_hdr_sort_asc_key):
+            if st.session_state.get(ck) == col_label:
+                st.session_state[ak] = not st.session_state.get(ak, False)
+            else:
+                st.session_state[ck] = col_label
+                st.session_state[ak] = False  # default: best→worst
 
         # Default cap (top 10), with a "See all" toggle to expand.
         # All-positions mode keeps the cap fixed at 10 so the stacked
@@ -566,10 +590,24 @@ if mode == "NFL":
 
         _weights_l = [_wl(c) for c in _display_cols_l]
 
-        # Header row
+        # Header row — every header except "#" is a clickable button
+        # that toggles sort on its column.
         _hdrs_l = st.columns(_weights_l)
         for _ih, _ch in enumerate(_display_cols_l):
-            _hdrs_l[_ih].markdown(f"**{_ch}**")
+            if _ch == "#":
+                _hdrs_l[_ih].markdown(f"**{_ch}**")
+                continue
+            _active = (_active_hdr_sort == _ch)
+            _arrow = " ▼" if _active and not _active_hdr_asc else (" ▲" if _active and _active_hdr_asc else "")
+            _hdrs_l[_ih].button(
+                f"{_ch}{_arrow}",
+                key=f"nfl_landing_hdr_{pos_iter_name}_{selected_team}_{selected_season}_{_ch}",
+                on_click=_on_nfl_landing_hdr,
+                args=(_ch,),
+                type="tertiary",
+                use_container_width=True,
+                help="Click to sort: 1st click = best→worst, 2nd click = worst→best.",
+            )
 
         # Resolve the row's actual id columns (player + team) for
         # navigation purposes. Display rows use formatted strings, but
@@ -1338,7 +1376,7 @@ else:
         st.markdown(
             f"**{player_name}** — Percentile profile vs. FBS {pos_display.lower()}{suffix}"
         )
-        st.caption("50th = FBS average")
+        st.caption("50th = avg starter (z-scores baselined on top-130 starters by volume)")
 
         rfig = go.Figure()
         rfig.add_trace(go.Scatterpolar(
@@ -1511,18 +1549,34 @@ else:
         return df
 
     # ── Helper: find recruiting info for a player ─────────
-    def get_recruiting_info(player_name):
+    def get_recruiting_info(player_name, school=None):
+        # Recruiting parquet goes back to 2014, so any "John Smith" on
+        # a 2025 roster could get matched to an older "John Smith"
+        # (recruit_year=2014 → silly Elig=2017). Three layers of
+        # tiebreak fix this:
+        #   1) Require BOTH first AND last name to match.
+        #   2) If `school` is given, prefer school matches.
+        #   3) Among remaining, pick the MOST RECENT recruit_year
+        #      (current college players didn't recruit 8+ years ago).
         if len(recruiting_df) == 0: return None
-        last = player_name.split()[-1] if player_name else ""
-        matches = recruiting_df[recruiting_df["name"].str.contains(last, na=False, case=False)]
-        if len(matches) == 1: return matches.iloc[0]
-        # Try tighter match
         first = player_name.split()[0] if player_name else ""
-        tight = matches[matches["name"].str.contains(first, na=False, case=False)]
-        if len(tight) == 1: return tight.iloc[0]
-        if len(tight) > 0: return tight.iloc[0]
-        if len(matches) > 0: return matches.iloc[0]
-        return None
+        last = player_name.split()[-1] if player_name else ""
+        if not (first and last):
+            return None
+        matches = recruiting_df[
+            (recruiting_df["name"].str.contains(last, na=False, case=False)) &
+            (recruiting_df["name"].str.contains(first, na=False, case=False))
+        ]
+        if school and "school" in matches.columns:
+            school_first = school.split()[0]
+            school_matches = matches[matches["school"].str.contains(school_first, na=False, case=False)]
+            if len(school_matches) > 0:
+                matches = school_matches
+        if len(matches) == 0:
+            return None
+        if "recruit_year" in matches.columns:
+            matches = matches.sort_values("recruit_year", ascending=False, na_position="last")
+        return matches.iloc[0]
 
     # ── Helper: find usage info ───────────────────────────
     def get_usage_info(player_name, team, season):
@@ -1701,7 +1755,7 @@ else:
 
         fig = go.Figure()
         fig.add_hline(y=0, line_dash="dash", line_color="#888", line_width=1,
-                      annotation_text="FBS avg", annotation_position="bottom left",
+                      annotation_text="Avg starter", annotation_position="bottom left",
                       annotation_font_size=10, annotation_font_color="#888")
 
         # Plot each selected metric
@@ -1799,7 +1853,7 @@ else:
                                   bordercolor="#ccc", borderwidth=1,
                                   font=dict(size=10))
             chart_height, bottom_margin = 360, 80
-            y_title = "Z-score (vs. FBS avg)"
+            y_title = "Z-score (vs. avg starter)"
         else:
             legend_kwargs = dict(yanchor="top", y=0.99, xanchor="left", x=0.01,
                                   bgcolor="rgba(255,255,255,0.7)",
@@ -2000,10 +2054,13 @@ else:
             else:
                 filtered = filtered.sort_values(score_col, ascending=False)
 
-            # Cap the leaderboard to top 6 — keeps the page short on
-            # mobile and matches Brett's "half a dozen options" request.
-            # Specific-school views still show the full school roster.
-            if school_is_all:
+            # Cap the leaderboard to top 6 by default with a "Show all"
+            # toggle to expand. Specific-school views show the full
+            # school roster regardless.
+            _coll_lb_expand_key = f"_coll_lb_expanded_{pos_name}_{selected_school}_{selected_college_season}"
+            _coll_lb_expanded = st.session_state.get(_coll_lb_expand_key, False)
+            _coll_full_count = len(filtered)
+            if school_is_all and not _coll_lb_expanded:
                 filtered = filtered.head(6)
 
         if in_detail_mode_here:
@@ -2030,7 +2087,7 @@ else:
                 if pos_col and pd.notna(row.get(pos_col)):
                     entry["Pos"] = row[pos_col]
 
-                rec = get_recruiting_info(name)
+                rec = get_recruiting_info(name, school=row.get("team"))
                 if rec is not None and pd.notna(rec.get("stars")):
                     entry["Stars"] = star_display(rec["stars"])
 
@@ -2095,10 +2152,61 @@ else:
                     return 0.9
                 weights = [0.4] + [_w(c) for c in visible_cols]
 
+                # ── Click-to-sort header state ──
+                _coll_sort_col_key = f"_coll_lb_sort_col_{pos_name}"
+                _coll_sort_asc_key = f"_coll_lb_sort_asc_{pos_name}"
+                _coll_active_sort = st.session_state.get(_coll_sort_col_key)
+                _coll_active_asc = bool(st.session_state.get(_coll_sort_asc_key, False))
+
+                def _on_coll_hdr(col_label,
+                                  ck=_coll_sort_col_key, ak=_coll_sort_asc_key):
+                    if st.session_state.get(ck) == col_label:
+                        st.session_state[ak] = not st.session_state.get(ak, False)
+                    else:
+                        st.session_state[ck] = col_label
+                        st.session_state[ak] = False  # default: best→worst
+
+                import re as _re
+                _NUM_RE_COLL = _re.compile(r'-?\d+\.?\d*')
+
+                def _coerce_num(s):
+                    # Extract first numeric substring — handles "5⭐",
+                    # "✅ 2026", "+1.50", "12.5%", "23rd", "—".
+                    if s is None: return float("nan")
+                    s = str(s).strip()
+                    if s in ("—", "-", ""): return float("nan")
+                    m = _NUM_RE_COLL.search(s.replace(",", ""))
+                    if m:
+                        try: return float(m.group())
+                        except ValueError: return float("nan")
+                    return float("nan")
+
+                # Sort display_rows by clicked header (if any).
+                if _coll_active_sort and _coll_active_sort in display_rows[0]:
+                    display_rows = sorted(
+                        display_rows,
+                        key=lambda r: (
+                            (float("inf") if _coll_active_asc else float("-inf"))
+                            if pd.isna(_coerce_num(r.get(_coll_active_sort)))
+                            else _coerce_num(r.get(_coll_active_sort))
+                        ),
+                        reverse=not _coll_active_asc,
+                    )
+
                 _hdrs = st.columns(weights)
                 _hdrs[0].markdown("**#**")
                 for _i_h, _c_h in enumerate(visible_cols):
-                    _hdrs[_i_h + 1].markdown(f"**{_c_h}**")
+                    _active = (_coll_active_sort == _c_h)
+                    _arrow = " ▼" if _active and not _coll_active_asc else (" ▲" if _active and _coll_active_asc else "")
+                    _hdrs[_i_h + 1].button(
+                        f"{_c_h}{_arrow}",
+                        key=f"coll_hdr_{pos_name}_{_c_h}",
+                        on_click=_on_coll_hdr,
+                        args=(_c_h,),
+                        type="tertiary",
+                        use_container_width=True,
+                        help="Click to sort: 1st click = best→worst, 2nd click = worst→best.",
+                    )
 
                 for _i_r, _row_data in enumerate(display_rows):
                     _row_cols = st.columns(weights)
@@ -2118,6 +2226,17 @@ else:
                         else:
                             _row_cols[_j + 1].markdown(_val_str)
 
+            # "Show all" toggle — visible only when capped + there's
+            # more in the pool than we're currently showing.
+            if school_is_all and not _coll_lb_expanded and _coll_full_count > 6:
+                if st.button(
+                    f"Show all {_coll_full_count} {pos_display.lower()} →",
+                    key=f"coll_show_all_{pos_name}_{selected_school}_{selected_college_season}",
+                    use_container_width=True,
+                ):
+                    st.session_state[_coll_lb_expand_key] = True
+                    st.rerun()
+
             # In browse mode, no detail card — user has to click a name.
             detail_rows = filtered.iloc[0:0]
             st.caption(f"💡 Click any **player name** above to see their full profile.")
@@ -2129,7 +2248,7 @@ else:
             score_tag = f" · {comp:+.2f}" if pd.notna(comp) else ""
 
             # Recruiting badge
-            rec = get_recruiting_info(name)
+            rec = get_recruiting_info(name, school=row.get("team"))
             stars_tag = f" {star_display(rec['stars'])}" if rec is not None and pd.notna(rec.get("stars")) else ""
 
             # Header used to be the expander label; now it's an h3 above the card.
@@ -2593,7 +2712,7 @@ else:
                                         unique_key=f"{pos_name}_{name}",
                                         pos_name=pos_name, pos_display=pos_display)
                     st.caption(
-                        f"Each point = one season vs. all FBS players at this position. 0.00 = FBS average. "
+                        f"Each point = one season vs. starters at this position. 0.00 = avg starter (z-scores baselined on top-130 starters by volume). "
                         f"Dashed gray = {_starter_label(pos_display).lower()} (median of top {COLLEGE_RADAR_TOP_N} starters per season)."
                     )
 

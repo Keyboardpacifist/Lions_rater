@@ -517,9 +517,53 @@ def render_master_detail_leaderboard(
     if top_banner_warn:
         st.warning(top_banner_warn)
 
+    # ── Click-to-sort header state ──
+    # First click: sort that column descending (best→worst). Second
+    # click on the same column: ascending (worst→best). Click a
+    # different column: sort that one descending.
+    sort_col_key = f"_lb_sort_col_{key_prefix}"
+    sort_asc_key = f"_lb_sort_asc_{key_prefix}"
+
+    def _on_hdr_click(col):
+        if st.session_state.get(sort_col_key) == col:
+            st.session_state[sort_asc_key] = not st.session_state.get(sort_asc_key, False)
+        else:
+            st.session_state[sort_col_key] = col
+            st.session_state[sort_asc_key] = False  # default: best→worst
+
+    import re as _re
+    _NUM_RE = _re.compile(r'-?\d+\.?\d*')
+
+    def _coerce_numeric(s):
+        # Extract the first numeric substring so sort works on cells
+        # like "5⭐", "✅ 2026", "🟡 2026", "+1.50", "12.5%", "23rd",
+        # not just bare floats.
+        if s is None: return float("nan")
+        if isinstance(s, float) and pd.isna(s): return float("nan")
+        s = str(s).strip()
+        if s in ("—", "-", ""): return float("nan")
+        m = _NUM_RE.search(s.replace(",", ""))
+        if m:
+            try: return float(m.group())
+            except ValueError: return float("nan")
+        return float("nan")
+
+    # Apply current sort BEFORE capping rows so we sort the full pool.
+    sort_col = st.session_state.get(sort_col_key)
+    sort_asc = bool(st.session_state.get(sort_asc_key, False))
+    sorted_df = display_df.copy()
+    if sort_col and sort_col in sorted_df.columns:
+        _key_series = sorted_df[sort_col].apply(_coerce_numeric)
+        if _key_series.notna().any():
+            sorted_df = (sorted_df.assign(_lb_sort_key=_key_series)
+                                  .sort_values("_lb_sort_key", ascending=sort_asc, na_position="last")
+                                  .drop(columns="_lb_sort_key"))
+        else:
+            sorted_df = sorted_df.sort_values(sort_col, ascending=sort_asc, na_position="last")
+
     # Cap rows; offer "Show all" if there's more than top_n.
     expanded = st.session_state.get(expand_key, False)
-    visible_df = (display_df if expanded else display_df.head(top_n)).reset_index(drop=True)
+    visible_df = (sorted_df if expanded else sorted_df.head(top_n)).reset_index(drop=True)
     cols_list = list(visible_df.columns)
 
     def _w(c):
@@ -530,9 +574,20 @@ def render_master_detail_leaderboard(
 
     weights = [_w(c) for c in cols_list]
 
+    # Header row — each cell is a clickable text-button that toggles sort.
     hdrs = st.columns(weights)
     for i_h, c_h in enumerate(cols_list):
-        hdrs[i_h].markdown(f"**{c_h}**")
+        active = (sort_col == c_h)
+        arrow = " ▼" if active and not sort_asc else (" ▲" if active and sort_asc else "")
+        hdrs[i_h].button(
+            f"{c_h}{arrow}",
+            key=f"{key_prefix}_hdr_btn_{team}_{season}_{c_h}",
+            on_click=_on_hdr_click,
+            args=(c_h,),
+            type="tertiary",
+            use_container_width=True,
+            help="Click to sort: 1st click = best→worst, 2nd click = worst→best.",
+        )
 
     for i_r, row in visible_df.iterrows():
         row_cols = st.columns(weights)
@@ -555,9 +610,9 @@ def render_master_detail_leaderboard(
             else:
                 row_cols[j].markdown(val_str)
 
-    if not expanded and len(display_df) > top_n:
+    if not expanded and len(sorted_df) > top_n:
         if st.button(
-            f"Show all {len(display_df)} players →",
+            f"Show all {len(sorted_df)} players →",
             key=f"{key_prefix}_show_all_{team}_{season}",
             use_container_width=True,
         ):

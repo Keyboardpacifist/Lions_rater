@@ -362,7 +362,7 @@ def _fmt_pct(v): return f"{v*100:.1f}%" if pd.notna(v) else "—"
 def _fmt_signed(v, places=2): return f"{v:+.{places}f}" if pd.notna(v) else "—"
 
 # ── Master/detail click-to-detail leaderboard ──────────────────
-st.markdown("**How to read the score:** 0.00 = league average WR. The percentile shows where this player ranks among all qualifying WRs (100+ snaps).")
+st.markdown("**How to read the score:** 0.00 = avg starting WR (z-scores baselined on top-32 by snaps). The percentile shows where this player ranks among all qualifying WRs (100+ snaps).")
 
 # Top scorer banner (browse-only)
 _top_html = None
