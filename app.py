@@ -1130,10 +1130,16 @@ else:
 
     def _render_player_radar(player_name, key_prefix, full_df, labels_dict,
                               season_col, pos_name, pos_display, default_season,
-                              header_prefix=None):
+                              header_prefix=None, year_choice=None):
         """Render a season picker + radar polygon for one player, with the
         typical-starter benchmark layered on top. Used both for the main
-        player and for the comparison player."""
+        player and for the comparison player.
+
+        When `year_choice` is provided (an int season or "All-career mean"),
+        the internal picker is suppressed — the radar uses that year and
+        the caller is expected to render its own picker above so the
+        same year drives the stats table + counting stats too.
+        """
         career = full_df[full_df["player"] == player_name]
         if len(career) == 0:
             st.caption(f"No data found for {player_name}.")
@@ -1146,17 +1152,20 @@ else:
         year_options_full = (
             year_options + (["All-career mean"] if len(year_options) > 1 else [])
         )
-        try:
-            default_idx = year_options_full.index(int(default_season))
-        except (ValueError, TypeError):
-            default_idx = 0
-        year_choice = st.selectbox(
-            "Radar season",
-            options=year_options_full,
-            index=default_idx,
-            key=f"college_radar_year_{key_prefix}",
-            format_func=lambda v: f"Season {v}" if isinstance(v, int) else v,
-        )
+
+        if year_choice is None:
+            try:
+                default_idx = year_options_full.index(int(default_season))
+            except (ValueError, TypeError):
+                default_idx = 0
+            year_choice = st.selectbox(
+                "Radar season",
+                options=year_options_full,
+                index=default_idx,
+                key=f"college_radar_year_{key_prefix}",
+                format_func=lambda v: f"Season {v}" if isinstance(v, int) else v,
+            )
+
         if year_choice == "All-career mean":
             radar_source = career.select_dtypes(include="number").mean()
         else:
@@ -1990,69 +1999,166 @@ else:
             # Header used to be the expander label; now it's an h3 above the card.
             st.markdown(f"### {name}{pos_tag}{score_tag}{stars_tag}")
 
-            # ── Counting-stats line (right under the name) ──
-            # Per-position raw season totals so users get an at-a-glance
-            # read on volume + production before the radar/stats below.
-            _COUNTING_BY_POS = {
-                "QB": [("pass_att", "{:.0f}", "att"),
-                       ("pass_yards", "{:.0f}", "yds"),
+            # ── Single year picker — drives the counting-stats line,
+            # the stats table in pc1, AND the radar in pc2. Picking a
+            # year here updates all three so the user can scan one
+            # season's value/Z/percentile + radar polygon together,
+            # OR pick "All-career mean" for career averages.
+            _career_full = df[df["player"] == name].sort_values(season_col)
+            _year_options = sorted(
+                set(int(s) for s in _career_full[season_col].dropna().unique()),
+                reverse=True,
+            )
+            _year_options_full = (
+                _year_options + (["All-career mean"] if len(_year_options) > 1 else [])
+            )
+            try:
+                _default_year_idx = _year_options_full.index(int(row[season_col]))
+            except (ValueError, TypeError, KeyError):
+                _default_year_idx = 0
+            year_choice = st.selectbox(
+                "Season",
+                options=_year_options_full,
+                index=_default_year_idx,
+                key=f"college_year_pick_{pos_name}_{name}",
+                format_func=lambda v: f"Season {v}" if isinstance(v, int) else v,
+            )
+
+            # Build view_row (year-scoped) for the stats table / radar.
+            # In single-year mode it's that season's row; in all-career
+            # mode it's the numeric mean across all the player's seasons.
+            if year_choice == "All-career mean":
+                view_row = _career_full.select_dtypes(include="number").mean()
+                _is_career_view = True
+                _team_str = ""
+                _season_str = f"All-career · {len(_career_full)} seasons"
+            else:
+                _yr_rows = _career_full[_career_full[season_col] == year_choice]
+                if len(_yr_rows) == 1:
+                    view_row = _yr_rows.iloc[0]
+                elif len(_yr_rows) > 1:
+                    view_row = _yr_rows.select_dtypes(include="number").mean()
+                else:
+                    view_row = row
+                _is_career_view = False
+                _team_str = (_yr_rows.iloc[0].get("team", "")
+                              if len(_yr_rows) >= 1 else row.get("team", ""))
+                _season_str = str(int(year_choice))
+
+            # ── Stylized stat bar (counting + nerd stats, max 6) ──
+            # Per-position config: counting first, then 1-2 modern/nerd
+            # metrics. Sum-cols are summed across career in all-career
+            # mode; rate/avg cols just use view_row (the numeric mean).
+            _STAT_BAR_BY_POS = {
+                "QB": [("pass_yards", "{:.0f}", "Pass Yds"),
                        ("pass_tds", "{:.0f}", "TD"),
                        ("pass_ints", "{:.0f}", "INT"),
-                       ("rush_yards_total", "{:.0f}", "rush yds")],
-                "WR": [("receptions_total", "{:.0f}", "rec"),
-                       ("rec_yards_total", "{:.0f}", "yds"),
-                       ("rec_tds_total", "{:.0f}", "TD")],
-                "TE": [("receptions_total", "{:.0f}", "rec"),
-                       ("rec_yards_total", "{:.0f}", "yds"),
-                       ("rec_tds_total", "{:.0f}", "TD")],
-                "RB": [("carries_total", "{:.0f}", "car"),
-                       ("rush_yards_total", "{:.0f}", "rush yds"),
-                       ("rush_tds_total", "{:.0f}", "rush TD"),
-                       ("receptions_total", "{:.0f}", "rec")],
+                       ("yards_per_attempt", "{:.1f}", "Y/Att"),
+                       ("epa_per_play_avg", "{:+.2f}", "EPA/Play"),
+                       ("completion_pct", "{:.1f}%", "Comp%")],
+                "WR": [("receptions_total", "{:.0f}", "Rec"),
+                       ("rec_yards_total", "{:.0f}", "Yds"),
+                       ("rec_tds_total", "{:.0f}", "TD"),
+                       ("yards_per_rec", "{:.1f}", "Y/Rec"),
+                       ("epa_per_pass_avg", "{:+.2f}", "EPA/Tgt"),
+                       ("usage_pass", "{:.1%}", "Tgt%")],
+                "TE": [("receptions_total", "{:.0f}", "Rec"),
+                       ("rec_yards_total", "{:.0f}", "Yds"),
+                       ("rec_tds_total", "{:.0f}", "TD"),
+                       ("yards_per_rec", "{:.1f}", "Y/Rec"),
+                       ("epa_per_pass_avg", "{:+.2f}", "EPA/Tgt"),
+                       ("usage_pass", "{:.1%}", "Tgt%")],
+                "RB": [("carries_total", "{:.0f}", "Car"),
+                       ("rush_yards_total", "{:.0f}", "Rush Yds"),
+                       ("rush_tds_total", "{:.0f}", "TD"),
+                       ("yards_per_carry", "{:.1f}", "Y/Car"),
+                       ("epa_per_rush_avg", "{:+.2f}", "EPA/Rush"),
+                       ("receptions_total", "{:.0f}", "Rec")],
                 "DE": [("games", "{:.0f}", "G"),
-                       ("tackles_total", "{:.0f}", "tkl"),
-                       ("sacks", "{:.1f}", "sk"),
+                       ("tackles_total", "{:.0f}", "Tkl"),
+                       ("sacks", "{:.1f}", "Sacks"),
                        ("tfl", "{:.1f}", "TFL"),
-                       ("qb_hurries", "{:.0f}", "QH")],
+                       ("qb_hurries", "{:.0f}", "Hurries"),
+                       ("splash_plays_per_game", "{:.2f}", "Splash/G")],
                 "DT": [("games", "{:.0f}", "G"),
-                       ("tackles_total", "{:.0f}", "tkl"),
-                       ("sacks", "{:.1f}", "sk"),
+                       ("tackles_total", "{:.0f}", "Tkl"),
+                       ("sacks", "{:.1f}", "Sacks"),
                        ("tfl", "{:.1f}", "TFL"),
-                       ("qb_hurries", "{:.0f}", "QH")],
+                       ("qb_hurries", "{:.0f}", "Hurries"),
+                       ("splash_plays_per_game", "{:.2f}", "Splash/G")],
                 "LB": [("games", "{:.0f}", "G"),
-                       ("tackles_total", "{:.0f}", "tkl"),
+                       ("tackles_total", "{:.0f}", "Tkl"),
                        ("tfl", "{:.1f}", "TFL"),
-                       ("sacks", "{:.1f}", "sk"),
+                       ("sacks", "{:.1f}", "Sacks"),
                        ("interceptions", "{:.0f}", "INT"),
-                       ("passes_deflected", "{:.0f}", "PD")],
+                       ("splash_plays_per_game", "{:.2f}", "Splash/G")],
                 "CB": [("games", "{:.0f}", "G"),
-                       ("tackles_total", "{:.0f}", "tkl"),
+                       ("tackles_total", "{:.0f}", "Tkl"),
                        ("interceptions", "{:.0f}", "INT"),
                        ("passes_deflected", "{:.0f}", "PD"),
-                       ("tfl", "{:.1f}", "TFL")],
+                       ("int_per_pd_ratio", "{:.2f}", "INT/PD"),
+                       ("ball_production_per_game", "{:.2f}", "Ball Prod/G")],
                 "S":  [("games", "{:.0f}", "G"),
-                       ("tackles_total", "{:.0f}", "tkl"),
+                       ("tackles_total", "{:.0f}", "Tkl"),
                        ("interceptions", "{:.0f}", "INT"),
                        ("passes_deflected", "{:.0f}", "PD"),
-                       ("tfl", "{:.1f}", "TFL")],
-                "OL": [("class_year", "{:.0f}", "yr"),
-                       ("height", "{:.0f}", "in"),
-                       ("weight", "{:.0f}", "lbs")],
+                       ("ball_production_per_game", "{:.2f}", "Ball Prod/G"),
+                       ("splash_plays_per_game", "{:.2f}", "Splash/G")],
+                "OL": [("class_year", "Yr {:.0f}", "Class"),
+                       ("height", "{:.0f}\"", "Height"),
+                       ("weight", "{:.0f}", "Lbs"),
+                       ("line_yards", "{:.2f}", "Team LY"),
+                       ("stuff_rate_avoid", "{:+.2f}", "Stuff Avoid (z)"),
+                       ("passing_ppa", "{:+.2f}", "Team Pass PPA")],
             }
-            _counting_parts = []
-            for _col, _fmt, _lbl in _COUNTING_BY_POS.get(pos_name, []):
-                _v = row.get(_col)
-                if pd.notna(_v):
-                    try:
-                        _counting_parts.append(f"{_fmt.format(_v)} {_lbl}")
-                    except (ValueError, TypeError):
-                        pass
-            if _counting_parts:
-                _season = int(row.get(season_col)) if pd.notna(row.get(season_col)) else ""
-                _team = row.get("team", "")
-                _ctx = " · ".join(x for x in [str(_season) if _season else "", _team] if x)
-                _ctx_str = f"**{_ctx}** · " if _ctx else ""
-                st.caption(f"{_ctx_str}{' · '.join(_counting_parts)}")
+            _SUM_COLS = {
+                "games", "tackles_total", "sacks", "tfl", "qb_hurries",
+                "interceptions", "passes_deflected",
+                "pass_yards", "pass_tds", "pass_ints", "pass_att",
+                "receptions_total", "rec_yards_total", "rec_tds_total",
+                "carries_total", "rush_yards_total", "rush_tds_total",
+            }
+            _MEASURABLE_COLS = {"height", "weight", "class_year"}
+
+            _stat_tiles = []
+            for _col, _fmt, _lbl in _STAT_BAR_BY_POS.get(pos_name, []):
+                if _is_career_view and _col in _SUM_COLS:
+                    _v = (_career_full[_col].sum()
+                          if _col in _career_full.columns and _career_full[_col].notna().any()
+                          else None)
+                elif _is_career_view and _col in _MEASURABLE_COLS:
+                    _v = view_row.get(_col)  # measurables stay as mean (essentially constant)
+                else:
+                    _v = view_row.get(_col)
+                if _v is None or (isinstance(_v, float) and pd.isna(_v)):
+                    continue
+                try:
+                    _val_str = _fmt.format(_v)
+                except (ValueError, TypeError):
+                    continue
+                _stat_tiles.append((_lbl, _val_str))
+
+            if _stat_tiles:
+                _ctx = (f"{_season_str} · {_team_str.upper()}"
+                        if _team_str else _season_str)
+                _tiles_html = "".join(
+                    f"<div style='background:rgba(255,255,255,0.13);border-radius:6px;"
+                    f"padding:5px 10px;text-align:center;min-width:62px;flex:0 0 auto;'>"
+                    f"<div style='font-size:0.65rem;color:#a8c5e0;text-transform:uppercase;"
+                    f"letter-spacing:0.4px;margin-bottom:1px;'>{lbl}</div>"
+                    f"<div style='font-size:1.0rem;font-weight:bold;color:#fff;line-height:1.1;'>{val}</div>"
+                    f"</div>"
+                    for lbl, val in _stat_tiles
+                )
+                st.markdown(
+                    f"<div style='background:linear-gradient(135deg,#0a3d62 0%,#1b5e8c 100%);"
+                    f"border-radius:10px;padding:10px 14px;margin:6px 0 12px 0;'>"
+                    f"<div style='color:#cfe2f3;font-size:0.72rem;margin-bottom:6px;"
+                    f"letter-spacing:0.5px;font-weight:600;'>📊 {_ctx}</div>"
+                    f"<div style='display:flex;flex-wrap:wrap;gap:4px;'>{_tiles_html}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
 
             with st.container(border=True):
 
@@ -2176,14 +2282,14 @@ else:
                 pc1, pc2 = st.columns([1, 1])
 
                 with pc1:
-                    # ── Stat table ────────────────────────
+                    # ── Stat table (driven by year picker above) ─
                     stat_rows = []
                     for z_col, label in labels.items():
-                        if z_col not in row.index: continue
-                        z = row.get(z_col)
+                        if z_col not in view_row.index: continue
+                        z = view_row.get(z_col)
                         if pd.isna(z): continue
                         raw_col = z_col.replace("_z", "")
-                        raw = row.get(raw_col)
+                        raw = view_row.get(raw_col)
                         p = zscore_to_percentile(z)
                         stat_rows.append({
                             "Stat": label,
@@ -2217,10 +2323,13 @@ else:
                             if pd.notna(wepa):
                                 st.caption(f"{stype.title()} WEPA: {wepa:+.2f} ({int(plays)} plays)" if pd.notna(plays) else f"{stype.title()} WEPA: {wepa:+.2f}")
 
-                    # ── Composite score ───────────────────
-                    if pd.notna(comp):
-                        pct = zscore_to_percentile(comp)
-                        st.markdown(f"**Composite: {comp:+.2f}** ({format_percentile(pct)} of FBS {pos_display.lower()})")
+                    # ── Composite score (driven by year picker) ──
+                    _avail_for_comp = [c for c in z_cols if c in view_row.index and pd.notna(view_row.get(c))]
+                    _view_comp = (np.mean([view_row.get(c) for c in _avail_for_comp])
+                                   if _avail_for_comp else np.nan)
+                    if pd.notna(_view_comp):
+                        pct = zscore_to_percentile(_view_comp)
+                        st.markdown(f"**Composite: {_view_comp:+.2f}** ({format_percentile(pct)} of FBS {pos_display.lower()})")
 
                     # ── Transfer history ──────────────────
                     all_player_data = df[df["player"] == name].sort_values(season_col)
@@ -2255,7 +2364,10 @@ else:
                             st.caption(f"Portal: {' · '.join(portal_lines)}")
 
                 with pc2:
-                    # ── Radar chart (factored helper) ─────
+                    # ── Radar chart — driven by the SAME year picker
+                    # rendered above the columns, so changing year
+                    # updates radar + stats table + counting line all
+                    # together.
                     if z_cols:
                         if pos_name == "OL":
                             st.caption(
@@ -2269,6 +2381,7 @@ else:
                             full_df=df, labels_dict=labels, season_col=season_col,
                             pos_name=pos_name, pos_display=pos_display,
                             default_season=selected_college_season,
+                            year_choice=year_choice,
                         )
 
                 # ── Compare to another player (radar + line chart) ──
