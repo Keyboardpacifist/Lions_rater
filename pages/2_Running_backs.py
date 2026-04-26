@@ -41,6 +41,7 @@ from lib_shared import (
     inject_css,
     metric_picker,
     radar_season_row,
+    render_master_detail_leaderboard,
     score_players,
 )
 
@@ -727,27 +728,27 @@ if hide_small:
     ranked = ranked.sort_values("score", ascending=False).reset_index(drop=True)
     ranked.index = ranked.index + 1
 
-# Top-ranked highlight banner
+# ── Master/detail click-to-detail leaderboard ──────────────────
+# Top scorer banner (browse-only)
+_top_html = None
+_top_warn = None
 if len(ranked) > 0:
-    top = ranked.iloc[0]
-    top_name = top["player_display_name"]
-    top_score = top["score"]
-    top_pct = top.get("sample_pct", 100)
-    badge = sample_size_badge(top_pct)
-    sign = "+" if top_score >= 0 else ""
-    st.markdown(
+    _top = ranked.iloc[0]
+    _top_name = _top["player_display_name"]
+    _top_score = _top["score"]
+    _top_pct = _top.get("sample_pct", 100)
+    _badge = sample_size_badge(_top_pct)
+    _sign = "+" if _top_score >= 0 else ""
+    _top_html = (
         f"<div style='background:#0076B6;color:white;padding:14px 20px;"
         f"border-radius:8px;margin-bottom:8px;font-size:1.1rem;'>"
         f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span>"
-        f" &nbsp;·&nbsp; <strong>{top_name}</strong> {badge}"
-        f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span>"
-        f" <span style='opacity:0.85;'>({format_percentile(zscore_to_percentile(top_score))})</span>"
-        f"</div>",
-        unsafe_allow_html=True,
+        f" &nbsp;·&nbsp; <strong>{_top_name}</strong> {_badge}"
+        f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{_sign}{_top_score:.2f}</span>"
+        f" <span style='opacity:0.85;'>({format_percentile(zscore_to_percentile(_top_score))})</span>"
+        f"</div>"
     )
-    warn = sample_size_caption(top_pct)
-    if warn:
-        st.warning(warn)
+    _top_warn = sample_size_caption(_top_pct)
 
 st.caption(
     "⚠️ Backs with very few carries have noisy scores — extreme values "
@@ -773,29 +774,30 @@ display_df = pd.DataFrame({
     "YACO/att": ranked.get("yards_after_contact_per_att", pd.Series([float("nan")] * len(ranked))).apply(lambda v: _fmt_float(v, 2)),
     "Your score": ranked["score"].apply(format_score),
 })
-st.dataframe(
-    display_df,
-    use_container_width=True,
-    hide_index=True,
+
+selected = render_master_detail_leaderboard(
+    display_df=display_df,
+    name_col="Player",
+    key_prefix="rb",
+    team=selected_team,
+    season=selected_season,
+    top_banner_html=_top_html,
+    top_banner_warn=_top_warn,
+    leaderboard_caption=(
+        "**YPC** = yards per carry · **EPA/rush** = Expected Points Added per rush "
+        "(modern efficiency stat) · **YACO/att** = yards after contact per attempt "
+        "(PFR — playmaker indicator). "
+        "**Click any player name above** to view their profile."
+    ),
 )
-st.caption("**YPC** = yards per carry · **EPA/rush** = Expected Points Added per rush (modern efficiency stat) · **YACO/att** = yards after contact per attempt (PFR — playmaker indicator).")
-
-with st.expander("ℹ️ How is this score calculated?"):
-    st.markdown(SCORE_EXPLAINER)
-
+if selected is None:
+    with st.expander("ℹ️ How is this score calculated?"):
+        st.markdown(SCORE_EXPLAINER)
+    st.stop()
 
 # ============================================================
 # Player detail
 # ============================================================
-st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.subheader("Player detail")
-
-selected = st.selectbox(
-    "Pick a back to see how their score breaks down",
-    options=ranked["player_display_name"].tolist(),
-    index=0,
-)
-
 player = ranked[ranked["player_display_name"] == selected].iloc[0]
 
 # Sample size warning for the selected player

@@ -16,7 +16,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
 from career_arc import career_arc_section
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, render_master_detail_leaderboard, score_players
 
 st.set_page_config(page_title="OL Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -273,17 +273,28 @@ st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.subheader("Ranking")
 ranked = ol.copy()
 
+# ── Master/detail click-to-detail leaderboard ──────────────────
+# Top scorer banner (browse-only)
+_top_html = None
+_top_warn = None
 if len(ranked) > 0:
-    top = ranked.iloc[0]
-    top_name = top.get("full_name", "—"); top_pos = POSITION_LABELS.get(top.get("depth_position", ""), "")
-    top_score = top["score"]; top_snaps = top.get("off_snaps", 0)
-    badge = sample_size_badge(top_snaps); sign = "+" if top_score >= 0 else ""
-    pos_part = f" ({top_pos})" if top_pos else ""
-    st.markdown(f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;margin-bottom:8px;font-size:1.1rem;'><span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span> &nbsp;·&nbsp; <strong>{top_name}</strong>{pos_part} {badge} &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span> <span style='opacity:0.85;'>({format_percentile(zscore_to_percentile(top_score))})</span></div>", unsafe_allow_html=True)
-    warn = sample_size_caption(top_snaps)
-    if warn: st.warning(warn)
-
-st.caption("⚠️ Run blocking stats are position-specific: tackles measured on outside runs, guards on interior, center on middle. Pass protection is team-level.")
+    _top = ranked.iloc[0]
+    _top_name = _top.get("full_name", "—")
+    _top_pos = POSITION_LABELS.get(_top.get("depth_position", ""), "")
+    _top_score = _top["score"]
+    _top_snaps = _top.get("off_snaps", 0)
+    _badge = sample_size_badge(_top_snaps)
+    _sign = "+" if _top_score >= 0 else ""
+    _pos_part = f" ({_top_pos})" if _top_pos else ""
+    _top_html = (
+        f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;"
+        f"margin-bottom:8px;font-size:1.1rem;'>"
+        f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span>"
+        f" &nbsp;·&nbsp; <strong>{_top_name}</strong>{_pos_part} {_badge}"
+        f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{_sign}{_top_score:.2f}</span>"
+        f" <span style='opacity:0.85;'>({format_percentile(zscore_to_percentile(_top_score))})</span></div>"
+    )
+    _top_warn = sample_size_caption(_top_snaps)
 
 display_df = pd.DataFrame({
     "Rank": ranked.index, "": ranked.get("off_snaps", pd.Series([0]*len(ranked))).apply(sample_size_badge),
@@ -294,12 +305,27 @@ display_df = pd.DataFrame({
     "Penalties": ranked.get("penalties_total", pd.Series([0]*len(ranked))).fillna(0).astype(int),
     "Your score": ranked["score"].apply(format_score),
 })
-st.dataframe(display_df, use_container_width=True, hide_index=True)
-with st.expander("ℹ️ How is the score calculated?"): st.markdown(SCORE_EXPLAINER)
 
-st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+selected = render_master_detail_leaderboard(
+    display_df=display_df,
+    name_col="Player",
+    key_prefix="ol",
+    team=selected_team,
+    season=selected_season,
+    top_banner_html=_top_html,
+    top_banner_warn=_top_warn,
+    leaderboard_caption=(
+        "⚠️ Run blocking stats are position-specific: tackles measured on outside runs, "
+        "guards on interior, center on middle. Pass protection is team-level. "
+        "**Click any player name above** to view their profile."
+    ),
+)
+if selected is None:
+    with st.expander("ℹ️ How is the score calculated?"):
+        st.markdown(SCORE_EXPLAINER)
+    st.stop()
+
 st.subheader("Player detail")
-selected = st.selectbox("Pick a lineman to see their breakdown", options=ranked["full_name"].tolist(), index=0)
 player = ranked[ranked["full_name"] == selected].iloc[0]
 warn = sample_size_caption(player.get("off_snaps", 0))
 if warn: st.warning(warn)

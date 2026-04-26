@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS, display_abbr
 from career_arc import career_arc_section
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, metric_picker, radar_season_row, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, metric_picker, radar_season_row, render_master_detail_leaderboard, score_players
 
 st.set_page_config(page_title="QB Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -377,26 +377,29 @@ qbs.index = qbs.index + 1
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 ranked = qbs.copy()
 
+# ── Master/detail click-to-detail leaderboard ──────────────────
 st.markdown("**How to read the score:** 0.00 = league average QB. The percentile shows where this QB ranks among all qualifying QBs (100+ snaps).")
 
+# Top scorer banner (browse-only)
+_top_html = None
+_top_warn = None
 if len(ranked) > 0:
-    top = ranked.iloc[0]
-    top_name = top.get("player_display_name", "—"); top_score = top["score"]
-    top_team = top.get("recent_team", "")
-    top_pct = format_percentile(zscore_to_percentile(top_score))
-    sign = "+" if top_score >= 0 else ""
-    st.markdown(
+    _top = ranked.iloc[0]
+    _top_name = _top.get("player_display_name", "—")
+    _top_team = _top.get("recent_team", "")
+    _top_score = _top["score"]
+    _top_pct = format_percentile(zscore_to_percentile(_top_score))
+    _sign = "+" if _top_score >= 0 else ""
+    _top_html = (
         f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;"
         f"margin-bottom:8px;font-size:1.1rem;'>"
         f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span>"
-        f" &nbsp;·&nbsp; <strong>{top_name}</strong> ({top_team})"
+        f" &nbsp;·&nbsp; <strong>{_top_name}</strong> ({_top_team})"
         f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>"
-        f"{sign}{top_score:.2f}</span>"
-        f" <span style='opacity:0.85;'>({top_pct})</span></div>",
-        unsafe_allow_html=True,
+        f"{_sign}{_top_score:.2f}</span>"
+        f" <span style='opacity:0.85;'>({_top_pct})</span></div>"
     )
-    warn = sample_size_warning(top.get("attempts", 0))
-    if warn: st.warning(warn)
+    _top_warn = sample_size_warning(_top.get("attempts", 0))
 
 def _fmt_int(v): return f"{int(v)}" if pd.notna(v) else "—"
 def _fmt_signed(v, places=2): return f"{v:+.{places}f}" if pd.notna(v) else "—"
@@ -414,16 +417,26 @@ display_df = pd.DataFrame({
     "Success%": ranked.get("pass_success_rate", pd.Series([float("nan")] * len(ranked))).apply(_fmt_pct),
     "Your score": ranked["score"].apply(format_score),
 })
-st.dataframe(display_df, use_container_width=True, hide_index=True)
-st.caption("**EPA/play** = Expected Points Added per dropback (modern efficiency stat) · **CPOE** = Completion % over expected (NGS-derived) · **Success%** = % of dropbacks producing positive EPA.")
 
-# ══════════════════════════════════════════════════════════════
-# PLAYER DETAIL
-# ══════════════════════════════════════════════════════════════
-st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-selected = st.selectbox("Pick a QB to see their full breakdown", options=ranked["player_display_name"].tolist(), index=0)
+selected = render_master_detail_leaderboard(
+    display_df=display_df,
+    name_col="Player",
+    key_prefix="qb",
+    team=selected_team,
+    season=selected_season,
+    top_banner_html=_top_html,
+    top_banner_warn=_top_warn,
+    leaderboard_caption=(
+        "**EPA/play** = Expected Points Added per dropback (modern efficiency stat) · "
+        "**CPOE** = Completion % over expected (NGS-derived) · "
+        "**Success%** = % of dropbacks producing positive EPA. "
+        "**Click any player name above** to view their profile."
+    ),
+)
+if selected is None:
+    st.stop()
+
 player = ranked[ranked["player_display_name"] == selected].iloc[0]
-
 warn = sample_size_warning(player.get("attempts", 0))
 if warn: st.warning(warn)
 
