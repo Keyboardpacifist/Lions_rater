@@ -1,5 +1,6 @@
 {
   "_comment": "Manual pos_group corrections for CFBD's college_def_all_seasons.parquet. Maps player name -> corrected pos_group. Affects both the search-index labeling and the leaderboard mask. Add new entries as misclassifications surface.",
   "_valid_pos_groups": ["EDGE", "DL", "LB", "CB", "DB"],
-  "Eric O'Neill": "EDGE"
+  "Eric O'Neill": "EDGE",
+  "Keith Abney": "CB"
 }
