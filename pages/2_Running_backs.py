@@ -433,12 +433,12 @@ def sample_size_caption(pct: float) -> str:
 
 SCORE_EXPLAINER = """
 **What this number means.** The score is a weighted average of z-scores —
-standardized stats where 0 is the league average, +1 is one standard
+standardized stats where 0 is the avg starter (z-scored against the position's starter pool), +1 is one standard
 deviation above, and −1 is one standard deviation below. Your slider
 weights control how much each bundle contributes.
 
 **How to read it:**
-- `+1.0` or higher → well above the league average on what you weighted
+- `+1.0` or higher → well above the avg starter on what you weighted
 - `+0.4` to `+1.0` → above average
 - `−0.4` to `+0.4` → roughly average
 - `−1.0` or lower → well below average
@@ -1018,6 +1018,53 @@ with c2:
         "50 = league median, 84 = +1 SD, 97 = +2 SD. "
         "Hover any data point for stat details."
     )
+
+    # ── Compare radar to another running back ────────────
+    _radar_cmp_active = st.checkbox(
+        "🔍 Compare radar to another running back",
+        key=f"rb_radar_cmp_{player.get('player_id', selected)}",
+        help="Stack a second player's radar polygon below this one, using the same year selection.",
+    )
+    if _radar_cmp_active:
+        _pool = sorted(set(
+            str(n) for n in all_rbs_full["player_display_name"].dropna().unique()
+            if str(n).strip()
+        ))
+        _default_cmp = next(
+            (p for p in _pool if p != selected),
+            (_pool[0] if _pool else None),
+        )
+        if _default_cmp:
+            _cmp_name = st.selectbox(
+                "Comparison running back",
+                options=_pool,
+                index=_pool.index(_default_cmp),
+                key=f"rb_radar_cmp_select_{player.get('player_id', selected)}",
+            )
+            if _cmp_name:
+                _cmp_career = all_rbs_full[all_rbs_full["player_display_name"] == _cmp_name]
+                if len(_cmp_career) > 0:
+                    if year_choice == "All-career mean":
+                        _cmp_radar_row = _cmp_career.select_dtypes(include="number").mean()
+                        _cmp_year_label = f"All-career · {len(_cmp_career)} seasons"
+                    else:
+                        _cmp_yr = _cmp_career[_cmp_career["season_year"] == year_choice]
+                        if len(_cmp_yr) == 1:
+                            _cmp_radar_row = _cmp_yr.iloc[0]
+                        elif len(_cmp_yr) > 1:
+                            _cmp_radar_row = _cmp_yr.select_dtypes(include="number").mean()
+                        else:
+                            _cmp_radar_row = _cmp_career.iloc[0]
+                        _cmp_year_label = f"Season {int(year_choice)}" if not _cmp_yr.empty else "(closest available)"
+                    st.markdown(f"**Comparison: {_cmp_name}** — {_cmp_year_label}")
+                    _cmp_fig = build_radar_figure(
+                        _cmp_radar_row, stat_labels, stat_methodology,
+                        benchmark=radar_bench, benchmark_raw=radar_bench_raw,
+                    )
+                    if _cmp_fig:
+                        st.plotly_chart(_cmp_fig, use_container_width=True)
+                else:
+                    st.caption(f"_No NFL data for {_cmp_name}._")
 
 
 # ============================================================

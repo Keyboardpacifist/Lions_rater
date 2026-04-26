@@ -364,7 +364,7 @@ ranked = players.copy()
 
 # ── Master/detail click-to-detail leaderboard ──────────────────
 st.markdown("""
-**How to read the score:** 0.00 = league average · Positive = above average · Negative = below average.
+**How to read the score:** 0.00 = avg starter · Positive = above avg starter · Negative = below.
 The percentile shows where this player ranks among all qualifying DTs league-wide.
 """)
 
@@ -595,6 +595,53 @@ with c2:
             radar_bench_raw[z] = top32[raw_col].mean()
     fig = build_radar_figure(radar_row, stat_labels, stat_methodology, benchmark=radar_bench, benchmark_raw=radar_bench_raw)
     if fig: st.plotly_chart(fig, use_container_width=True)
+
+    # ── Compare radar to another defensive tackle ────────────
+    _radar_cmp_active = st.checkbox(
+        "🔍 Compare radar to another defensive tackle",
+        key=f"dt_radar_cmp_{player.get('player_id', selected)}",
+        help="Stack a second player's radar polygon below this one, using the same year selection.",
+    )
+    if _radar_cmp_active:
+        _pool = sorted(set(
+            str(n) for n in all_dts_full["player_display_name"].dropna().unique()
+            if str(n).strip()
+        )) if "player_display_name" in all_dts_full.columns else []
+        _default_cmp = next(
+            (p for p in _pool if p != selected),
+            (_pool[0] if _pool else None),
+        )
+        if _default_cmp:
+            _cmp_name = st.selectbox(
+                "Comparison defensive tackle",
+                options=_pool,
+                index=_pool.index(_default_cmp),
+                key=f"dt_radar_cmp_select_{player.get('player_id', selected)}",
+            )
+            if _cmp_name:
+                _cmp_career = all_dts_full[all_dts_full["player_display_name"] == _cmp_name]
+                if len(_cmp_career) > 0:
+                    if year_choice == "All-career mean":
+                        _cmp_radar_row = _cmp_career.select_dtypes(include="number").mean()
+                        _cmp_year_label = f"All-career · {len(_cmp_career)} seasons"
+                    else:
+                        _cmp_yr = _cmp_career[_cmp_career["season_year"] == year_choice]
+                        if len(_cmp_yr) == 1:
+                            _cmp_radar_row = _cmp_yr.iloc[0]
+                        elif len(_cmp_yr) > 1:
+                            _cmp_radar_row = _cmp_yr.select_dtypes(include="number").mean()
+                        else:
+                            _cmp_radar_row = _cmp_career.iloc[0]
+                        _cmp_year_label = f"Season {int(year_choice)}" if not _cmp_yr.empty else "(closest available)"
+                    st.markdown(f"**Comparison: {_cmp_name}** — {_cmp_year_label}")
+                    _cmp_fig = build_radar_figure(
+                        _cmp_radar_row, stat_labels, stat_methodology,
+                        benchmark=radar_bench, benchmark_raw=radar_bench_raw,
+                    )
+                    if _cmp_fig:
+                        st.plotly_chart(_cmp_fig, use_container_width=True)
+                else:
+                    st.caption(f"_No NFL data for {_cmp_name}._")
 
 career_arc_section(
     player=player,
