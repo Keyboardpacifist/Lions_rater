@@ -1,4 +1,4 @@
-.PHONY: install run test lint data-refresh clean
+.PHONY: install run test lint data-refresh game-logs game-logs-nfl game-logs-college clean
 
 PYTHON := python3
 VENV := venv
@@ -49,6 +49,16 @@ data-refresh-wr: install
 
 data-refresh-rb: install
 	@echo "RB config is stubbed but not yet registered. See tools/pipeline/positions/rb.py"
+
+# ── Game logs (per-game player stats) ────────────────────────
+
+game-logs: install game-logs-nfl game-logs-college
+
+game-logs-nfl: install
+	$(VENV)/bin/python tools/game_logs/pull_nfl_weekly.py
+
+game-logs-college: install
+	$(VENV)/bin/python tools/game_logs/pull_college_games.py
 
 # ── Cleanup ──────────────────────────────────────────────────
 
