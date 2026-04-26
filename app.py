@@ -1474,9 +1474,12 @@ else:
             school_matches = matches[matches[school_col].str.contains(school_first, na=False, case=False)]
             if len(school_matches) > 0:
                 matches = school_matches
+        # Require BOTH first AND last name to match. Falling back to
+        # "exactly one last-name match" silently mis-attributed Brian
+        # O'Neill's combine numbers to Eric O'Neill, since Brian was
+        # the only "O'Neill" in the workouts parquet.
         tight = matches[matches[name_col].str.contains(first, na=False, case=False)]
         if len(tight) > 0: return tight.iloc[0]
-        if len(matches) == 1: return matches.iloc[0]
         return None
 
     def format_combine_display(comb):
