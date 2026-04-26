@@ -542,8 +542,9 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
                 (df[name_col].str.contains(first, na=False, case=False))
             ]
             if len(matches) > 0: return matches.iloc[0]
-            last_only = df[df[name_col].str.contains(last, na=False, case=False)]
-            if len(last_only) == 1: return last_only.iloc[0]
+            # Removed the "single last-name match" fallback — it silently
+            # attributed Brian O'Neill's combine to Eric O'Neill. Require
+            # both first AND last name to match.
         return None
 
     comb = None
