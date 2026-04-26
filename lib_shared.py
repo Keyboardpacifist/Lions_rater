@@ -568,3 +568,148 @@ def render_master_detail_leaderboard(
         st.caption(leaderboard_caption)
 
     return None
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Player detail card — unified Season picker + stylized stat bar
+# ──────────────────────────────────────────────────────────────────────
+
+def render_player_year_picker(*, career_df, default_season,
+                               season_col="season_year",
+                               team_col="recent_team",
+                               key_prefix=""):
+    """Render a single Season dropdown above the player detail card.
+
+    Returns a dict so a single picker can drive everything below it
+    (counting/stat bar, value/Z/percentile table, radar).
+
+    Returned keys:
+      year_choice    — int year or "All-career mean"
+      view_row       — pd.Series with the year-scoped values (single
+                       row for one season, numeric mean across career
+                       in all-career mode)
+      season_str     — display label e.g. "2025" or "All-career · 4 seasons"
+      team_str       — team for that season; "" in all-career mode
+      is_career_view — bool
+      n_seasons      — number of player seasons aggregated
+    """
+    import streamlit as st
+
+    if (career_df is None or len(career_df) == 0
+            or season_col not in career_df.columns):
+        return {"year_choice": None, "view_row": None,
+                "season_str": "", "team_str": "",
+                "is_career_view": False, "n_seasons": 0}
+
+    year_options = sorted(
+        set(int(s) for s in career_df[season_col].dropna().unique()),
+        reverse=True,
+    )
+    year_options_full = (
+        year_options + (["All-career mean"] if len(year_options) > 1 else [])
+    )
+
+    try:
+        default_idx = year_options_full.index(int(default_season))
+    except (ValueError, TypeError, KeyError):
+        default_idx = 0
+
+    year_choice = st.selectbox(
+        "Season",
+        options=year_options_full,
+        index=default_idx,
+        key=f"player_year_pick_{key_prefix}",
+        format_func=lambda v: f"Season {v}" if isinstance(v, int) else v,
+    )
+
+    if year_choice == "All-career mean":
+        view_row = career_df.select_dtypes(include="number").mean()
+        return {
+            "year_choice": year_choice,
+            "view_row": view_row,
+            "season_str": f"All-career · {len(career_df)} seasons",
+            "team_str": "",
+            "is_career_view": True,
+            "n_seasons": len(career_df),
+        }
+
+    yr_rows = career_df[career_df[season_col] == year_choice]
+    if len(yr_rows) == 1:
+        view_row = yr_rows.iloc[0]
+    elif len(yr_rows) > 1:
+        view_row = yr_rows.select_dtypes(include="number").mean()
+    else:
+        view_row = career_df.iloc[0]
+    team_str = (yr_rows.iloc[0].get(team_col, "")
+                if len(yr_rows) >= 1 else "")
+    return {
+        "year_choice": year_choice,
+        "view_row": view_row,
+        "season_str": str(int(year_choice)),
+        "team_str": str(team_str) if team_str else "",
+        "is_career_view": False,
+        "n_seasons": 1,
+    }
+
+
+def render_player_stat_bar(*, view_row, career_df, stat_specs, ctx_str,
+                            sum_cols=None, measurable_cols=None,
+                            is_career_view=False):
+    """Render a stylized blue stat-tile bar under the player name.
+
+    `stat_specs` is a list of (col_name, format_str, label) — typically
+    up to 6 entries mixing counting stats and a couple modern/nerd
+    metrics.
+
+    In all-career mode:
+      - cols in `sum_cols` are summed across the career
+      - cols in `measurable_cols` (height/weight/etc.) stay as the mean
+      - other cols use the view_row value (which is the numeric mean
+        across the player's seasons)
+    """
+    import streamlit as st
+
+    if not stat_specs or view_row is None:
+        return
+
+    sum_cols = sum_cols or set()
+    measurable_cols = measurable_cols or set()
+
+    tiles = []
+    for col, fmt, label in stat_specs:
+        if is_career_view and col in sum_cols:
+            v = (career_df[col].sum()
+                 if (career_df is not None and col in career_df.columns
+                     and career_df[col].notna().any())
+                 else None)
+        else:
+            v = view_row.get(col)
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            continue
+        try:
+            val_str = fmt.format(v)
+        except (ValueError, TypeError):
+            continue
+        tiles.append((label, val_str))
+
+    if not tiles:
+        return
+
+    tiles_html = "".join(
+        f"<div style='background:rgba(255,255,255,0.13);border-radius:6px;"
+        f"padding:5px 10px;text-align:center;min-width:62px;flex:0 0 auto;'>"
+        f"<div style='font-size:0.65rem;color:#a8c5e0;text-transform:uppercase;"
+        f"letter-spacing:0.4px;margin-bottom:1px;'>{lbl}</div>"
+        f"<div style='font-size:1.0rem;font-weight:bold;color:#fff;line-height:1.1;'>{val}</div>"
+        f"</div>"
+        for lbl, val in tiles
+    )
+    st.markdown(
+        f"<div style='background:linear-gradient(135deg,#0a3d62 0%,#1b5e8c 100%);"
+        f"border-radius:10px;padding:10px 14px;margin:6px 0 12px 0;'>"
+        f"<div style='color:#cfe2f3;font-size:0.72rem;margin-bottom:6px;"
+        f"letter-spacing:0.5px;font-weight:600;'>📊 {ctx_str}</div>"
+        f"<div style='display:flex;flex-wrap:wrap;gap:4px;'>{tiles_html}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )

@@ -42,6 +42,8 @@ from lib_shared import (
     metric_picker,
     radar_season_row,
     render_master_detail_leaderboard,
+    render_player_stat_bar,
+    render_player_year_picker,
     score_players,
 )
 
@@ -868,16 +870,60 @@ if len(season_stints) > 1:
     st.dataframe(pd.DataFrame(split_rows), use_container_width=True, hide_index=True)
     st.caption(f"⮕ marks the stint shown on this page ({display_abbr(player['recent_team'])}). Stints chronological. Total uses weighted aggregates.")
 
+# ── Unified Season picker — drives stat bar + bundle table + radar ──
+player_career = all_rbs_full[all_rbs_full["player_id"] == player.get("player_id")]
+
+st.markdown(f"### {selected}")
+
+_yr = render_player_year_picker(
+    career_df=player_career,
+    default_season=selected_season,
+    season_col="season_year",
+    team_col="recent_team",
+    key_prefix=f"rb_{player.get('player_id') or selected}",
+)
+view_row = _yr["view_row"] if _yr["view_row"] is not None else player
+year_choice = _yr["year_choice"]
+
+if total_weight > 0:
+    _view_score = sum(view_row.get(z, 0) * (w / total_weight)
+                       for z, w in effective_weights.items()
+                       if pd.notna(view_row.get(z)))
+else:
+    _view_score = float("nan")
+
+RB_STAT_SPECS = [
+    ("carries", "{:.0f}", "Car"),
+    ("rush_yards", "{:.0f}", "Rush Yds"),
+    ("rush_tds", "{:.0f}", "TD"),
+    ("yards_per_carry", "{:.1f}", "Y/Car"),
+    ("epa_per_rush", "{:+.2f}", "EPA/Rush"),
+    ("receptions", "{:.0f}", "Rec"),
+]
+NFL_SUM_COLS = {"off_snaps", "def_snaps", "snaps", "games", "targets",
+                "receptions", "rec_yards", "rec_tds",
+                "attempts", "completions", "passing_yards", "passing_tds",
+                "passing_interceptions", "rushing_yards", "rushing_tds",
+                "carries", "rush_yards", "rush_tds", "rushing_attempts",
+                "tackles", "def_tackles",
+                "sacks", "tfls", "tackles_for_loss",
+                "interceptions", "def_interceptions", "passes_defensed",
+                "passes_defended", "qb_hits", "fg_made", "fg_attempts",
+                "fg_att", "xp_made", "punts", "punt_yards", "total_yards"}
+_team_disp = display_abbr(_yr["team_str"]) if _yr["team_str"] else ""
+_ctx = (f"{_yr['season_str']} · {_team_disp}" if _team_disp else _yr["season_str"])
+render_player_stat_bar(
+    view_row=view_row,
+    career_df=player_career,
+    stat_specs=RB_STAT_SPECS,
+    ctx_str=_ctx,
+    sum_cols=NFL_SUM_COLS,
+    is_career_view=_yr["is_career_view"],
+)
+
 c1, c2 = st.columns([1, 1])
 with c1:
-    # Player heading
-    st.markdown(f"### {selected}")
-    st.caption(f"{int(player.get('carries') or 0)} carries · "
-               f"{int(player.get('rush_yards') or 0)} rush yds · "
-               f"{int(player.get('rush_tds') or 0)} rush TDs · "
-               f"{int(player.get('receptions') or 0)} rec · "
-               f"{int(player.get('rec_yards') or 0)} rec yds")
-    st.markdown(f"**Your score:** {format_score(player['score'])}")
+    st.markdown(f"**Your score:** {format_score(_view_score)}")
     st.markdown("---")
     st.markdown("**How your score breaks down**")
 
@@ -889,7 +935,7 @@ with c1:
                 continue
             contribution = 0.0
             for z_col, internal in bundle["stats"].items():
-                z = player.get(z_col)
+                z = view_row.get(z_col)
                 if pd.notna(z) and total_weight > 0:
                     contribution += z * (bw * internal / total_weight)
             bundle_rows.append({
@@ -915,8 +961,8 @@ with c1:
                 tier = stat_tiers.get(z_col, 2)
                 label = stat_labels.get(z_col, z_col)
                 raw_col = RAW_COL_MAP.get(z_col)
-                z = player.get(z_col)
-                raw = player.get(raw_col) if raw_col else None
+                z = view_row.get(z_col)
+                raw = view_row.get(raw_col) if raw_col else None
                 stat_rows.append({
                     "Tier": tier_badge(tier),
                     "Stat": label,
@@ -932,8 +978,8 @@ with c1:
             tier = stat_tiers.get(z_col, 2)
             label = stat_labels.get(z_col, z_col)
             raw_col = RAW_COL_MAP.get(z_col)
-            z = player.get(z_col)
-            raw = player.get(raw_col) if raw_col else None
+            z = view_row.get(z_col)
+            raw = view_row.get(raw_col) if raw_col else None
             w = effective_weights.get(z_col, 0)
             contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
             rows.append({
@@ -952,12 +998,7 @@ with c1:
 with c2:
     st.markdown("**Stat profile** (percentiles vs. league reference)")
     st.caption("Solid blue = this player. Dashed gray = top-32 starter average.")
-    player_career = all_rbs_full[all_rbs_full["player_id"] == player.get("player_id")]
-    radar_row = radar_season_row(player_career, selected_season,
-                                  season_col="season_year",
-                                  key=f"rb_radar_year_{player.get('player_id', '')}")
-    if radar_row is None:
-        radar_row = player
+    radar_row = view_row if view_row is not None else player
     season_pool = all_rbs_full[all_rbs_full["season_year"] == selected_season]
     top32 = season_pool.sort_values("off_snaps", ascending=False).head(32)
     radar_bench = {z: top32[z].mean() for z in RADAR_STATS if z in top32.columns and top32[z].notna().any()}
