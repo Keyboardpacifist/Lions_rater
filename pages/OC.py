@@ -9,7 +9,7 @@ import polars as pl
 import streamlit as st
 import plotly.graph_objects as go
 from scipy.stats import norm
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, render_player_card, score_players
 
 st.set_page_config(page_title="NFL OC Rater", page_icon="🦁", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -232,15 +232,35 @@ coord_col = "coordinator" if "coordinator" in ranked.columns else "player_name"
 selected = st.selectbox("Pick a coordinator", options=ranked[coord_col].tolist(), index=0)
 player = ranked[ranked[coord_col] == selected].iloc[0]
 
+# ── Trading-card visual (OC variant) ──────────────────────────
+OC_STAT_SPECS = [
+    ("seasons", "{:.0f}", "Seasons"),
+    ("win_pct", "{:.1%}", "Win %"),
+    ("epa_per_play", "{:+.3f}", "EPA/Play"),
+    ("pass_epa_per_play", "{:+.3f}", "Pass EPA"),
+    ("rush_epa_per_play", "{:+.3f}", "Rush EPA"),
+    ("red_zone_td_rate", "{:.1%}", "RZ TD%"),
+]
+_teams_str = str(player.get("teams", player.get("team", "")) or "")
+# Use the first team for the gradient color + logo (covers
+# coordinators with multiple stints — e.g. "CLE, NE" picks CLE).
+_first_team = _teams_str.split(",")[0].strip() if _teams_str else None
+_tenure = (f"{int(player.get('first_season'))}–{int(player.get('last_season'))}"
+           if pd.notna(player.get("first_season")) and pd.notna(player.get("last_season"))
+           else ("Career" if is_career else "2024 season"))
+render_player_card(
+    player_name=selected,
+    position_label="OFFENSIVE COORDINATOR",
+    team_abbr=_first_team,
+    season_str=_tenure,
+    score=player.get("score"),
+    stat_specs=OC_STAT_SPECS,
+    view_row=player,
+    team_label=(_teams_str or None),
+)
+
 c1, c2 = st.columns([1, 1])
 with c1:
-    st.markdown(f"### {selected}")
-    teams = player.get("teams", player.get("team", ""))
-    if is_career:
-        st.caption(f"**{teams}** · {int(player.get('seasons', 1))} seasons · {int(player.get('total_wins', 0))}-{int(player.get('total_losses', 0))} record")
-    else:
-        st.caption(f"**{teams}** · 2024 season")
-
     # Investment context — display only, not scored
     cap_pct = player.get("off_cap_pct")
     draft_cap = player.get("off_draft_capital")
@@ -250,8 +270,7 @@ with c1:
         st.markdown(f"**💰 Roster investment:** {cap_str} of cap on offense · {draft_str} draft capital")
         st.caption("_Context only — not factored into the score. Helps you judge whether results came from talent or scheme._")
 
-    st.markdown(f"**Your score:** {format_score(player['score'])}")
-    st.markdown("---"); st.markdown("**How your score breaks down**")
+    st.markdown("**How your score breaks down**")
     if not advanced_mode:
         bundle_rows = []
         for bk, bundle in active_bundles.items():

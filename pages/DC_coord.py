@@ -9,7 +9,7 @@ import polars as pl
 import streamlit as st
 import plotly.graph_objects as go
 from scipy.stats import norm
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, render_player_card, score_players
 
 st.set_page_config(page_title="NFL DC Rater", page_icon="🦁", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -231,16 +231,34 @@ coord_col = "coordinator" if "coordinator" in ranked.columns else "player_name"
 selected = st.selectbox("Pick a coordinator", options=ranked[coord_col].tolist(), index=0)
 player = ranked[ranked[coord_col] == selected].iloc[0]
 
+# ── Trading-card visual (DC variant) ──────────────────────────
+DC_STAT_SPECS = [
+    ("seasons", "{:.0f}", "Seasons"),
+    ("win_pct", "{:.1%}", "Win %"),
+    ("epa_per_play", "{:+.3f}", "EPA/Play"),
+    ("pass_epa_per_play", "{:+.3f}", "Pass EPA"),
+    ("explosive_pass_rate", "{:.1%}", "Exp Pass%"),
+    ("third_down_rate", "{:.1%}", "3rd Down%"),
+]
+_teams_str = str(player.get("teams", player.get("team", "")) or "")
+_first_team = _teams_str.split(",")[0].strip() if _teams_str else None
+_tenure = (f"{int(player.get('first_season'))}–{int(player.get('last_season'))}"
+           if pd.notna(player.get("first_season")) and pd.notna(player.get("last_season"))
+           else ("Career" if is_career else "2024 season"))
+render_player_card(
+    player_name=selected,
+    position_label="DEFENSIVE COORDINATOR",
+    team_abbr=_first_team,
+    season_str=_tenure,
+    score=player.get("score"),
+    stat_specs=DC_STAT_SPECS,
+    view_row=player,
+    team_label=(_teams_str or None),
+)
+
 c1, c2 = st.columns([1, 1])
 with c1:
-    st.markdown(f"### {selected}")
-    teams = player.get("teams", player.get("team", ""))
-    if is_career:
-        st.caption(f"**{teams}** · {int(player.get('seasons', 1))} seasons · {int(player.get('total_wins', 0))}-{int(player.get('total_losses', 0))} record")
-    else:
-        st.caption(f"**{teams}** · 2024 season")
-    st.markdown(f"**Your score:** {format_score(player['score'])}")
-    st.markdown("---"); st.markdown("**How your score breaks down**")
+    st.markdown("**How your score breaks down**")
     if not advanced_mode:
         bundle_rows = []
         for bk, bundle in active_bundles.items():

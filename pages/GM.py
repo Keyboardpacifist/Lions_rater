@@ -38,6 +38,8 @@ from lib_shared import (
     compute_effective_weights,
     get_algorithm_by_slug,
     inject_css,
+    render_master_detail_leaderboard,
+    render_player_card,
     score_players,
 )
 
@@ -628,7 +630,10 @@ if hide_small:
     ranked = ranked.sort_values("score", ascending=False).reset_index(drop=True)
     ranked.index = ranked.index + 1
 
-# Top-ranked highlight banner
+# Top-ranked highlight banner — built up-front so the master/detail
+# leaderboard can render it above the clickable list.
+_top_html = None
+_top_warn = None
 if len(ranked) > 0:
     top = ranked.iloc[0]
     top_name = top.get("gm_name", "—")
@@ -638,24 +643,16 @@ if len(ranked) > 0:
     badge = sample_size_badge(top_seasons)
     sign = "+" if top_score >= 0 else ""
     team_part = f" ({top_team})" if top_team else ""
-    st.markdown(
+    _top_html = (
         f"<div style='background:#0076B6;color:white;padding:14px 20px;"
         f"border-radius:8px;margin-bottom:8px;font-size:1.1rem;'>"
         f"<span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span>"
         f" &nbsp;·&nbsp; <strong>{top_name}</strong>{team_part} {badge}"
         f" &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span>"
         f" <span style='opacity:0.85;'>({format_percentile(zscore_to_percentile(top_score))})</span>"
-        f"</div>",
-        unsafe_allow_html=True,
+        f"</div>"
     )
-    warn = sample_size_caption(top_seasons)
-    if warn:
-        st.warning(warn)
-
-st.caption(
-    "⚠️ GMs with short tenures have noisier scores — their draft picks haven't fully developed. "
-    "🔴 = severe small sample (<3 seasons), 🟡 = caution (3-4 seasons)."
-)
+    _top_warn = sample_size_caption(top_seasons)
 
 display_df = pd.DataFrame({
     "Rank": ranked.index,
@@ -669,27 +666,31 @@ display_df = pd.DataFrame({
     "Your score": ranked["score"].apply(format_score),
 })
 
-st.dataframe(
-    display_df,
-    use_container_width=True,
-    hide_index=True,
+selected = render_master_detail_leaderboard(
+    display_df=display_df,
+    name_col="GM",
+    key_prefix="gm",
+    team=("hide" if hide_small else "all"),
+    season=0,
+    top_banner_html=_top_html,
+    top_banner_warn=_top_warn,
+    leaderboard_caption=(
+        "⚠️ GMs with short tenures have noisier scores — their draft picks haven't fully developed. "
+        "🔴 = severe small sample (<3 seasons), 🟡 = caution (3-4 seasons). "
+        "**Click any GM name** above to view their full card."
+    ),
 )
-
 with st.expander("ℹ️ How is this score calculated?"):
     st.markdown(SCORE_EXPLAINER)
+
+if selected is None:
+    st.stop()  # browse mode — leaderboard rendered, no detail to show
 
 
 # ============================================================
 # GM detail
 # ============================================================
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.subheader("GM detail")
-
-selected = st.selectbox(
-    "Pick a GM to see how their score breaks down",
-    options=ranked["gm_name"].tolist(),
-    index=0,
-)
 
 gm = ranked[ranked["gm_name"] == selected].iloc[0]
 
@@ -697,19 +698,28 @@ warn = sample_size_caption(gm.get("seasons_as_gm", 0))
 if warn:
     st.warning(warn)
 
+# ── Trading-card visual (GM variant) ──────────────────────────
+GM_STAT_SPECS = [
+    ("seasons_as_gm", "{:.0f}", "Seasons"),
+    ("total_picks", "{:.0f}", "Picks"),
+    ("draft_hit_rate", "{:.1%}", "Hit Rate"),
+    ("first_round_success", "{:.1%}", "1st Rd"),
+    ("fa_hit_rate", "{:.1%}", "FA Hit"),
+    ("core_retention", "{:.1%}", "Core Ret"),
+]
+_team_abbr = gm.get("team") if pd.notna(gm.get("team")) else None
+render_player_card(
+    player_name=selected,
+    position_label="GENERAL MANAGER",
+    team_abbr=_team_abbr,
+    season_str=str(int(gm.get("seasons_as_gm") or 0)) + " seasons",
+    score=gm.get("score"),
+    stat_specs=GM_STAT_SPECS,
+    view_row=gm,
+)
+
 c1, c2 = st.columns([1, 1])
 with c1:
-    team = gm.get("team", "") if pd.notna(gm.get("team")) else ""
-    st.markdown(f"### {selected}")
-    st.caption(
-        f"**{team}** · "
-        f"{int(gm.get('seasons_as_gm') or 0)} seasons · "
-        f"{int(gm.get('total_picks') or 0)} picks · "
-        f"{int(gm.get('fa_count') or 0)} FA signings · "
-        f"{int(gm.get('trade_count') or 0)} trades"
-    )
-    st.markdown(f"**Your score:** {format_score(gm['score'])}")
-    st.markdown("---")
     st.markdown("**How your score breaks down**")
 
     if not advanced_mode:

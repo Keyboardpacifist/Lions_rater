@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS, display_abbr
 from career_arc import career_arc_section
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, metric_picker, radar_season_row, render_master_detail_leaderboard, render_player_stat_bar, render_player_year_picker, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, metric_picker, radar_season_row, render_combine_chart, render_master_detail_leaderboard, render_player_card, render_player_year_picker, score_players
 
 st.set_page_config(page_title="DE Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -543,15 +543,29 @@ NFL_SUM_COLS = {"off_snaps", "def_snaps", "snaps", "games", "targets",
                 "interceptions", "def_interceptions", "passes_defensed",
                 "passes_defended", "qb_hits", "fg_made", "fg_attempts",
                 "fg_att", "xp_made", "punts", "punt_yards", "total_yards"}
-_team_disp = display_abbr(_yr["team_str"]) if _yr["team_str"] else ""
-_ctx = (f"{_yr['season_str']} · {_team_disp}" if _team_disp else _yr["season_str"])
-render_player_stat_bar(
-    view_row=view_row,
-    career_df=player_career,
+# ── Trading-card visual ────────────────────────────────────────
+_team_abbr = _yr["team_str"] if _yr["team_str"] else (player.get("recent_team") or "")
+render_player_card(
+    player_name=selected,
+    position_label=(player.get("position") or "DE"),
+    team_abbr=_team_abbr,
+    season_str=_yr["season_str"],
+    score=_view_score,
     stat_specs=DE_STAT_SPECS,
-    ctx_str=_ctx,
-    sum_cols=NFL_SUM_COLS,
+    view_row=view_row,
+    player_career=player_career,
     is_career_view=_yr["is_career_view"],
+    sum_cols=NFL_SUM_COLS,
+)
+
+# ── Combine workout chart vs. all-time DE/EDGE pool ────────────
+_WORKOUTS_PATH = Path(__file__).resolve().parent.parent / "data" / "college" / "nfl_all_workouts.parquet"
+render_combine_chart(
+    player_name=selected,
+    position="DE",
+    pool_positions=["DE", "EDGE"],
+    workouts_path=_WORKOUTS_PATH,
+    key=f"de_combine_chart_{player.get('player_id', selected)}",
 )
 
 c1, c2 = st.columns([1, 1])

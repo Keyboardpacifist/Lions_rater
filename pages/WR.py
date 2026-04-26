@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS, display_abbr
 from career_arc import career_arc_section
-from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, metric_picker, radar_season_row, render_master_detail_leaderboard, render_player_stat_bar, render_player_year_picker, score_players
+from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, metric_picker, radar_season_row, render_combine_chart, render_master_detail_leaderboard, render_player_card, render_player_stat_bar, render_player_year_picker, score_players
 
 st.set_page_config(page_title="WR Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -502,8 +502,6 @@ if len(season_stints) > 1:
 all_wrs_full = load_wr_data()  # pulled up so the picker can see the full career
 player_career = all_wrs_full[all_wrs_full["player_id"] == player.get("player_id")]
 
-st.markdown(f"### {selected}")
-
 _yr = render_player_year_picker(
     career_df=player_career,
     default_season=selected_season,
@@ -524,7 +522,7 @@ if total_weight > 0:
 else:
     _view_score = float("nan")
 
-# Stylized stat-tile bar — counting + nerd metrics.
+# Per-position stat specs for the trading-card stat tiles.
 WR_STAT_SPECS = [
     ("receptions", "{:.0f}", "Rec"),
     ("rec_yards", "{:.0f}", "Yds"),
@@ -539,26 +537,37 @@ NFL_SUM_COLS = {"off_snaps", "def_snaps", "snaps", "games", "targets",
                 "passing_interceptions", "rushing_yards", "rushing_tds",
                 "carries", "tackles", "sacks", "tfls", "interceptions",
                 "passes_defensed", "qb_hits"}
-_team_disp = display_abbr(_yr["team_str"]) if _yr["team_str"] else ""
-_ctx = (f"{_yr['season_str']} · {_team_disp}" if _team_disp else _yr["season_str"])
-render_player_stat_bar(
-    view_row=view_row,
-    career_df=player_career,
+
+# ── Trading-card visual ────────────────────────────────────────
+_team_abbr = _yr["team_str"] if _yr["team_str"] else (player.get("recent_team") or "")
+render_player_card(
+    player_name=selected,
+    position_label=(player.get("position") or "WR"),
+    team_abbr=_team_abbr,
+    season_str=_yr["season_str"],
+    score=_view_score,
     stat_specs=WR_STAT_SPECS,
-    ctx_str=_ctx,
-    sum_cols=NFL_SUM_COLS,
+    view_row=view_row,
+    player_career=player_career,
     is_career_view=_yr["is_career_view"],
+    sum_cols=NFL_SUM_COLS,
+)
+
+# ── Combine workout chart vs. all-time WR pool ────────────────
+_WORKOUTS_PATH = Path(__file__).resolve().parent.parent / "data" / "college" / "nfl_all_workouts.parquet"
+render_combine_chart(
+    player_name=selected,
+    position="WR",
+    workouts_path=_WORKOUTS_PATH,
+    key=f"wr_combine_chart_{player.get('player_id', selected)}",
 )
 
 c1, c2 = st.columns([1, 1])
 with c1:
-    _sign = "+" if pd.notna(_view_score) and _view_score >= 0 else ""
-    _pct = format_percentile(zscore_to_percentile(_view_score)) if pd.notna(_view_score) else "—"
-    _score_str = f"{_sign}{_view_score:.2f}" if pd.notna(_view_score) else "—"
-    st.markdown(f"**Your score: {_score_str} ({_pct})**")
-    st.markdown("_This score is based on your slider settings. Change the sliders and this number changes._")
-    st.markdown("---")
+    # "Your score" is now shown prominently on the trading card above —
+    # this section just breaks down WHERE that score comes from.
     st.markdown("**Where the score comes from**")
+    st.caption("_This score is based on your slider settings. Change the sliders and the score changes._")
     st.markdown("Each row shows how much one skill contributed to the total, based on your slider weights.")
     if not advanced_mode:
         bundle_rows = []

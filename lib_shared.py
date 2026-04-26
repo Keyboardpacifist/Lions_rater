@@ -768,3 +768,350 @@ def render_player_stat_bar(*, view_row, career_df, stat_specs, ctx_str,
         f"</div>",
         unsafe_allow_html=True,
     )
+
+
+# ============================================================
+# Trading-card player banner
+# ============================================================
+# ESPN serves NFL team logos at stable URLs keyed by lowercased
+# abbreviation. A few nflverse abbrs don't match ESPN's slugs.
+_ESPN_LOGO_OVERRIDES = {"WAS": "wsh", "WSH": "wsh", "LA": "lar"}
+
+
+@st.cache_data
+def _load_team_colors_cached(path_str: str):
+    import json as _json
+    from pathlib import Path
+    p = Path(path_str)
+    if not p.exists():
+        return {}
+    return _json.loads(p.read_text())
+
+
+def render_player_card(*, player_name, position_label, season_str,
+                       score, stat_specs, view_row,
+                       team_abbr=None,
+                       team_label=None, primary_color=None,
+                       secondary_color=None, logo_url=None,
+                       player_career=None, is_career_view=False,
+                       sum_cols=None):
+    """Render a Topps/MUT-style banner with a team-color gradient,
+    team logo, large name, score/percentile banner, and stat tiles.
+
+    Resolution order for colors / label / logo:
+      1. Explicit `primary_color` / `secondary_color` / `team_label` /
+         `logo_url` if given (used for college, where we don't have a
+         per-school colors file).
+      2. Otherwise, look up `team_abbr` in data/team_colors.json and
+         build the ESPN NFL logo URL.
+      3. Otherwise, fall back to Lions blue.
+
+    `stat_specs` is a list of (col_name, format_str, label) — typically
+    up to 6 entries. In all-career mode, cols in `sum_cols` are summed
+    across the career; everything else uses view_row's value.
+    """
+    import streamlit as st
+    from pathlib import Path
+    from scipy.stats import norm
+
+    colors_path = Path(__file__).resolve().parent / "data" / "team_colors.json"
+    tc_all = _load_team_colors_cached(str(colors_path))
+    team_info = tc_all.get(team_abbr, {}) if team_abbr else {}
+
+    primary = primary_color or team_info.get("primary", "#0076B6")
+    secondary = secondary_color or team_info.get("secondary", "#B0B7BC")
+    team_name = team_label or team_info.get("name", team_abbr or "")
+
+    if logo_url is None:
+        # Auto-generate ESPN NFL logo URL only when we recognize the
+        # abbr as an NFL team. College/unknowns get no logo.
+        if team_abbr and team_abbr in tc_all:
+            espn_abbr = _ESPN_LOGO_OVERRIDES.get(team_abbr, team_abbr.lower())
+            logo_url = f"https://a.espncdn.com/i/teamlogos/nfl/500/{espn_abbr}.png"
+        else:
+            logo_url = ""
+
+    if score is None or (isinstance(score, float) and pd.isna(score)):
+        score_str = "—"
+        pct_str = "—"
+    else:
+        sign = "+" if score >= 0 else ""
+        score_str = f"{sign}{score:.2f}"
+        pct_val = float(norm.cdf(score) * 100)
+        pct_str = f"{int(pct_val)}th"
+
+    sum_cols = sum_cols or set()
+    tile_blocks = []
+    for col, fmt, label in stat_specs:
+        if (is_career_view and col in sum_cols
+                and player_career is not None
+                and col in player_career.columns
+                and player_career[col].notna().any()):
+            v = player_career[col].sum()
+        else:
+            v = view_row.get(col) if view_row is not None else None
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            v_str = "—"
+        else:
+            try:
+                v_str = fmt.format(v)
+            except (ValueError, TypeError):
+                v_str = str(v)
+        tile_blocks.append(
+            f"<div style='flex:1;min-width:78px;background:rgba(255,255,255,0.18);"
+            f"border-radius:10px;padding:8px 4px;text-align:center;"
+            f"backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,0.1);'>"
+            f"<div style='font-size:0.62rem;color:{secondary};letter-spacing:1.2px;"
+            f"font-weight:700;text-transform:uppercase;'>{label}</div>"
+            f"<div style='font-size:1.45rem;font-weight:900;color:white;line-height:1.0;"
+            f"margin-top:3px;text-shadow:1px 1px 3px rgba(0,0,0,0.4);'>{v_str}</div>"
+            f"</div>"
+        )
+    tiles_html = "".join(tile_blocks)
+
+    parts = (player_name or "").split()
+    first = parts[0] if parts else (player_name or "")
+    last = " ".join(parts[1:]) if len(parts) > 1 else ""
+
+    logo_html = (
+        f"<img src='{logo_url}' alt='{team_abbr} logo' "
+        f"style='height:88px;margin-top:0;opacity:0.95;'/>"
+        if logo_url else ""
+    )
+    # Name's negative margin floats it UP into the empty space left of
+    # the 88px-tall logo. Without a logo, that empty space doesn't exist
+    # — the negative margin would clip the name behind the top row (the
+    # card has overflow:hidden). Use a normal top margin in that case.
+    _name_margin_top = "-72px" if logo_url else "10px"
+
+    st.markdown(
+        f"<div style='background:linear-gradient(135deg, {primary} 0%, "
+        f"{primary}cc 45%, #0a1929 100%);"
+        f"border-radius:18px;padding:0 26px 18px 26px;margin:6px 0 18px 0;"
+        f"color:white;box-shadow:0 10px 28px rgba(0,0,0,0.30),"
+        f"inset 0 1px 0 rgba(255,255,255,0.15);position:relative;overflow:hidden;"
+        f"border-top:5px solid {secondary};'>"
+        # Top row: position badge (left) + team text + logo stacked (right)
+        f"<div style='display:flex;justify-content:space-between;align-items:flex-start;"
+        f"margin-bottom:0;position:relative;z-index:1;'>"
+        f"<div style='background:rgba(255,255,255,0.22);border-radius:6px;"
+        f"padding:4px 12px;font-size:0.82rem;font-weight:800;letter-spacing:1.5px;'>"
+        f"{position_label}</div>"
+        f"<div style='display:flex;flex-direction:column;align-items:center;'>"
+        f"<div style='font-size:0.7rem;letter-spacing:2px;color:{secondary};"
+        f"font-weight:700;text-transform:uppercase;'>"
+        f"{team_name} · {season_str}</div>"
+        f"{logo_html}"
+        f"</div>"
+        f"</div>"
+        # Player name — first (silver) + last (white, huge)
+        f"<div style='font-size:1.35rem;font-weight:700;line-height:1.0;"
+        f"color:{secondary};letter-spacing:1.5px;margin-top:{_name_margin_top};"
+        f"margin-bottom:0;text-transform:uppercase;position:relative;z-index:1;'>{first}</div>"
+        f"<div style='font-size:2.6rem;font-weight:900;line-height:1.0;"
+        f"text-shadow:2px 2px 6px rgba(0,0,0,0.45);letter-spacing:-1px;"
+        f"margin-bottom:8px;text-transform:uppercase;position:relative;z-index:1;'>{last}</div>"
+        # Score + percentile banner
+        f"<div style='background:rgba(0,0,0,0.32);border-left:5px solid {secondary};"
+        f"padding:9px 14px;margin:10px 0 14px 0;border-radius:6px;"
+        f"display:flex;justify-content:space-between;align-items:center;"
+        f"position:relative;z-index:1;'>"
+        f"<div>"
+        f"<div style='font-size:0.62rem;color:{secondary};letter-spacing:1.6px;"
+        f"font-weight:700;text-transform:uppercase;'>Your Score</div>"
+        f"<div style='font-size:1.75rem;font-weight:900;line-height:1.1;'>{score_str}</div>"
+        f"</div>"
+        f"<div style='text-align:right;'>"
+        f"<div style='font-size:0.62rem;color:{secondary};letter-spacing:1.6px;"
+        f"font-weight:700;text-transform:uppercase;'>Percentile</div>"
+        f"<div style='font-size:1.75rem;font-weight:900;line-height:1.1;'>{pct_str}</div>"
+        f"</div>"
+        f"</div>"
+        # Stat tiles
+        f"<div style='display:flex;flex-wrap:wrap;gap:6px;"
+        f"position:relative;z-index:1;'>{tiles_html}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+# ============================================================
+# Combine workout chart
+# ============================================================
+# Lower-is-better metrics — z-score gets flipped so positive always means
+# "above average" on the rendered bar.
+_COMBINE_LOWER_BETTER = {"forty", "cone", "shuttle"}
+_COMBINE_LABELS = {
+    "forty": "40-yard",
+    "bench": "Bench (reps)",
+    "vertical": "Vertical (in)",
+    "broad_jump": "Broad jump (in)",
+    "cone": "3-cone",
+    "shuttle": "Shuttle",
+}
+_COMBINE_RAW_FMT = {
+    "forty": "{:.2f}s",
+    "bench": "{:.0f}",
+    "vertical": "{:.1f}\"",
+    "broad_jump": "{:.0f}\"",
+    "cone": "{:.2f}s",
+    "shuttle": "{:.2f}s",
+}
+
+
+@st.cache_data
+def _load_workouts_parquet(path_str: str):
+    from pathlib import Path
+    p = Path(path_str)
+    if not p.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(p)
+
+
+@st.cache_data
+def _position_workout_means(path_str: str, positions: tuple):
+    """Mean/std/n per measurable for a given position pool (all-time).
+    `positions` is a tuple so the result is hashable for caching.
+    Drops 0.0 sentinels on timed events (they mean 'didn't run')."""
+    df = _load_workouts_parquet(path_str)
+    if df.empty or "pos" not in df.columns:
+        return {}
+    pool = df[df["pos"].isin(positions)]
+    out = {}
+    for c in ("forty", "bench", "vertical", "broad_jump", "cone", "shuttle"):
+        if c not in pool.columns:
+            continue
+        s = pool[c].dropna()
+        if c in _COMBINE_LOWER_BETTER:
+            s = s[s > 0]
+        if len(s) < 10:
+            continue
+        out[c] = (float(s.mean()), float(s.std()), int(len(s)))
+    return out
+
+
+def render_combine_chart(*, player_name, position, workouts_path, key,
+                         pool_positions=None,
+                         above_color="#0076B6", below_color="#C8102E"):
+    """Render a horizontal percentile bar chart of the player's combine
+    workout measurables, vs. the all-time pool for `position`.
+
+    `position` is the display label (e.g., 'WR', 'RB', 'OL', 'LB', 'S').
+    `pool_positions`, if given, is the list of pos codes used to build
+    the all-time pool (e.g., ['OT','OG','C'] for OL, ['OLB','ILB'] for
+    LB). Defaults to [position].
+
+    Z-scores for lower-is-better metrics (40, 3-cone, shuttle) are flipped
+    so positive always means 'above the position mean'. Skips silently if
+    the player has no usable combine data.
+    """
+    import streamlit as st
+    import plotly.graph_objects as go
+    from scipy.stats import norm
+
+    workouts = _load_workouts_parquet(str(workouts_path))
+    if workouts.empty or not player_name:
+        return
+
+    parts = player_name.split()
+    if not parts:
+        return
+    last, first = parts[-1], parts[0]
+    matches = workouts[
+        workouts["player_name"].str.contains(last, na=False, case=False)
+        & workouts["player_name"].str.contains(first, na=False, case=False)
+    ]
+    if len(matches) == 0:
+        return
+    player_combine = matches.iloc[0]
+
+    pool_pos = tuple(pool_positions) if pool_positions else (position,)
+    means = _position_workout_means(str(workouts_path), pool_pos)
+    bars = []
+    for col, lbl in _COMBINE_LABELS.items():
+        v = player_combine.get(col)
+        if pd.isna(v):
+            continue
+        if col in _COMBINE_LOWER_BETTER and (v is None or v <= 0):
+            continue
+        if col not in means:
+            continue
+        mu, sigma, n = means[col]
+        if sigma == 0:
+            continue
+        z = (v - mu) / sigma
+        if col in _COMBINE_LOWER_BETTER:
+            z = -z
+        bars.append((lbl, z, v, mu, n, col))
+
+    if not bars:
+        return
+
+    st.markdown(f"**🏋️ Combine workout — vs. all-time {position} pool**")
+    fig = go.Figure()
+    # Numeric y so we can draw per-row dashed rectangles whose top/bottom
+    # line up with each bar — categorical y wouldn't allow numeric offsets.
+    y_idx = list(range(len(bars)))
+    labels, pcts, hover, colors, texts = [], [], [], [], []
+    for lbl, z, raw, mu, n, col in bars:
+        pct = float(norm.cdf(z) * 100)
+        labels.append(lbl)
+        pcts.append(pct)
+        raw_str = _COMBINE_RAW_FMT[col].format(raw)
+        mean_str = _COMBINE_RAW_FMT[col].format(mu)
+        hover.append(
+            f"<b>{lbl}</b><br>"
+            f"Player: {raw_str}<br>"
+            f"{position} mean: {mean_str} (n={n})<br>"
+            f"Percentile: {int(pct)}th"
+        )
+        # Bar end label: player's value, then the historical mean in parens.
+        texts.append(f"{raw_str} ({mean_str})")
+        colors.append(above_color if pct >= 50 else below_color)
+
+    fig.add_trace(go.Bar(
+        x=pcts, y=y_idx, orientation="h",
+        marker=dict(color=colors, line=dict(color="rgba(0,0,0,0.3)", width=0.5)),
+        text=texts, textposition="outside",
+        textfont=dict(size=11, color="#1a1a2e"),
+        hovertext=hover, hoverinfo="text",
+        cliponaxis=False,
+        showlegend=False,
+    ))
+
+    # Per-row dashed rectangle from x=0 to the historical mean (50th
+    # percentile by definition). Top/bottom match each bar's height
+    # (bargap=0.35 → bar half-height ≈ 0.325). Drawn AFTER the bar
+    # trace with a transparent fill, so the dashed border is always
+    # visible — even when the player's bar extends past the mean.
+    bar_half = 0.325
+    for i in y_idx:
+        fig.add_shape(
+            type="rect", xref="x", yref="y",
+            x0=0, x1=50,
+            y0=i - bar_half, y1=i + bar_half,
+            line=dict(color="#444", width=1.6, dash="dash"),
+            fillcolor="rgba(0,0,0,0)",
+            layer="above",
+        )
+
+    fig.update_layout(
+        xaxis=dict(title=f"Percentile vs. all-time {position}s →",
+                   zeroline=True, zerolinecolor="#bbb", zerolinewidth=1,
+                   gridcolor="#eee",
+                   range=[0, 130],
+                   tickvals=[0, 25, 50, 75, 100],
+                   ticktext=["0", "25th", "50th", "75th", "100th"]),
+        yaxis=dict(autorange="reversed",
+                   tickvals=y_idx, ticktext=labels),
+        height=260, margin=dict(l=10, r=60, t=10, b=40),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        bargap=0.35,
+    )
+    st.plotly_chart(fig, use_container_width=True, key=key)
+    st.caption(
+        f"_Bars show this player's percentile vs. the all-time {position} "
+        f"combine pool — longer = better (lower-is-better metrics like the "
+        f"40 are inverted). Dashed box = 0 → {position} historical average "
+        f"(the 50th percentile). Bar past the box = above average._"
+    )

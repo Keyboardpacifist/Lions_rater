@@ -1878,6 +1878,8 @@ else:
     # RENDER EACH POSITION GROUP
     # ══════════════════════════════════════════════════════
     from lib_shared import metric_picker as _metric_picker
+    from lib_shared import render_player_card as _render_player_card
+    from lib_shared import render_combine_chart as _render_combine_chart
 
     # All-positions mode: render every position's leaderboard/expanders.
     # Single-position mode: render only the picked position.
@@ -2375,44 +2377,78 @@ else:
             }
             _MEASURABLE_COLS = {"height", "weight", "class_year"}
 
-            _stat_tiles = []
-            for _col, _fmt, _lbl in _STAT_BAR_BY_POS.get(pos_name, []):
-                if _is_career_view and _col in _SUM_COLS:
-                    _v = (_career_full[_col].sum()
-                          if _col in _career_full.columns and _career_full[_col].notna().any()
-                          else None)
-                elif _is_career_view and _col in _MEASURABLE_COLS:
-                    _v = view_row.get(_col)  # measurables stay as mean (essentially constant)
-                else:
-                    _v = view_row.get(_col)
-                if _v is None or (isinstance(_v, float) and pd.isna(_v)):
-                    continue
-                try:
-                    _val_str = _fmt.format(_v)
-                except (ValueError, TypeError):
-                    continue
-                _stat_tiles.append((_lbl, _val_str))
+            # ── Trading-card visual (matches NFL pages) ──────────────
+            # Compute the score for the picked year/career view. composite_z
+            # is recomputed upstream when sliders change, so view_row already
+            # holds the right value.
+            _card_score = view_row.get("composite_z", row.get("composite_z", float("nan")))
+            # School names in the data are already Title Case ("Michigan",
+            # "Ohio State"); leave casing alone so it matches the colors
+            # JSON keys and doesn't break abbreviations like "USC".
+            _school_label = _team_str if _team_str else ""
+            # Sum-cols for the card's career view: only the cols we actually
+            # want summed in the tiles (counting stats). Measurables stay
+            # as mean.
+            _CARD_SUM_COLS = _SUM_COLS - _MEASURABLE_COLS
 
-            if _stat_tiles:
-                _ctx = (f"{_season_str} · {_team_str.upper()}"
-                        if _team_str else _season_str)
-                _tiles_html = "".join(
-                    f"<div style='background:rgba(255,255,255,0.13);border-radius:6px;"
-                    f"padding:5px 10px;text-align:center;min-width:62px;flex:0 0 auto;'>"
-                    f"<div style='font-size:0.65rem;color:#a8c5e0;text-transform:uppercase;"
-                    f"letter-spacing:0.4px;margin-bottom:1px;'>{lbl}</div>"
-                    f"<div style='font-size:1.0rem;font-weight:bold;color:#fff;line-height:1.1;'>{val}</div>"
-                    f"</div>"
-                    for lbl, val in _stat_tiles
+            # College team colors + logo lookup. Schools in the JSON get
+            # their actual primary color and an ESPN NCAA logo URL.
+            # Schools not in the file fall back to a unified navy gradient.
+            @st.cache_data
+            def _load_college_team_colors():
+                p = (Path(__file__).resolve().parent
+                     / "data" / "college_team_colors.json")
+                if not p.exists():
+                    return {}
+                import json as _json
+                return _json.loads(p.read_text())
+
+            _college_colors = _load_college_team_colors()
+            _school_info = _college_colors.get(_school_label, {})
+            _card_primary = _school_info.get("primary", "#0a3d62")
+            _card_secondary = _school_info.get("secondary", "#a8c5e0")
+            _card_logo = (
+                f"https://a.espncdn.com/i/teamlogos/ncaa/500/"
+                f"{_school_info['espn_id']}.png"
+                if _school_info.get("espn_id") else ""
+            )
+            _render_player_card(
+                player_name=name,
+                position_label=pos_name,
+                team_abbr=None,
+                season_str=_season_str,
+                score=_card_score,
+                stat_specs=_STAT_BAR_BY_POS.get(pos_name, []),
+                view_row=view_row,
+                player_career=_career_full,
+                is_career_view=_is_career_view,
+                sum_cols=_CARD_SUM_COLS,
+                team_label=_school_label,
+                primary_color=_card_primary,
+                secondary_color=_card_secondary,
+                logo_url=_card_logo,
+            )
+
+            # ── Combine workout chart vs. all-time pool for this position ─
+            _COLLEGE_POOL_POSITIONS = {
+                "QB": ["QB"], "RB": ["RB"], "WR": ["WR"], "TE": ["TE"],
+                "OL": ["OT", "OG", "G", "C", "OL"],
+                "DE": ["DE", "EDGE"], "DT": ["DT", "NT", "DL"],
+                "LB": ["LB", "OLB", "ILB"],
+                "CB": ["CB", "DB"], "S": ["S", "FS", "SS", "SAF"],
+            }
+            _pool = _COLLEGE_POOL_POSITIONS.get(pos_name)
+            if _pool:
+                _WORKOUTS_PATH = (
+                    Path(__file__).resolve().parent
+                    / "data" / "college" / "nfl_all_workouts.parquet"
                 )
-                st.markdown(
-                    f"<div style='background:linear-gradient(135deg,#0a3d62 0%,#1b5e8c 100%);"
-                    f"border-radius:10px;padding:10px 14px;margin:6px 0 12px 0;'>"
-                    f"<div style='color:#cfe2f3;font-size:0.72rem;margin-bottom:6px;"
-                    f"letter-spacing:0.5px;font-weight:600;'>📊 {_ctx}</div>"
-                    f"<div style='display:flex;flex-wrap:wrap;gap:4px;'>{_tiles_html}</div>"
-                    f"</div>",
-                    unsafe_allow_html=True,
+                _render_combine_chart(
+                    player_name=name,
+                    position=pos_name,
+                    pool_positions=_pool,
+                    workouts_path=_WORKOUTS_PATH,
+                    key=f"college_combine_{pos_name}_{name}",
                 )
 
             with st.container(border=True):
