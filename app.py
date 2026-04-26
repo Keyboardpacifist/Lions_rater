@@ -62,6 +62,16 @@ if mode == "NFL":
         internal_abbr,
     )
 
+    # Deferred page-switch from the player-search callback — fires
+    # BEFORE any landing-page widgets render so the navigation looks
+    # instant. Callbacks can't call st.switch_page directly.
+    _pending_switch = st.session_state.pop("_pending_nfl_page_switch", None)
+    if _pending_switch:
+        try:
+            st.switch_page(_pending_switch)
+        except Exception:
+            pass
+
     if "selected_team" not in st.session_state:
         st.session_state.selected_team = LEAGUE_WIDE_KEY
     if "selected_season" not in st.session_state:
@@ -142,6 +152,20 @@ if mode == "NFL":
         st.session_state.nfl_search_nonce = 0
     _nfl_search_key = f"nfl_player_search_{st.session_state.nfl_search_nonce}"
 
+    # Map NFL position → (page path, key prefix used by that page's
+    # master/detail marker). Searching a player navigates straight to
+    # their position page in detail-only view.
+    NFL_POS_TO_PAGE = {
+        "QB": ("pages/QB.py", "qb"),
+        "WR": ("pages/WR.py", "wr"),
+        "TE": ("pages/TE.py", "te"),
+        "RB": ("pages/2_Running_backs.py", "rb"),
+        "DE": ("pages/DE.py", "de"),
+        "DT": ("pages/DT.py", "dt"),
+        "LB": ("pages/LB.py", "lb"),
+        "Punter": ("pages/Punter.py", "p"),
+    }
+
     def _on_nfl_search_change():
         choice = st.session_state.get(_nfl_search_key)
         if not choice or choice not in nfl_search_options:
@@ -161,6 +185,16 @@ if mode == "NFL":
         st.session_state.nfl_search_target = sel_name
         # Bump nonce → next render uses a NEW key → widget shows blank.
         st.session_state.nfl_search_nonce += 1
+        # Stage a navigation to the player's position page in detail
+        # mode. Callbacks can't call st.switch_page directly — we set
+        # a flag and the script reads it at the top of the NFL section.
+        page_info = NFL_POS_TO_PAGE.get(sel_pos)
+        if page_info and sel_team and sel_season:
+            page_path, key_prefix = page_info
+            st.session_state["selected_team"] = sel_team
+            st.session_state["selected_season"] = int(sel_season)
+            st.session_state[f"{key_prefix}_selected_player_{sel_team}_{sel_season}"] = sel_name
+            st.session_state["_pending_nfl_page_switch"] = page_path
 
     col_search, col_team, col_season = st.columns([3, 2, 1])
     with col_search:
@@ -843,8 +877,24 @@ else:
         if sel_pos in COLLEGE_POSITIONS_FOR_TOP:
             st.session_state.college_position_top = sel_pos
         st.session_state.expand_college_player = sel_name
+        # Also drop the click-to-detail marker so the page renders the
+        # player's profile DIRECTLY — skip the "click to view" step.
+        if sel_pos in POSITION_FILES:
+            st.session_state[f"lb_selected_{sel_pos}"] = sel_name
         # Bump nonce → next render uses a NEW key → widget shows blank.
         st.session_state.college_search_nonce += 1
+        # Pre-set the filter-ctx so the auto-clear logic on the next
+        # render doesn't think the user manually changed school/season/
+        # position and wipe the marker we just set. Without this, the
+        # filter-ctx mismatch (old vs new selected_*) silently drops
+        # lb_selected_<pos> before detail-mode resolution reads it.
+        st.session_state["_college_filter_ctx"] = (
+            st.session_state.get("college_school_v2"),
+            st.session_state.get("college_conference"),
+            int(st.session_state["college_season_landing"])
+                if st.session_state.get("college_season_landing") else None,
+            st.session_state.get("college_position_top"),
+        )
 
     col_search_c, col_school, col_conf, col_season, col_position = st.columns([3, 2, 2, 1, 1])
     with col_search_c:
