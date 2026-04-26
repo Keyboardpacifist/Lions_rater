@@ -533,21 +533,94 @@ if mode == "NFL":
 
         if sort_col_iter in ldf.columns:
             ldf = ldf.sort_values(sort_col_iter, ascending=sort_asc_iter, na_position="last")
-        # All-positions: top 10 per group so the stacked page stays
-        # skimmable; single-position: top 25 for depth.
-        head_size = 10 if all_pos_mode else 25
-        ldf = ldf.head(head_size).reset_index(drop=True)
-        ldf.index = ldf.index + 1
 
-        display = pd.DataFrame({"#": ldf.index})
+        # Default cap (top 10), with a "See all" toggle to expand.
+        # All-positions mode keeps the cap fixed at 10 so the stacked
+        # page stays short.
+        _expand_key = f"nfl_landing_show_all_{pos_iter_name}_{selected_team}_{selected_season}"
+        _show_all = st.session_state.get(_expand_key, False) and not all_pos_mode
+        ldf_full_count = len(ldf)
+        _head_size = ldf_full_count if _show_all else 10
+        ldf = ldf.head(_head_size).reset_index(drop=True)
+
+        # Build display with default 0-based index so column assignment
+        # below aligns with ldf row-by-row. Rank goes in the "#" column,
+        # NOT the index (shifting the index caused the first row to be
+        # all NaN because display's default index didn't match the
+        # shifted ldf index).
+        display = pd.DataFrame({"#": [str(i + 1) for i in range(len(ldf))]})
         for label, col in cfg_iter["cols"]:
             if col in ldf.columns:
-                display[label] = ldf[col].apply(lambda v, c=col: _fmt(c, v))
-        st.dataframe(display, use_container_width=True, hide_index=True)
+                display[label] = ldf[col].apply(lambda v, c=col: _fmt(c, v)).values
+
+        # ── Click-to-detail row layout (Player name = clickable button)
+        # Replaces st.dataframe so clicking a name navigates straight
+        # to that player's position page in detail-only view.
+        _name_col_landing = "Player"  # display column header used by every cfg
+        _display_cols_l = list(display.columns)
+
+        def _wl(c):
+            if c == _name_col_landing: return 2.4
+            if c in ("#",): return 0.4
+            return 0.7
+
+        _weights_l = [_wl(c) for c in _display_cols_l]
+
+        # Header row
+        _hdrs_l = st.columns(_weights_l)
+        for _ih, _ch in enumerate(_display_cols_l):
+            _hdrs_l[_ih].markdown(f"**{_ch}**")
+
+        # Resolve the row's actual id columns (player + team) for
+        # navigation purposes. Display rows use formatted strings, but
+        # we need the underlying ldf row to grab the team and the raw
+        # player name.
+        _name_col_ldf = ("player_display_name" if "player_display_name" in ldf.columns
+                          else "player_name" if "player_name" in ldf.columns
+                          else "full_name" if "full_name" in ldf.columns else None)
+        for _ir, _row_data in display.iterrows():
+            _row_cols = st.columns(_weights_l)
+            for _j, _c in enumerate(_display_cols_l):
+                _val = _row_data[_c]
+                _val_str = "—" if _val is None or (isinstance(_val, float) and pd.isna(_val)) else str(_val)
+                if _c == _name_col_landing:
+                    if _row_cols[_j].button(
+                        _val_str,
+                        key=f"nfl_landing_btn_{pos_iter_name}_{selected_team}_{selected_season}_{_ir}_{_val_str}",
+                        type="tertiary",
+                        use_container_width=True,
+                    ):
+                        # Navigate to that player's position page in detail mode.
+                        page_info = NFL_POS_TO_PAGE.get(pos_iter_name)
+                        if page_info and _name_col_ldf:
+                            page_path, key_prefix = page_info
+                            ldf_row = ldf.iloc[_ir] if _ir < len(ldf) else ldf.iloc[0]
+                            actual_team = ldf_row.get("recent_team") or selected_team
+                            actual_season = int(selected_season)
+                            actual_name = ldf_row.get(_name_col_ldf) or _val_str
+                            st.session_state["selected_team"] = actual_team
+                            st.session_state["selected_season"] = actual_season
+                            st.session_state[f"{key_prefix}_selected_player_{actual_team}_{actual_season}"] = actual_name
+                            st.session_state["_pending_nfl_page_switch"] = page_path
+                            st.rerun()
+                else:
+                    _row_cols[_j].markdown(_val_str)
+
+        # "See all" expand button (single-position view only — all-pos
+        # stays capped to keep the stacked page manageable).
+        if not all_pos_mode and not _show_all and ldf_full_count > 10:
+            if st.button(
+                f"Show all {ldf_full_count} {cfg_iter['noun']} →",
+                key=f"nfl_landing_seeall_btn_{pos_iter_name}_{selected_team}_{selected_season}",
+                use_container_width=True,
+            ):
+                st.session_state[_expand_key] = True
+                st.rerun()
+
         if not all_pos_mode:
-            st.caption(f"Showing top {len(ldf)} {cfg_iter['noun']} sorted by **{sort_label_iter}**. Click into the position page from the sidebar for the full feature set.")
+            st.caption(f"Showing top {len(ldf)} {cfg_iter['noun']} sorted by **{sort_label_iter}**. **Click any player name** to view their full profile.")
         else:
-            st.caption(f"Sorted by default metric: **{sort_label_iter}**.")
+            st.caption(f"Sorted by default metric: **{sort_label_iter}**. Click any name to dive in.")
     st.divider()
     st.markdown("### Pick a position")
     st.markdown("**Offense:** QB · WR · TE · RB · OL\n\n**Defense:** DE · DT · LB · CB · S\n\n"
@@ -1996,13 +2069,23 @@ else:
                 display_rows.append(entry)
 
             # ── Click-to-detail leaderboard ────────────
+            # Capped to ~7 columns total (rank + Player + meta + Score
+            # + Pctl + 1 stat) so the table reads cleanly like the
+            # NFL landing page. The full per-stat detail lives in the
+            # player's profile card after click — no need to dump
+            # every metric here.
             _lb_sel_key = f"lb_selected_{pos_name}"
             if display_rows:
-                _PREFERRED = ["Player", "Pos", "Stars", "Elig", "Ht", "Wt", "40",
+                _PREFERRED = ["Player", "Pos", "Stars", "Elig",
                               score_label_text, "Pctl"]
                 _all_keys = set().union(*(d.keys() for d in display_rows))
                 visible_cols = [c for c in _PREFERRED if c in _all_keys]
-                visible_cols += [c for c in display_rows[0].keys() if c not in visible_cols and c in _all_keys]
+                # Append AT MOST 1 extra stat column to keep the row
+                # mobile-friendly while still showing position-relevant context.
+                _extras = [c for c in display_rows[0].keys()
+                            if c not in visible_cols and c in _all_keys
+                            and c not in ("Ht", "Wt", "40")]
+                visible_cols += _extras[:1]
 
                 def _w(c):
                     if c == "Player": return 2.4

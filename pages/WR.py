@@ -604,6 +604,55 @@ with c2:
                               benchmark=radar_bench, benchmark_raw=radar_bench_raw)
     if fig: st.plotly_chart(fig, use_container_width=True)
 
+    # ── Compare radar to another wide receiver ─────
+    # Same year selection drives both polygons. Comparison player is
+    # shown as a SECOND radar stacked directly below the original.
+    _radar_cmp_active = st.checkbox(
+        "🔍 Compare radar to another wide receiver",
+        key=f"wr_radar_cmp_{player.get('player_id', selected)}",
+        help="Stack a second player's radar polygon below this one, using the same year selection.",
+    )
+    if _radar_cmp_active:
+        _wr_pool = sorted(set(
+            str(n) for n in all_wrs_full["player_display_name"].dropna().unique()
+            if str(n).strip()
+        ))
+        _default_cmp_wr = next(
+            (p for p in _wr_pool if p != selected),
+            (_wr_pool[0] if _wr_pool else None),
+        )
+        if _default_cmp_wr:
+            _cmp_name_wr = st.selectbox(
+                "Comparison wide receiver",
+                options=_wr_pool,
+                index=_wr_pool.index(_default_cmp_wr),
+                key=f"wr_radar_cmp_select_{player.get('player_id', selected)}",
+            )
+            if _cmp_name_wr:
+                _cmp_career = all_wrs_full[all_wrs_full["player_display_name"] == _cmp_name_wr]
+                if len(_cmp_career) > 0:
+                    if year_choice == "All-career mean":
+                        _cmp_radar_row = _cmp_career.select_dtypes(include="number").mean()
+                        _cmp_year_label = f"All-career · {len(_cmp_career)} seasons"
+                    else:
+                        _cmp_yr = _cmp_career[_cmp_career["season_year"] == year_choice]
+                        if len(_cmp_yr) == 1:
+                            _cmp_radar_row = _cmp_yr.iloc[0]
+                        elif len(_cmp_yr) > 1:
+                            _cmp_radar_row = _cmp_yr.select_dtypes(include="number").mean()
+                        else:
+                            _cmp_radar_row = _cmp_career.iloc[0]
+                        _cmp_year_label = f"Season {int(year_choice)}" if not _cmp_yr.empty else "(closest available)"
+                    st.markdown(f"**Comparison: {_cmp_name_wr}** — {_cmp_year_label}")
+                    _cmp_fig = build_radar_figure(
+                        _cmp_radar_row, stat_labels, stat_methodology,
+                        benchmark=radar_bench, benchmark_raw=radar_bench_raw,
+                    )
+                    if _cmp_fig:
+                        st.plotly_chart(_cmp_fig, use_container_width=True)
+                else:
+                    st.caption(f"_No NFL data for {_cmp_name_wr}._")
+
 career_arc_section(
     player=player,
     league_parquet_path=DATA_PATH,
