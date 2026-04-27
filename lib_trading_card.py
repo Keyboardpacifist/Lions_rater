@@ -482,15 +482,23 @@ def render_card_download_button(*,
     safe_name = safe_name.replace(" ", "_") or "player"
     filename = f"{safe_name}_card.png"
 
-    st.download_button(
-        label="🃏  Download trading card",
-        data=png_bytes,
-        file_name=filename,
-        mime="image/png",
-        key=f"{key_prefix}_card_dl",
-        help="Square 4:5 trading-card export — sized for Twitter / "
-             "Reddit / Instagram. Built from your slider preset.",
-    )
+    # Inline preview — centered, ~360px wide so the 4:5 portrait
+    # card sits nicely beside the rest of the page without
+    # dominating it. Followed by the download button.
+    _spacer_l, _img_col, _spacer_r = st.columns([1, 2, 1])
+    with _img_col:
+        st.image(png_bytes, width=360,
+                  caption=f"{player_name} — {season_str}")
+        st.download_button(
+            label="🃏  Download trading card",
+            data=png_bytes,
+            file_name=filename,
+            mime="image/png",
+            key=f"{key_prefix}_card_dl",
+            help="4:5 trading-card export — sized for Twitter / "
+                 "Reddit / Instagram. Built from your slider preset.",
+            use_container_width=True,
+        )
 
 
 def build_player_card_png(*,
