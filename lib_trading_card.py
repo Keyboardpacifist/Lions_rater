@@ -504,20 +504,12 @@ def render_card_download_button(*,
     logo_url = theme.get("logo", "")
     b64 = base64.b64encode(png_bytes).decode("ascii")
 
-    left_wing = (
-        f'<img src="{logo_url}" alt="team logo" '
-        f'style="max-width: 78%; max-height: 55%; object-fit: contain; '
-        f'filter: drop-shadow(0 4px 10px rgba(0,0,0,0.35));"/>'
-        if logo_url else ""
-    )
-    right_wing = (
-        f'<div class="lr-jersey-num" style="font-family: -apple-system, '
-        f'BlinkMacSystemFont, \'Segoe UI\', sans-serif; '
-        f'font-size: clamp(56px, 7vw, 120px); font-weight: 900; '
-        f'color: rgba(255,255,255,0.92); line-height: 1; '
-        f'text-shadow: 0 4px 14px rgba(0,0,0,0.35); letter-spacing: -3px; '
-        f'white-space: nowrap;">'
-        f'#{jersey_number}</div>'
+    # Card centered inside the team-color gradient banner. Jersey number
+    # is overlaid on the card itself, positioned to align with the "6" of
+    # the score (~74% from card left) and just below the "percentile"
+    # text (~41% from card top). HTML-only — the share PNG stays clean.
+    jersey_overlay = (
+        f'<div class="lr-jersey-num">#{jersey_number}</div>'
         if jersey_number is not None else ""
     )
 
@@ -531,36 +523,16 @@ def render_card_download_button(*,
     box-shadow: 0 6px 18px rgba(0,0,0,0.18);
     padding: 28px 24px;
     display: flex;
-    align-items: stretch;
-    justify-content: center;
-    gap: 24px;
-}}
-.lr-card-wing {{
-    flex: 1 1 0;
-    display: flex;
     align-items: center;
     justify-content: center;
-    min-width: 0;
-}}
-.lr-card-wing-right {{
-    /* Number sits absolute-positioned to align with the
-       "percentile" text on the card (~37% from card top).
-       padding-right keeps it nudged toward the card. */
-    position: relative;
-    padding-right: 12%;
-}}
-.lr-jersey-num {{
-    position: absolute;
-    top: 32%;
-    left: 0;
-    right: 12%;
-    text-align: center;
 }}
 .lr-card-center {{
+    position: relative;
     flex: 0 0 auto;
+    max-width: 480px;
+    width: 100%;
 }}
 .lr-card-img {{
-    max-width: 480px;
     width: 100%;
     border-radius: 12px;
     box-shadow: 0 12px 32px rgba(0,0,0,0.45);
@@ -574,18 +546,29 @@ def render_card_download_button(*,
     text-align: center;
     margin-top: 10px;
 }}
-@media (max-width: 800px) {{
-    .lr-card-wing {{ display: none; }}
-    .lr-card-banner {{ padding: 24px 16px; }}
+.lr-jersey-num {{
+    position: absolute;
+    /* x: aligns with the "6" of the score on the card (~74% from left).
+       y: just under the "percentile" sublabel (~41% from top). */
+    left: 74%;
+    top: 41%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: clamp(22px, 4.4vw, 48px);
+    font-weight: 900;
+    color: rgba(255, 255, 255, 0.96);
+    line-height: 1;
+    letter-spacing: -1.5px;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+    white-space: nowrap;
+    pointer-events: none;
 }}
 </style>
 <div class="lr-card-banner">
-    <div class="lr-card-wing">{left_wing}</div>
     <div class="lr-card-center">
         <img src="data:image/png;base64,{b64}" class="lr-card-img" alt="{player_name} trading card"/>
+        {jersey_overlay}
         <div class="lr-card-caption">{player_name} — {season_str}</div>
     </div>
-    <div class="lr-card-wing lr-card-wing-right">{right_wing}</div>
 </div>
 """,
         unsafe_allow_html=True,
