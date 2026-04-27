@@ -12,7 +12,15 @@
     "qb_hits_per_game_z": 2,
     "forced_fumbles_per_game_z": 2,
     "passes_defended_per_game_z": 2,
-    "interceptions_per_game_z": 2
+    "interceptions_per_game_z": 2,
+    "pressures_per_game_z": 1,
+    "hurries_per_game_z": 2,
+    "qb_knockdowns_per_game_z": 2,
+    "missed_tackle_pct_z": 2,
+    "coverage_targets_per_game_z": 2,
+    "completion_pct_allowed_z": 2,
+    "yards_per_target_allowed_z": 2,
+    "passer_rating_allowed_z": 2
   },
   "stat_labels": {
     "tackles_per_game_z": "Tackles per game",
@@ -23,7 +31,15 @@
     "qb_hits_per_game_z": "QB hits per game",
     "forced_fumbles_per_game_z": "Forced fumbles per game",
     "passes_defended_per_game_z": "Passes defended per game",
-    "interceptions_per_game_z": "Interceptions per game"
+    "interceptions_per_game_z": "Interceptions per game",
+    "pressures_per_game_z": "Pressures per game",
+    "hurries_per_game_z": "Hurries per game",
+    "qb_knockdowns_per_game_z": "QB knockdowns per game",
+    "missed_tackle_pct_z": "Missed tackle % (lower is better)",
+    "coverage_targets_per_game_z": "Coverage targets per game",
+    "completion_pct_allowed_z": "Completion % allowed (lower is better)",
+    "yards_per_target_allowed_z": "Yards per target allowed (lower is better)",
+    "passer_rating_allowed_z": "Passer rating allowed (lower is better)"
   },
   "stat_methodology": {
     "tackles_per_game_z": {
@@ -70,7 +86,52 @@
       "what": "Interceptions per game.",
       "how": "From player_stats per stint.",
       "limits": "Rare event."
+    },
+    "pressures_per_game_z": {
+      "what": "Total pressures per game (sacks + hits + hurries).",
+      "how": "PFR pressures / games.",
+      "limits": "PFR's chart, not PFF's."
+    },
+    "hurries_per_game_z": {
+      "what": "Hurries per game (pressure short of sack/knockdown).",
+      "how": "PFR hurries / games.",
+      "limits": "Subset of pressures."
+    },
+    "qb_knockdowns_per_game_z": {
+      "what": "QB knockdowns per game.",
+      "how": "PFR qb_knockdowns / games.",
+      "limits": "Different from QB hits in nflverse player_stats."
+    },
+    "missed_tackle_pct_z": {
+      "what": "% of tackle attempts that were missed. Lower is better.",
+      "how": "PFR missed_tackle_pct, z-score inverted so positive = reliable tackler.",
+      "limits": "PFR charting subjectivity."
+    },
+    "coverage_targets_per_game_z": {
+      "what": "Times targeted in coverage per game.",
+      "how": "PFR def_targets / games. Higher = more action when in coverage.",
+      "limits": "Volume \u2014 could mean trusted matchup OR weak link picked on."
+    },
+    "completion_pct_allowed_z": {
+      "what": "% of targets completed against this LB. Lower is better.",
+      "how": "PFR cmp_percent allowed, z-score inverted.",
+      "limits": "Heavily tied to who the LB is matched on."
+    },
+    "yards_per_target_allowed_z": {
+      "what": "Yards allowed per target. Lower is better.",
+      "how": "PFR yds_tgt allowed, z-score inverted.",
+      "limits": "RB/TE matchups skew this for some LBs."
+    },
+    "passer_rating_allowed_z": {
+      "what": "QB rating when targeting this LB. Lower is better.",
+      "how": "PFR passer rating allowed, z-score inverted.",
+      "limits": "The classic CB/LB coverage stat."
     }
   },
-  "invert_stats": []
+  "invert_stats": [
+    "completion_pct_allowed",
+    "missed_tackle_pct",
+    "passer_rating_allowed",
+    "yards_per_target_allowed"
+  ]
 }

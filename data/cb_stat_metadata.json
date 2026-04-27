@@ -1,0 +1,62 @@
+{
+  "stat_tiers": {
+    "solo_tackle_rate_z": 2,
+    "tackles_per_snap_z": 2,
+    "tfl_per_game_z": 2,
+    "forced_fumbles_per_game_z": 2,
+    "passes_defended_per_game_z": 1,
+    "interceptions_per_game_z": 1,
+    "targets_per_game_z": 2,
+    "completion_pct_allowed_z": 1,
+    "yards_per_target_allowed_z": 1,
+    "passer_rating_allowed_z": 1,
+    "avg_depth_of_target_z": 3,
+    "missed_tackle_pct_z": 2
+  },
+  "stat_labels": {
+    "solo_tackle_rate_z": "Solo tackle rate",
+    "tackles_per_snap_z": "Tackles per snap",
+    "tfl_per_game_z": "TFLs per game",
+    "forced_fumbles_per_game_z": "Forced fumbles per game",
+    "passes_defended_per_game_z": "Passes defended per game",
+    "interceptions_per_game_z": "Interceptions per game",
+    "targets_per_game_z": "Targets per game (in coverage)",
+    "completion_pct_allowed_z": "Completion % allowed",
+    "yards_per_target_allowed_z": "Yards per target allowed",
+    "passer_rating_allowed_z": "Passer rating allowed",
+    "avg_depth_of_target_z": "Average depth of target (ADOT)",
+    "missed_tackle_pct_z": "Missed tackle %"
+  },
+  "stat_methodology": {
+    "passer_rating_allowed_z": {
+      "what": "QB rating when targeting this CB. The classic CB stat — captures completion %, yards, TDs, INTs in one number.",
+      "how": "PFR season-level passer rating allowed, z-scored across the league pool with sign inverted so positive = good (lower rating allowed).",
+      "limits": "Volume-dependent in small samples. PFR's chart, not PFF's — they sometimes diverge."
+    },
+    "completion_pct_allowed_z": {
+      "what": "% of passes completed when this CB was targeted. Lower is better.",
+      "how": "PFR cmp_percent allowed; z-score inverted so positive = better.",
+      "limits": "Doesn't account for play design or who else is on the field."
+    },
+    "yards_per_target_allowed_z": {
+      "what": "Yards allowed per target. Lower is better.",
+      "how": "PFR yds_tgt allowed; z-score inverted.",
+      "limits": "YAC after the catch is largely defender-team responsibility, not just this CB."
+    },
+    "targets_per_game_z": {
+      "what": "How often opponents threw at this CB.",
+      "how": "PFR targets / games.",
+      "limits": "High volume can mean 'weak link picked on' OR 'most-targeted side of the field' — context matters."
+    },
+    "avg_depth_of_target_z": {
+      "what": "Average depth of target on plays where this CB was the nearest defender.",
+      "how": "PFR dadot.",
+      "limits": "Depth = pre-snap matchup. Slot CBs see shorter targets than boundary CBs."
+    },
+    "missed_tackle_pct_z": {
+      "what": "% of tackle attempts that were missed. Lower is better.",
+      "how": "PFR missed_tackle_pct, z-score inverted so positive = reliable tackler.",
+      "limits": "PFR scoring; not always identical to PFF's."
+    }
+  }
+}

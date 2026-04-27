@@ -44,12 +44,23 @@ def compute_de_derived(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df["pressure_rate"] = np.nan
 
-    # Convenience raw column for the leaderboard
+    # Per-game versions of the previously-hidden PFR fields. These are
+    # the headline pass-rush quality stats — pressures (incl. hurries +
+    # knockdowns + sacks) and hurries are more honest than sacks alone.
+    df["pressures_per_game"] = df.get("pfr_pressures", 0) / safe("games_played")
+    df["hurries_per_game"] = df.get("pfr_hurries", 0) / safe("games_played")
+    df["qb_knockdowns_per_game"] = df.get("pfr_qb_knockdowns", 0) / safe("games_played")
+    # Missed tackle % is already a percentage 0-100 in PFR data — keep as-is.
+    df["missed_tackle_pct"] = df.get("pfr_missed_tackle_pct", np.nan)
+
+    # Convenience raw columns for the leaderboard
     df["pressures"] = df.get("pfr_pressures", np.nan)
     df["sacks"] = df.get("def_sacks", np.nan)
     df["qb_hits"] = df.get("def_qb_hits", np.nan)
     df["tfl"] = df.get("def_tackles_for_loss", np.nan)
     df["tackles"] = total_tackles
+    df["hurries"] = df.get("pfr_hurries", np.nan)
+    df["qb_knockdowns"] = df.get("pfr_qb_knockdowns", np.nan)
 
     return df
 
@@ -58,6 +69,10 @@ STATS_TO_ZSCORE = [
     "sacks_per_game",
     "qb_hits_per_game",
     "pressure_rate",
+    "pressures_per_game",
+    "hurries_per_game",
+    "qb_knockdowns_per_game",
+    "missed_tackle_pct",
     "tfl_per_game",
     "solo_tackle_rate",
     "tackles_per_snap",
@@ -93,6 +108,8 @@ OUTPUT_COLUMNS = [
     "tfl",
     "tackles",
     "pressures",
+    "hurries",
+    "qb_knockdowns",
     # Derived per-game / per-snap rates
     "sacks_per_game",
     "qb_hits_per_game",
@@ -106,6 +123,11 @@ OUTPUT_COLUMNS = [
     "pressure_rate",
     "pass_plays_exposure",
     "team_pass_plays_defended",
+    # New PFR-derived stats (Phase 2.5 defensive depth)
+    "pressures_per_game",
+    "hurries_per_game",
+    "qb_knockdowns_per_game",
+    "missed_tackle_pct",
     # PFR raw fields exposed for the leaderboard / detail
     "pfr_pressures",
     "pfr_hurries",
@@ -115,6 +137,10 @@ OUTPUT_COLUMNS = [
     "sacks_per_game_z",
     "qb_hits_per_game_z",
     "pressure_rate_z",
+    "pressures_per_game_z",
+    "hurries_per_game_z",
+    "qb_knockdowns_per_game_z",
+    "missed_tackle_pct_z",
     "tfl_per_game_z",
     "solo_tackle_rate_z",
     "tackles_per_snap_z",
@@ -127,6 +153,10 @@ STAT_TIERS = {
     "sacks_per_game_z": 1,
     "qb_hits_per_game_z": 2,
     "pressure_rate_z": 3,
+    "pressures_per_game_z": 1,
+    "hurries_per_game_z": 2,
+    "qb_knockdowns_per_game_z": 2,
+    "missed_tackle_pct_z": 2,
     "tfl_per_game_z": 1,
     "solo_tackle_rate_z": 2,
     "tackles_per_snap_z": 2,
@@ -139,6 +169,10 @@ STAT_LABELS = {
     "sacks_per_game_z": "Sacks per game",
     "qb_hits_per_game_z": "QB hits per game",
     "pressure_rate_z": "Pressure rate",
+    "pressures_per_game_z": "Pressures per game",
+    "hurries_per_game_z": "Hurries per game",
+    "qb_knockdowns_per_game_z": "QB knockdowns per game",
+    "missed_tackle_pct_z": "Missed tackle % (lower is better)",
     "tfl_per_game_z": "Tackles for loss per game",
     "solo_tackle_rate_z": "Solo tackle rate",
     "tackles_per_snap_z": "Tackles per snap",
@@ -193,6 +227,26 @@ STAT_METHODOLOGY = {
         "how": "From player_stats. Per-stint count / games.",
         "limits": "Even rarer than forced fumbles for edge players.",
     },
+    "pressures_per_game_z": {
+        "what": "Total pressures per game (sacks + hits + hurries).",
+        "how": "PFR pressures / games_played.",
+        "limits": "PFR's chart, not PFF's. Methods differ slightly between sources.",
+    },
+    "hurries_per_game_z": {
+        "what": "Hurries per game (pressure that didn't sack or knock down).",
+        "how": "PFR hurries / games_played.",
+        "limits": "Subset of total pressures. Sometimes overlaps with hits.",
+    },
+    "qb_knockdowns_per_game_z": {
+        "what": "QB knockdowns per game (got the QB to the ground without a sack).",
+        "how": "PFR qb_knockdowns / games_played.",
+        "limits": "Different from QB hits in nflverse player_stats.",
+    },
+    "missed_tackle_pct_z": {
+        "what": "% of tackle attempts that were missed. Lower is better — z-score is INVERTED so higher z = more reliable tackler.",
+        "how": "PFR missed_tackle_pct, then z-scored with sign flipped so positive = good.",
+        "limits": "PFR's charting subjectivity; not always the same as PFF's missed tackle count.",
+    },
 }
 
 
@@ -237,7 +291,7 @@ DE_CONFIG = PositionConfig(
     },
     compute_derived=compute_de_derived,
     stats_to_zscore=STATS_TO_ZSCORE,
-    invert_stats=set(),
+    invert_stats={"missed_tackle_pct"},  # lower is better
     zscore_groups=None,
     output_columns=OUTPUT_COLUMNS,
     stat_tiers=STAT_TIERS,
