@@ -449,9 +449,8 @@ def render_coverage_matchup_section(*, player_name: str, season,
                                      is_career_view: bool = False) -> None:
     """Public entry point — renders the coverage matchup panel as an
     exposed top-level section on a player page (not inside an
-    expander). Filters the targeted-play feed to this player and
-    season(s); silently no-ops if data is missing or sample is too
-    small.
+    expander). The panel has its own season/career dropdown so a user
+    can override the page-level pick without leaving the section.
     """
     if not _data_ready():
         return
@@ -463,58 +462,105 @@ def render_coverage_matchup_section(*, player_name: str, season,
     if adj is None or tp is None:
         return
 
+    # Resolve the player_id from the offensive adjusted parquet
     base_mask = ((adj["player_display_name"] == player_name)
                  & (adj["position_group"] == position_group))
-    relevant = adj[base_mask]
-    if not is_career_view:
-        relevant = relevant[relevant["season"] == season]
-    if relevant.empty:
+    full_career = adj[base_mask]
+    if full_career.empty:
         return
-
-    pid_series = relevant["player_id"].dropna()
+    pid_series = full_career["player_id"].dropna()
     if pid_series.empty:
         return
     pid = pid_series.iloc[0]
 
-    pf = tp[tp["player_id"] == pid].copy()
-    pf["season"] = pf["season"].astype(int)
-    pf["week"] = pf["week"].astype(int)
-    if not is_career_view:
-        pf = pf[pf["season"] == int(season)]
-    if len(pf) < 5:
-        return  # too few targets — coverage profile would be noise
+    # Pull this player's full targeted-play history once — the panel's
+    # dropdown filters it down without re-loading.
+    pf_all = tp[tp["player_id"] == pid].copy()
+    if pf_all.empty:
+        return
+    pf_all["season"] = pf_all["season"].astype(int)
+    pf_all["week"] = pf_all["week"].astype(int)
 
-    _render_coverage_matchup_panel(pf, key_prefix, wrap_in_expander=False)
+    # Render the header FIRST, so the dropdown appears below the
+    # section title (cleaner UX than dropdown-above-heading).
+    _coverage_matchup_header()
+
+    seasons_present = sorted(pf_all["season"].unique().tolist(), reverse=True)
+    default_label = ("All career" if is_career_view
+                     else f"Season {int(season)}"
+                          if season in seasons_present
+                          else f"Season {seasons_present[0]}")
+    options = [f"Season {s}" for s in seasons_present] + ["All career"]
+
+    pf = _render_panel_view_picker(
+        options, default_label, key=f"{key_prefix}_view_pick", pf_all=pf_all
+    )
+    if pf is None or len(pf) < 5:
+        return  # too few targets — would be noise
+
+    _render_coverage_matchup_panel(pf, key_prefix, wrap_in_expander=False,
+                                     render_header=False)
+
+
+def _render_panel_view_picker(options, default_label, *, key, pf_all):
+    """Render the in-panel 'Season N / All career' dropdown and return
+    the filtered DataFrame to use. Lives outside the panel rendering
+    so both reception + rushing panels share it."""
+    try:
+        idx = options.index(default_label)
+    except ValueError:
+        idx = 0
+    pick = st.selectbox("View", options, index=idx, key=key,
+                         help="Switch this panel between a single season "
+                              "and the player's full career — independent "
+                              "of the page-level year picker above.")
+    if pick == "All career":
+        return pf_all
+    try:
+        season_int = int(pick.replace("Season ", ""))
+    except ValueError:
+        return pf_all
+    return pf_all[pf_all["season"] == season_int]
+
+
+def _coverage_matchup_header():
+    """Section header markdown — pulled out so the public section
+    can show it BEFORE the in-panel season/career dropdown."""
+    st.markdown(
+        "<div style='margin:18px 0 6px 0;padding-left:12px;"
+        "border-left:5px solid #0076B6;'>"
+        "<div style='font-size:1.25rem;font-weight:800;color:#0a3d62;"
+        "letter-spacing:0.3px;'>🎯 Coverage matchup profile</div>"
+        "<div style='font-size:0.78rem;color:#5b6b7e;margin-top:2px;'>"
+        "Targeted plays only · 2018+ has full coverage labeling · "
+        "non-targeted routes aren't tracked publicly (PFF territory)."
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_coverage_matchup_panel(pf: pd.DataFrame, key_prefix: str,
-                                     wrap_in_expander: bool = True) -> None:
+                                     wrap_in_expander: bool = True,
+                                     render_header: bool = True) -> None:
     """Coverage matchup panel — how this receiver fares vs different
     coverage looks. Two side-by-side views:
       • Route × man/zone target counts (grouped horizontal bars)
       • Performance per coverage shell (table)
 
     If `wrap_in_expander=False`, renders exposed without a collapsible
-    wrapper (so it can be used as a top-level page section).
+    wrapper (so it can be used as a top-level page section). Set
+    `render_header=False` if the caller already drew the section
+    header (lets the public section render dropdowns between header
+    and content).
     """
     import plotly.graph_objects as go
 
     if wrap_in_expander:
         container = st.expander("🎯 Coverage matchup profile", expanded=False)
     else:
-        # Styled section header — colored accent + clean caption row.
-        st.markdown(
-            "<div style='margin:18px 0 6px 0;padding-left:12px;"
-            "border-left:5px solid #0076B6;'>"
-            "<div style='font-size:1.25rem;font-weight:800;color:#0a3d62;"
-            "letter-spacing:0.3px;'>🎯 Coverage matchup profile</div>"
-            "<div style='font-size:0.78rem;color:#5b6b7e;margin-top:2px;'>"
-            "Targeted plays only · 2018+ has full coverage labeling · "
-            "non-targeted routes aren't tracked publicly (PFF territory)."
-            "</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
+        if render_header:
+            _coverage_matchup_header()
         container = st.container()
     with container:
         n = len(pf)
@@ -677,14 +723,8 @@ def _render_coverage_matchup_panel(pf: pd.DataFrame, key_prefix: str,
 def render_run_scheme_section(*, player_name: str, season,
                                 key_prefix: str,
                                 is_career_view: bool = False) -> None:
-    """Run scheme profile for an RB — parallel to the coverage matchup
-    panel. Renders exposed (no expander wrapper).
-
-    Visualizes:
-      • Gap distribution (where his runs go: L/M/R × G/T/E)
-      • Performance vs box count (light / neutral / stacked)
-      • Performance by formation (shotgun / under center / I / pistol)
-    """
+    """Run scheme profile for an RB. Has its own season/career
+    dropdown so a user can override the page-level pick."""
     if not _data_ready():
         return
     adj = _load_adjusted()
@@ -694,26 +734,38 @@ def render_run_scheme_section(*, player_name: str, season,
 
     base_mask = ((adj["player_display_name"] == player_name)
                  & (adj["position_group"] == "RB"))
-    relevant = adj[base_mask]
-    if not is_career_view:
-        relevant = relevant[relevant["season"] == season]
-    if relevant.empty:
+    full_career = adj[base_mask]
+    if full_career.empty:
         return
-
-    pid_series = relevant["player_id"].dropna()
+    pid_series = full_career["player_id"].dropna()
     if pid_series.empty:
         return
     pid = pid_series.iloc[0]
 
-    pf = rp[rp["player_id"] == pid].copy()
-    pf["season"] = pf["season"].astype(int)
-    pf["week"] = pf["week"].astype(int)
-    if not is_career_view:
-        pf = pf[pf["season"] == int(season)]
-    if len(pf) < 5:
+    pf_all = rp[rp["player_id"] == pid].copy()
+    if pf_all.empty:
+        return
+    pf_all["season"] = pf_all["season"].astype(int)
+    pf_all["week"] = pf_all["week"].astype(int)
+
+    # Render the header BEFORE the dropdown so the dropdown sits
+    # under the section title.
+    _run_scheme_header()
+
+    seasons_present = sorted(pf_all["season"].unique().tolist(), reverse=True)
+    default_label = ("All career" if is_career_view
+                     else f"Season {int(season)}"
+                          if season in seasons_present
+                          else f"Season {seasons_present[0]}")
+    options = [f"Season {s}" for s in seasons_present] + ["All career"]
+
+    pf = _render_panel_view_picker(
+        options, default_label, key=f"{key_prefix}_view_pick", pf_all=pf_all
+    )
+    if pf is None or len(pf) < 5:
         return
 
-    _render_run_scheme_panel(pf, key_prefix)
+    _render_run_scheme_panel(pf, key_prefix, render_header=False)
 
 
 def _bucket_box(v):
@@ -726,12 +778,9 @@ def _bucket_box(v):
     return "Stacked (8+)"
 
 
-def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str) -> None:
-    """The actual run scheme rendering — three views in the same
-    visual language as the coverage matchup panel."""
-    import plotly.graph_objects as go
-
-    # Section header — same accent style as coverage matchup
+def _run_scheme_header():
+    """Section header — pulled out so the public section can render
+    the in-panel season/career dropdown between header and body."""
     st.markdown(
         "<div style='margin:18px 0 6px 0;padding-left:12px;"
         "border-left:5px solid #0076B6;'>"
@@ -745,6 +794,16 @@ def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str) -> None:
         "</div>",
         unsafe_allow_html=True,
     )
+
+
+def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str,
+                              render_header: bool = True) -> None:
+    """The actual run scheme rendering — three views in the same
+    visual language as the coverage matchup panel."""
+    import plotly.graph_objects as go
+
+    if render_header:
+        _run_scheme_header()
 
     n_carries = len(pf)
     total_yards = float(pf["yards_gained"].fillna(0).sum())
