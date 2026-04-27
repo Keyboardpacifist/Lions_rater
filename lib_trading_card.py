@@ -529,7 +529,7 @@ def render_card_download_button(*,
 .lr-card-center {{
     position: relative;
     flex: 0 0 auto;
-    max-width: 480px;
+    max-width: 720px;
     width: 100%;
 }}
 .lr-card-img {{
