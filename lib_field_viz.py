@@ -603,6 +603,276 @@ def build_rb_narrative(player_carries: pd.DataFrame,
     return " ".join(sentences)
 
 
+def build_wr_narrative(player_targets: pd.DataFrame,
+                        full_targeted_plays: pd.DataFrame | None = None,
+                        peer_pools: dict | None = None,
+                        min_player_targets_per_route: int = 8,
+                        min_peer_targets_per_route: int = 30) -> str | None:
+    """Generate 2-3 sentences describing the receiver's route-tree
+    profile.
+
+    Pattern:
+        "Signature: the SLANT — 8th of 92 receivers (30+ targets) at
+         +0.45 EPA per target on 50 attempts. Weakness: the GO route —
+         -0.30 EPA, only catches 22% of deep targets."
+
+    Returns None when the player has too little data (< 30 career
+    targets or < 2 routes with sample).
+    """
+    if player_targets is None or player_targets.empty:
+        return None
+    if len(player_targets) < 30:
+        return None
+    if "route" not in player_targets.columns:
+        return None
+
+    # Player's per-route aggregate
+    pool = player_targets[player_targets["route"].notna()
+                           & (player_targets["route"] != "")]
+    if pool.empty:
+        return None
+
+    td_col = "pass_touchdown" if "pass_touchdown" in pool.columns else "touchdown"
+
+    agg = (pool.groupby("route")
+                .agg(targets=("epa", "size"),
+                      epa=("epa", "mean"),
+                      yards=("yards_gained", "sum"),
+                      catches=("complete_pass",
+                                lambda s: int(s.fillna(0).sum())),
+                      tds=(td_col,
+                            lambda s: int(s.fillna(0).sum())))
+                .reset_index())
+    agg["catch_rate"] = agg["catches"] / agg["targets"]
+    agg["ypt"] = agg["yards"] / agg["targets"]
+
+    qualifying = agg[agg["targets"] >= min_player_targets_per_route]
+    if len(qualifying) < 2:
+        return None
+
+    # Peer pools: per-route, all targeted players with ≥ min targets.
+    if peer_pools is None:
+        if full_targeted_plays is None:
+            return None
+        peer_pools = _build_route_peer_pools(
+            full_targeted_plays, min_targets=min_peer_targets_per_route
+        )
+
+    sig = qualifying.loc[qualifying["epa"].idxmax()]
+    weak = qualifying.loc[qualifying["epa"].idxmin()]
+
+    from lib_shared import compute_rank_in_pool
+
+    sig_rank, sig_total = (None, 0)
+    if sig["route"] in peer_pools:
+        sig_rank, sig_total = compute_rank_in_pool(
+            sig["epa"], peer_pools[sig["route"]]["epa"], ascending=False
+        )
+
+    weak_rank, weak_total = (None, 0)
+    if weak["route"] in peer_pools:
+        weak_rank, weak_total = compute_rank_in_pool(
+            weak["epa"], peer_pools[weak["route"]]["epa"], ascending=False
+        )
+
+    # Format
+    sig_label = _route_label(sig["route"])
+    weak_label = _route_label(weak["route"])
+
+    sentences = []
+    sig_epa_str = f"{sig['epa']:+.2f}"
+    if sig_rank and sig_total:
+        sentences.append(
+            f"**Signature route: the {sig_label}** — "
+            f"{sig_rank} of {sig_total} receivers (30+ targets) at "
+            f"{sig_epa_str} EPA per target on {int(sig['targets'])} attempts."
+        )
+    else:
+        sentences.append(
+            f"**Signature route: the {sig_label}** — "
+            f"{sig_epa_str} EPA per target on {int(sig['targets'])} attempts."
+        )
+
+    if sig["route"] != weak["route"]:
+        weak_epa_str = f"{weak['epa']:+.2f}"
+        if weak["epa"] < 0 or (weak_rank and weak_total
+                                and weak_rank > weak_total * 0.6):
+            catch_pct = f"{weak['catch_rate']*100:.0f}%"
+            if weak_rank and weak_total:
+                sentences.append(
+                    f"**Weakness: the {weak_label}** — "
+                    f"{weak_epa_str} EPA, {catch_pct} catch rate, "
+                    f"{weak_rank} of {weak_total} on this route."
+                )
+            else:
+                sentences.append(
+                    f"**Weakness: the {weak_label}** — "
+                    f"{weak_epa_str} EPA, {catch_pct} catch rate."
+                )
+        else:
+            sentences.append(
+                f"Productive across the route tree — even his "
+                f"least-effective route ({weak_label}) is at "
+                f"{weak_epa_str} EPA per target."
+            )
+
+    return " ".join(sentences)
+
+
+def build_position_narrative(player_row, peer_pool: pd.DataFrame,
+                               stat_labels: dict[str, str],
+                               position_label: str,
+                               max_stats_to_consider: int = 12) -> str | None:
+    """Generic 'signature stat + weakness stat' narrative engine for
+    positions that don't have a custom panel (defense / OL / QB / K / P).
+
+    Picks the player's highest-z-score stat as their signature and
+    lowest-z-score stat as their weakness, then ranks them against
+    the position pool by z-score (which is monotonic with raw stat,
+    and accounts for pipeline-level inversions on "lower is better"
+    metrics like penalty rate).
+
+    Args:
+        player_row: a pandas Series indexed by column name (one
+            row from the position's league parquet).
+        peer_pool: full DataFrame for the position (the league
+            parquet, all rows).
+        stat_labels: mapping from z-column name → human label,
+            from {position}_stat_metadata.json.
+        position_label: short string for the rank context, e.g.
+            "EDGE rushers" or "interior linemen" or "linebackers".
+        max_stats_to_consider: cap on how many z-cols to weigh —
+            defends against late-tier inferred stats from skewing
+            the signature pick.
+
+    Returns formatted text or None if data insufficient.
+    """
+    if player_row is None:
+        return None
+
+    # Player's z-score columns
+    z_cols = {c: player_row[c] for c in player_row.index
+                if c.endswith("_z")
+                and c in peer_pool.columns
+                and pd.notna(player_row[c])}
+    if len(z_cols) < 2:
+        return None
+
+    # Cap on stats considered (already-sorted-by-importance order
+    # would be ideal, but z-cols dict order from the parquet is
+    # close enough — just clamp to the first N).
+    z_cols_list = list(z_cols.items())[:max_stats_to_consider]
+    z_dict = dict(z_cols_list)
+
+    sig_col = max(z_dict, key=z_dict.get)
+    weak_col = min(z_dict, key=z_dict.get)
+    if sig_col == weak_col:
+        return None
+
+    from lib_shared import compute_rank_in_pool, format_rank
+
+    sig_rank, sig_total = compute_rank_in_pool(
+        player_row[sig_col], peer_pool[sig_col].dropna(), ascending=False
+    )
+    weak_rank, weak_total = compute_rank_in_pool(
+        player_row[weak_col], peer_pool[weak_col].dropna(), ascending=False
+    )
+
+    sig_label = stat_labels.get(sig_col, sig_col.replace("_z", "").replace("_", " "))
+    weak_label = stat_labels.get(weak_col, weak_col.replace("_z", "").replace("_", " "))
+
+    sig_z = float(player_row[sig_col])
+    weak_z = float(player_row[weak_col])
+
+    sentences = []
+    sig_rank_str = format_rank(sig_rank, sig_total)
+    if sig_rank_str != "—":
+        # If the player's "best" stat is still below average, frame
+        # the narrative honestly instead of pretending it's a strength.
+        if sig_z >= 0:
+            sentences.append(
+                f"**Signature: {sig_label}** — {sig_rank_str} {position_label}."
+            )
+        else:
+            sentences.append(
+                f"Best area: {sig_label} — {sig_rank_str} {position_label}, "
+                f"but still below the position average."
+            )
+
+    weak_rank_str = format_rank(weak_rank, weak_total)
+    if weak_rank_str != "—":
+        if weak_z >= 0 and weak_rank is not None and weak_total > 0 and weak_rank <= weak_total // 2:
+            sentences.append(
+                f"Weakest area still above-average: **{weak_label}** "
+                f"({weak_rank_str})."
+            )
+        else:
+            sentences.append(
+                f"**Weakness: {weak_label}** — {weak_rank_str}."
+            )
+
+    return " ".join(sentences) if sentences else None
+
+
+def _route_label(route_code: str) -> str:
+    """Render route names as Title-Cased prose for the narrative."""
+    if not route_code:
+        return route_code
+    if route_code.upper() == "GO":
+        return "GO route"
+    if route_code.upper() == "SLANT":
+        return "slant"
+    if route_code.upper() == "POST":
+        return "post"
+    if route_code.upper() == "CORNER":
+        return "corner"
+    if route_code.upper() == "HITCH":
+        return "hitch"
+    if route_code.upper() in ("IN", "IN/DIG"):
+        return route_code.lower().replace("_", " ")
+    if route_code.upper() == "OUT":
+        return "out"
+    if route_code.upper() == "DEEP OUT":
+        return "deep out"
+    if route_code.upper() == "QUICK OUT":
+        return "quick out"
+    if route_code.upper() == "WHEEL":
+        return "wheel"
+    if route_code.upper() == "FLAT":
+        return "flat"
+    if route_code.upper() == "SCREEN":
+        return "screen"
+    if route_code.upper() == "ANGLE":
+        return "angle"
+    if route_code.upper() == "TEXAS/ANGLE":
+        return "Texas/angle"
+    if "CROSS" in route_code.upper():
+        return route_code.lower()
+    return route_code.lower()
+
+
+def _build_route_peer_pools(targeted_plays: pd.DataFrame,
+                             min_targets: int = 30) -> dict[str, pd.DataFrame]:
+    """For each route, return a per-player aggregate of receivers
+    with ≥ min_targets on that route. Used to rank a player's
+    per-route EPA against peers."""
+    if targeted_plays is None or targeted_plays.empty:
+        return {}
+    df = targeted_plays[targeted_plays["route"].notna()
+                          & (targeted_plays["route"] != "")]
+    if df.empty:
+        return {}
+    pools: dict[str, pd.DataFrame] = {}
+    for route, sub in df.groupby("route"):
+        per_player = (sub.groupby("player_id")
+                          .agg(targets=("epa", "size"),
+                                epa=("epa", "mean"))
+                          .reset_index())
+        qualified = per_player[per_player["targets"] >= min_targets]
+        pools[str(route)] = qualified
+    return pools
+
+
 # Long-form prose names for each gap, used in narrative sentences.
 _GAP_PROSE = {
     "A":   "A-gap (up the middle)",

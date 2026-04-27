@@ -516,6 +516,18 @@ def render_coverage_matchup_section(*, player_name: str, season,
     pf_all["season"] = pf_all["season"].astype(int)
     pf_all["week"] = pf_all["week"].astype(int)
 
+    # Resolve the player's most recent team for theme accenting on
+    # the narrative blurb. Uses the latest season's most-frequent team.
+    team_abbr = None
+    if "team" in full_career.columns:
+        latest_season = full_career["season"].max()
+        latest_rows = full_career[full_career["season"] == latest_season]
+        team_counts = latest_rows["team"].dropna().value_counts()
+        if not team_counts.empty:
+            team_abbr = str(team_counts.index[0])
+    from lib_shared import team_theme
+    theme = team_theme(team_abbr)
+
     # Render the header FIRST, so the dropdown appears below the
     # section title (cleaner UX than dropdown-above-heading).
     _coverage_matchup_header()
@@ -534,7 +546,7 @@ def render_coverage_matchup_section(*, player_name: str, season,
         return  # too few targets — would be noise
 
     _render_coverage_matchup_panel(pf, key_prefix, wrap_in_expander=False,
-                                     render_header=False)
+                                     render_header=False, theme=theme)
 
 
 def _render_panel_view_picker(options, default_label, *, key, pf_all):
@@ -647,7 +659,8 @@ def _apply_route_filters(pf: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
 
 def _render_coverage_matchup_panel(pf: pd.DataFrame, key_prefix: str,
                                      wrap_in_expander: bool = True,
-                                     render_header: bool = True) -> None:
+                                     render_header: bool = True,
+                                     theme: dict | None = None) -> None:
     """Coverage matchup panel — how this receiver fares vs different
     coverage looks. Two side-by-side views:
       • Route × man/zone target counts (grouped horizontal bars)
@@ -668,6 +681,27 @@ def _render_coverage_matchup_panel(pf: pd.DataFrame, key_prefix: str,
             _coverage_matchup_header()
         container = st.container()
     with container:
+        # Capture the unfiltered career data BEFORE filters narrow pf.
+        # The narrative blurb + career-volume rank reflect the player's
+        # whole story regardless of what the user filters below.
+        pf_unfiltered = pf.copy()
+        career_targets = len(pf_unfiltered)
+        career_rank_label = ""
+        if "player_id" in pf_unfiltered.columns and not pf_unfiltered.empty:
+            pid_series = pf_unfiltered["player_id"].dropna()
+            if not pid_series.empty:
+                volume_pool = _load_wr_volume_pool()
+                if volume_pool is not None and not volume_pool.empty:
+                    from lib_shared import compute_rank_in_pool, format_rank
+                    rank, total = compute_rank_in_pool(
+                        career_targets, volume_pool["career_targets"],
+                        ascending=False
+                    )
+                    career_rank_label = format_rank(rank, total)
+
+        # Render the narrative blurb (theme-accented).
+        _render_wr_narrative_blurb(pf_unfiltered, theme=theme)
+
         # Top-row filter pills (Coverage / Man-Zone / Defense / Blitz / Down)
         pf = _apply_route_filters(pf, key_prefix)
 
@@ -683,10 +717,12 @@ def _render_coverage_matchup_panel(pf: pd.DataFrame, key_prefix: str,
         # ── Top: 3 stat tiles (Targets / Man / Zone) ──
         man_pct = (n_man / n_labeled * 100) if n_labeled else 0
         zone_pct = (n_zone / n_labeled * 100) if n_labeled else 0
+        targets_sub = f"{n_labeled} with coverage labeled"
+        if career_rank_label and career_rank_label != "—":
+            targets_sub += f" · career: {career_rank_label}"
         t1, t2, t3 = st.columns(3)
         for col, label, big, sub, accent in [
-            (t1, "Targets", f"{n}", f"{n_labeled} with coverage labeled",
-             "#0076B6"),
+            (t1, "Targets", f"{n}", targets_sub, "#0076B6"),
             (t2, "Vs Man", f"{n_man}", f"{man_pct:.0f}% of labeled targets",
              "#d62728"),
             (t3, "Vs Zone", f"{n_zone}", f"{zone_pct:.0f}% of labeled targets",
@@ -847,6 +883,57 @@ def _load_rb_peer_pools():
 
 
 @st.cache_data
+def _load_wr_route_peer_pools(min_targets: int = 30):
+    """League-wide per-route peer pools — receivers with ≥ min_targets
+    on each route, used to rank a receiver's route-level EPA."""
+    tp = _load_targeted_plays()
+    if tp is None:
+        return {}
+    from lib_field_viz import _build_route_peer_pools
+    return _build_route_peer_pools(tp, min_targets=min_targets)
+
+
+@st.cache_data
+def _load_wr_volume_pool(min_targets: int = 50):
+    """Per-receiver career target totals across the targeted_plays
+    parquet, filtered to players with ≥ min_targets total. Used for
+    the volume rank tag on the Targets stat tile."""
+    tp = _load_targeted_plays()
+    if tp is None:
+        return None
+    totals = (tp.groupby("player_id")
+                 .size()
+                 .reset_index(name="career_targets"))
+    return totals[totals["career_targets"] >= min_targets]
+
+
+def _render_wr_narrative_blurb(pf_unfiltered: pd.DataFrame,
+                                  theme: dict | None) -> None:
+    """Render the auto-generated 'signature route + weakness' blurb
+    above the WR coverage panel's filter row. Theme primary color
+    drives the accent border."""
+    if pf_unfiltered is None or pf_unfiltered.empty:
+        return
+    from lib_field_viz import build_wr_narrative
+    peer_pools = _load_wr_route_peer_pools()
+    narrative = build_wr_narrative(pf_unfiltered, peer_pools=peer_pools)
+    if not narrative:
+        return
+    accent = (theme or {}).get("primary", "#0076B6")
+    st.markdown(
+        f"<div style='background:#fff;border:1px solid #e6e9ee;"
+        f"border-left:4px solid {accent};border-radius:6px;"
+        f"padding:12px 16px;margin:8px 0 14px 0;'>"
+        f"<div style='font-size:0.62rem;color:#5b6b7e;letter-spacing:1.4px;"
+        f"text-transform:uppercase;font-weight:700;margin-bottom:5px;'>"
+        f"📖 Story</div>"
+        f"<div style='font-size:0.95rem;color:#2a3a4d;line-height:1.5;'>"
+        f"{narrative}</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+@st.cache_data
 def _load_rb_volume_pool(min_carries: int = 100):
     """Per-player career carry totals across the rusher_plays parquet,
     filtered to RBs with at least `min_carries` total. Used to rank
@@ -859,6 +946,109 @@ def _load_rb_volume_pool(min_carries: int = 100):
                 .reset_index(name="career_carries"))
     totals = totals[totals["career_carries"] >= min_carries]
     return totals
+
+
+# Mapping: position_group → (league parquet filename, metadata
+# filename, label for narrative). Used to drive the generic
+# narrative engine for positions without a dedicated panel.
+_POSITION_NARRATIVE_CONFIG = {
+    "QB":  ("league_qb_all_seasons.parquet",     "qb_stat_metadata.json",     "starting QBs"),
+    "DE":  ("league_de_all_seasons.parquet",     "de_stat_metadata.json",     "EDGE rushers"),
+    "DT":  ("league_dt_all_seasons.parquet",     "dt_stat_metadata.json",     "interior DLs"),
+    "LB":  ("league_lb_all_seasons.parquet",     "lb_stat_metadata.json",     "linebackers"),
+    "CB":  ("league_cb_all_seasons.parquet",     "cb_stat_metadata.json",     "cornerbacks"),
+    "S":   ("league_s_all_seasons.parquet",      "safety_stat_metadata.json", "safeties"),
+    "OL":  ("league_ol_all_seasons.parquet",     "ol_stat_metadata.json",     "offensive linemen"),
+    "K":   ("league_k_all_seasons.parquet",      "kicker_stat_metadata.json", "kickers"),
+    "P":   ("league_p_all_seasons.parquet",      "punter_stat_metadata.json", "punters"),
+}
+
+
+@st.cache_data
+def _load_position_pool(position_group: str):
+    """Load the league parquet for a position group. Returns None
+    if the position isn't in the narrative config (RB/WR/TE have
+    their own panels with richer narratives)."""
+    cfg = _POSITION_NARRATIVE_CONFIG.get(position_group)
+    if cfg is None:
+        return None
+    parquet_name, _, _ = cfg
+    from pathlib import Path
+    p = Path(__file__).resolve().parent / "data" / parquet_name
+    if not p.exists():
+        return None
+    return pd.read_parquet(p)
+
+
+@st.cache_data
+def _load_position_labels(position_group: str) -> dict:
+    """Load the stat_labels dict from a position's metadata JSON."""
+    cfg = _POSITION_NARRATIVE_CONFIG.get(position_group)
+    if cfg is None:
+        return {}
+    _, meta_name, _ = cfg
+    from pathlib import Path
+    import json
+    p = Path(__file__).resolve().parent / "data" / meta_name
+    if not p.exists():
+        return {}
+    with open(p) as f:
+        meta = json.load(f)
+    return meta.get("stat_labels", {})
+
+
+def _render_generic_position_narrative(player_name: str,
+                                          position_group: str,
+                                          theme: dict | None) -> None:
+    """For positions without a dedicated panel (DE/DT/LB/CB/S/OL/QB/K/P),
+    render a 'signature stat + weakness' blurb at the top of the
+    splits section. Reads from the position's league parquet."""
+    cfg = _POSITION_NARRATIVE_CONFIG.get(position_group)
+    if cfg is None:
+        return  # RB/WR/TE handled by their own panels
+    _, _, position_label = cfg
+
+    pool = _load_position_pool(position_group)
+    if pool is None or pool.empty:
+        return
+    labels = _load_position_labels(position_group)
+
+    # Find the player's most-recent row. League parquets vary in
+    # name column — try common alternatives.
+    name_col = None
+    for cand in ("player_display_name", "full_name", "player", "player_name"):
+        if cand in pool.columns:
+            name_col = cand
+            break
+    if name_col is None:
+        return
+    rows = pool[pool[name_col] == player_name]
+    if rows.empty:
+        return
+    if "season_year" in rows.columns:
+        rows = rows.sort_values("season_year", ascending=False)
+    player_row = rows.iloc[0]
+
+    from lib_field_viz import build_position_narrative
+    narrative = build_position_narrative(
+        player_row, peer_pool=pool, stat_labels=labels,
+        position_label=position_label,
+    )
+    if not narrative:
+        return
+
+    accent = (theme or {}).get("primary", "#0076B6")
+    st.markdown(
+        f"<div style='background:#fff;border:1px solid #e6e9ee;"
+        f"border-left:4px solid {accent};border-radius:6px;"
+        f"padding:12px 16px;margin:8px 0 14px 0;'>"
+        f"<div style='font-size:0.62rem;color:#5b6b7e;letter-spacing:1.4px;"
+        f"text-transform:uppercase;font-weight:700;margin-bottom:5px;'>"
+        f"📖 Story</div>"
+        f"<div style='font-size:0.95rem;color:#2a3a4d;line-height:1.5;'>"
+        f"{narrative}</div></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_rb_narrative_blurb(pf: pd.DataFrame, theme: dict | None) -> None:
@@ -1786,6 +1976,12 @@ def render_splits_section(*, player_name: str, season,
             team_abbr = str(team_counts.index[0])
     from lib_shared import team_theme as _team_theme
     section_theme = _team_theme(team_abbr)
+
+    # Auto-narrative blurb at the top — shows for non-RB/WR/TE
+    # positions. RB and WR have richer narratives in their own panels;
+    # this generic version covers DE/DT/LB/CB/S/OL/QB/K/P.
+    _render_generic_position_narrative(player_name, position_group,
+                                        theme=section_theme)
 
     # Join schedule data on (season, week, team). Each game has one team
     # entry per side, so we match the player's `team` column.
