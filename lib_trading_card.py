@@ -513,9 +513,10 @@ def render_card_download_button(*,
     right_wing = (
         f'<div class="lr-jersey-num" style="font-family: -apple-system, '
         f'BlinkMacSystemFont, \'Segoe UI\', sans-serif; '
-        f'font-size: clamp(80px, 12vw, 200px); font-weight: 900; '
+        f'font-size: clamp(56px, 7vw, 120px); font-weight: 900; '
         f'color: rgba(255,255,255,0.92); line-height: 1; '
-        f'text-shadow: 0 4px 14px rgba(0,0,0,0.35); letter-spacing: -4px;">'
+        f'text-shadow: 0 4px 14px rgba(0,0,0,0.35); letter-spacing: -3px; '
+        f'white-space: nowrap;">'
         f'#{jersey_number}</div>'
         if jersey_number is not None else ""
     )
