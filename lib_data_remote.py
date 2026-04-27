@@ -30,15 +30,18 @@ _REMOTE_CACHE = Path("/tmp") / "lions_rater_games"
 _BUCKET = "lions-rater-data"
 
 
-@st.cache_data(show_spinner=False)
 def get_parquet_path(filename: str) -> str | None:
     """Return a local filesystem path to the parquet, downloading from
-    Supabase Storage if the file isn't on disk yet. Cached so each
-    file is fetched at most once per session.
+    Supabase Storage if the file isn't on disk yet.
 
-    Returns None if the file can't be obtained — callers must handle
-    that gracefully (the existing splits / coverage / run-scheme
-    panels all silent-skip when their loaders return None).
+    Caching strategy: SUCCESSFUL paths are cached on disk via the
+    `_REMOTE_CACHE` directory — that's the natural session cache.
+    FAILURES are deliberately NOT cached so a transient miss (network
+    blip, cold-start Supabase URL not yet available) can self-heal on
+    the next call.
+
+    Returns None if the file can't be obtained — callers handle that
+    gracefully (every game-log panel silent-skips on None).
     """
     # Path 1: local development — file is checked out alongside the repo
     local = _LOCAL_DIR / filename
