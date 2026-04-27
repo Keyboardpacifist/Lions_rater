@@ -78,7 +78,9 @@ def get_parquet_path(filename: str) -> str | None:
         _LAST_FAILURE = "SUPABASE_URL not in Streamlit Cloud secrets"
         return None
 
-    url = f"{base}/storage/v1/object/public/{_BUCKET}/{filename}"
+    # Strip any trailing slash from the URL — paranoia for whitespace
+    # / formatting differences between secrets.toml and the live env.
+    url = f"{base.rstrip('/')}/storage/v1/object/public/{_BUCKET}/{filename}"
     try:
         import requests
     except ImportError as e:
@@ -87,15 +89,15 @@ def get_parquet_path(filename: str) -> str | None:
     try:
         r = requests.get(url, timeout=120)
         if r.status_code != 200:
-            _LAST_FAILURE = (f"download {filename}: HTTP {r.status_code} "
-                             f"— {r.text[:150]}")
+            _LAST_FAILURE = (f"GET {url[:80]}... → HTTP {r.status_code}: "
+                             f"{r.text[:150]}")
             return None
         if not r.content:
-            _LAST_FAILURE = f"download {filename}: empty response"
+            _LAST_FAILURE = f"GET {url[:80]}... → empty response"
             return None
         _REMOTE_CACHE.mkdir(parents=True, exist_ok=True)
         cached.write_bytes(r.content)
         return str(cached)
     except Exception as e:
-        _LAST_FAILURE = f"download {filename}: {type(e).__name__}: {e}"
+        _LAST_FAILURE = f"GET {url[:80]}... → {type(e).__name__}: {e}"
         return None
