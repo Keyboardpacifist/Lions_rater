@@ -566,6 +566,26 @@ with c2:
                 else:
                     st.caption(f"_No NFL data for {_cmp_name}._")
 
+# ── Coverage matchup profile (exposed, full-width) ───────────
+from lib_splits import render_coverage_matchup_section as _render_coverage_matchup_section
+_render_coverage_matchup_section(
+    player_name=selected,
+    season=selected_season,
+    position_group="TE",
+    key_prefix=f"te_cov_{player.get('player_id') or selected}",
+    is_career_view=_yr["is_career_view"],
+)
+
+# ── Game-by-game splits explorer ─────────────────────────────
+from lib_splits import render_splits_section as _render_splits_section
+_render_splits_section(
+    player_name=selected,
+    season=selected_season,
+    position_group="TE",
+    key_prefix=f"te_{player.get('player_id') or selected}",
+    is_career_view=_yr["is_career_view"],
+)
+
 career_arc_section(
     player=player,
     league_parquet_path=DATA_PATH,

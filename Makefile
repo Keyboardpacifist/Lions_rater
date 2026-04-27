@@ -1,4 +1,4 @@
-.PHONY: install run test lint data-refresh game-logs game-logs-nfl game-logs-college clean
+.PHONY: install run test lint data-refresh game-logs game-logs-nfl game-logs-college game-logs-pbp game-logs-participation defense-scheme clean
 
 PYTHON := python3
 VENV := venv
@@ -59,6 +59,20 @@ game-logs-nfl: install
 
 game-logs-college: install
 	$(VENV)/bin/python tools/game_logs/pull_college_games.py
+
+# Heavy NFL feeds (play-by-play + participation) — needed for the
+# defensive-scheme summary. Local-only (gitignored) since they're large.
+
+game-logs-pbp: install
+	$(VENV)/bin/python tools/game_logs/pull_nfl_pbp.py
+
+game-logs-participation: install
+	$(VENV)/bin/python tools/game_logs/pull_nfl_participation.py
+
+# Per-(defense, season) and per-(defense, season, week) scheme profile.
+# Depends on pbp + participation parquets — run those first if missing.
+defense-scheme: install
+	$(VENV)/bin/python tools/game_logs/build_defense_scheme.py
 
 # ── Cleanup ──────────────────────────────────────────────────
 
