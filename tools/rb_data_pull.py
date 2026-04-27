@@ -131,6 +131,18 @@ rush_plays['is_sy_converted'] = (rush_plays['is_sy'] == 1) & (rush_plays['first_
 rush_plays['is_gl_td'] = (rush_plays['is_gl'] == 1) & (rush_plays['rush_touchdown'].fillna(0) == 1) if 'rush_touchdown' in rush_plays.columns else 0
 rush_plays['is_rz'] = (rush_plays['yardline_100'] <= 20).astype(int) if 'yardline_100' in rush_plays.columns else 0
 
+# FO/PFR success rate per play — replaces nflverse's EPA-based
+# `success` so our success_rate aligns with PFF / Pro-Football-Reference.
+# 1st: ≥40% of yards-to-go · 2nd: ≥60% · 3rd/4th: full conversion.
+def _fo_success(row):
+    d, ytg, yg = row.get('down'), row.get('ydstogo'), row.get('yards_gained')
+    if pd.isna(d) or pd.isna(ytg) or pd.isna(yg):
+        return np.nan
+    if d == 1: return 1.0 if yg >= 0.4 * ytg else 0.0
+    if d == 2: return 1.0 if yg >= 0.6 * ytg else 0.0
+    return 1.0 if yg >= ytg else 0.0
+rush_plays['fo_success'] = rush_plays.apply(_fo_success, axis=1)
+
 
 def agg_rusher(group):
     carries = len(group)
@@ -138,7 +150,7 @@ def agg_rusher(group):
     rush_tds = group['rush_touchdown'].fillna(0).sum() if 'rush_touchdown' in group.columns else 0
     rush_first_downs = group['first_down'].fillna(0).sum() if 'first_down' in group.columns else 0
     epa_mean = group['epa'].mean()
-    success_mean = group['success'].mean()
+    success_mean = group['fo_success'].mean()
 
     explosive_10 = group['is_explosive_10'].sum()
     explosive_15 = group['is_explosive_15'].sum()
@@ -185,13 +197,16 @@ pass_plays = pbp[
     (pbp['receiver_player_id'].notna())
 ].copy()
 
+# FO/PFR success rate on RB receiving plays — same convention as rushes
+pass_plays['fo_success'] = pass_plays.apply(_fo_success, axis=1)
+
 def agg_rb_receiver(group):
     targets = len(group)
     receptions = group['complete_pass'].sum()
     rec_yards = group['receiving_yards'].fillna(0).sum()
     rec_tds = group['pass_touchdown'].fillna(0).sum() if 'pass_touchdown' in group.columns else 0
     epa_mean = group['epa'].mean()
-    success_mean = group['success'].mean()
+    success_mean = group['fo_success'].mean()
     yac_sum = group['yards_after_catch'].fillna(0).sum()
     return pd.Series({
         'targets': targets,

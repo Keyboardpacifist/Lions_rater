@@ -2,7 +2,7 @@
   "position_group": "qb",
   "season": "2016-2025",
   "population": "Players with >= 100 QB total snaps, min 6 games",
-  "n_players": 413,
+  "n_players": 431,
   "stat_tiers": {
     "passing_yards_per_game_z": 1,
     "passing_tds_per_game_z": 1,

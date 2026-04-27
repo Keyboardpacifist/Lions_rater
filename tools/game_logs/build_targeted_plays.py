@@ -11,6 +11,11 @@ For every pass play with a non-null receiver_player_id, we pull:
   • result: complete_pass, yards_gained, air_yards,
             yards_after_catch, epa, pass_touchdown
   • game context: season, week, posteam, defteam
+  • situation: down, ydstogo, score_differential, shotgun
+  • alignment: offense_formation, offense_personnel,
+                defense_personnel, defense_bucket
+  • blitz signals: number_of_pass_rushers, blitz_bucket,
+                    defenders_in_box
 
 Output:
   data/games/nfl_targeted_plays.parquet
@@ -46,12 +51,18 @@ def main():
         "receiver_player_id", "receiver_player_name",
         "complete_pass", "yards_gained", "air_yards",
         "yards_after_catch", "epa", "pass_touchdown",
+        # Situation columns — let the route tree filter by down/distance.
+        "down", "ydstogo", "score_differential", "shotgun",
     ]).filter(pl.col("receiver_player_id").is_not_null())
 
     part_slim = part.select([
         pl.col("nflverse_game_id").alias("game_id"),
         "play_id", "route",
         "defense_man_zone_type", "defense_coverage_type",
+        # Alignment + blitz context
+        "offense_formation", "offense_personnel",
+        "defense_personnel", "defenders_in_box",
+        "number_of_pass_rushers",
     ])
     out = pbp_slim.join(part_slim, on=["game_id", "play_id"], how="inner")
 
@@ -82,6 +93,45 @@ def main():
     out = out.rename({"receiver_player_id": "player_id",
                        "posteam": "team",
                        "defteam": "opponent_team"})
+
+    # Derive defense_bucket from defense_personnel (DB count drives it)
+    def _defense_bucket(p: str | None) -> str | None:
+        if p is None or p == "":
+            return None
+        try:
+            for chunk in str(p).split(","):
+                chunk = chunk.strip()
+                if chunk.endswith("DB"):
+                    n = int(chunk.split(" ", 1)[0])
+                    if n >= 7: return "Quarter (7+ DB)"
+                    if n == 6: return "Dime (6 DB)"
+                    if n == 5: return "Nickel (5 DB)"
+                    if n == 4: return "Base (4 DB)"
+                    if n == 3: return "Heavy (3 DB)"
+                    return f"{n} DB"
+        except (ValueError, IndexError):
+            pass
+        return None
+
+    out = out.with_columns(
+        pl.col("defense_personnel").map_elements(
+            _defense_bucket, return_dtype=pl.String
+        ).alias("defense_bucket")
+    )
+
+    # Derive blitz_bucket — 4 rushers = standard, 5 = blitz, 6+ = heavy.
+    out = out.with_columns(
+        pl.when(pl.col("number_of_pass_rushers").is_null())
+          .then(None)
+          .when(pl.col("number_of_pass_rushers") <= 3)
+            .then(pl.lit("Drop (3 or fewer)"))
+          .when(pl.col("number_of_pass_rushers") == 4)
+            .then(pl.lit("Standard rush (4)"))
+          .when(pl.col("number_of_pass_rushers") == 5)
+            .then(pl.lit("Blitz (5)"))
+          .otherwise(pl.lit("Heavy blitz (6+)"))
+          .alias("blitz_bucket")
+    )
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     out.write_parquet(OUT)

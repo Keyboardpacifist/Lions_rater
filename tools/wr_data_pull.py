@@ -75,6 +75,18 @@ pass_plays = pbp[
 ].copy()
 print(f'\nPass plays with a receiver: {len(pass_plays):,}')
 
+# FO/PFR success rate per play — replaces nflverse's EPA-based
+# `success` column so our success_rate aligns with PFF / PFR.
+# 1st: ≥40% of yards-to-go · 2nd: ≥60% · 3rd/4th: full conversion.
+def _fo_success_play(row):
+    d, ytg, yg = row.get('down'), row.get('ydstogo'), row.get('yards_gained')
+    if pd.isna(d) or pd.isna(ytg) or pd.isna(yg):
+        return np.nan
+    if d == 1: return 1.0 if yg >= 0.4 * ytg else 0.0
+    if d == 2: return 1.0 if yg >= 0.6 * ytg else 0.0
+    return 1.0 if yg >= ytg else 0.0
+pass_plays['fo_success'] = pass_plays.apply(_fo_success_play, axis=1)
+
 
 # ─── Per-player offensive snap totals ────────────────────────────────────────
 receiver_positions = {'WR', 'TE'}
@@ -129,7 +141,7 @@ def agg_receiver(group):
     air_yards = group['air_yards'].fillna(0).sum()
     epa_sum = group['epa'].fillna(0).sum()
     epa_per_target = group['epa'].mean()
-    success_rate = group['success'].mean()
+    success_rate = group['fo_success'].mean()
     yac_sum = group['yards_after_catch'].fillna(0).sum()
     cpoe_mean = group['cpoe'].mean() if 'cpoe' in group.columns else np.nan
     return pd.Series({

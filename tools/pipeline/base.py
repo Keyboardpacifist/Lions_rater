@@ -91,3 +91,47 @@ class PositionConfig:
     stat_tiers: dict[str, int] = field(default_factory=dict)
     stat_labels: dict[str, str] = field(default_factory=dict)
     stat_methodology: dict[str, dict] = field(default_factory=dict)
+
+
+def fo_success_per_play(plays: pd.DataFrame,
+                          yards_col: str = "yards_gained") -> pd.Series:
+    """Per-play binary success flag using the Football Outsiders /
+    Pro-Football-Reference convention — what every consumer-facing
+    site (PFF, PFR, broadcast graphics, FantasyPros) shows when they
+    say "success rate":
+
+        1st down: yards_gained ≥ 40% of yards-to-go
+        2nd down: yards_gained ≥ 60% of yards-to-go
+        3rd / 4th down: yards_gained ≥ yards-to-go (full conversion)
+
+    This DIFFERS from nflverse's `success` column, which is
+    EPA-based (`epa > 0`). EPA-success is rigorous but misaligns
+    with the numbers fans see elsewhere — switching to FO-success
+    is what gets us "as close to PFF as possible" on the metric
+    that's most commonly compared between sites.
+
+    Returns 0/1 floats aligned with the input frame's index.
+    Plays missing any required column return NaN (callers can
+    filter or fill as appropriate).
+    """
+    import numpy as np
+
+    needed = {"down", "ydstogo", yards_col}
+    if not needed.issubset(plays.columns):
+        return pd.Series(np.nan, index=plays.index)
+
+    down = plays["down"]
+    ytg = plays["ydstogo"]
+    yg = plays[yards_col]
+
+    # Threshold the play needs to clear, by down. NaN for downs
+    # outside 1-4 (kickoffs, two-point conversions, etc.)
+    threshold = pd.Series(np.nan, index=plays.index)
+    m1 = (down == 1)
+    m2 = (down == 2)
+    m34 = down.isin([3, 4])
+    threshold = threshold.where(~m1, 0.4 * ytg)
+    threshold = threshold.where(~m2, 0.6 * ytg)
+    threshold = threshold.where(~m34, ytg)
+
+    return (yg >= threshold).astype(float)

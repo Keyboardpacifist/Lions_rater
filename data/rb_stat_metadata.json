@@ -2,7 +2,7 @@
   "position_group": "rb",
   "season": "2016-2025",
   "population": "Players with >= 100 RB total snaps, min 6 games",
-  "n_players": 841,
+  "n_players": 922,
   "stat_tiers": {
     "rush_yards_z": 1,
     "rush_tds_z": 1,

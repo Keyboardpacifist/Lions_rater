@@ -315,18 +315,53 @@ def _load_route_distribution():
     return _read_remote("nfl_route_distribution_player_games.parquet")
 
 
+def _add_fo_success_column(df):
+    """Add an `fo_success` column to a per-play dataframe — Football
+    Outsiders / PFR convention so panel-side aggregations align with
+    the league parquets and with PFF/PFR.
+
+        1st: yards_gained ≥ 40% of yards-to-go
+        2nd: yards_gained ≥ 60%
+        3rd / 4th: full conversion (yards_gained ≥ ydstogo)
+
+    No-op if down/ydstogo/yards_gained aren't all present."""
+    if df is None or df.empty:
+        return df
+    needed = {"down", "ydstogo", "yards_gained"}
+    if not needed.issubset(df.columns):
+        return df
+    down = df["down"]
+    ytg = df["ydstogo"]
+    yg = df["yards_gained"]
+    threshold = pd.Series(float("nan"), index=df.index)
+    threshold = threshold.where(~down.eq(1), 0.4 * ytg)
+    threshold = threshold.where(~down.eq(2), 0.6 * ytg)
+    threshold = threshold.where(~down.isin([3, 4]), ytg)
+    df = df.copy()
+    df["fo_success"] = (yg >= threshold).astype(float)
+    return df
+
+
 @st.cache_data
 def _load_targeted_plays():
     """Per-targeted-play feed: route × man/zone × coverage shell ×
-    result. Used to build the coverage matchup profile per receiver."""
-    return _read_remote("nfl_targeted_plays.parquet")
+    result. Used to build the coverage matchup profile per receiver.
+
+    Adds `fo_success` (PFF/PFR convention) so panel aggregations
+    align with the league parquets. The original `success` column
+    (nflverse EPA-based) stays available for any consumer that
+    wants the rigorous version."""
+    return _add_fo_success_column(_read_remote("nfl_targeted_plays.parquet"))
 
 
 @st.cache_data
 def _load_rusher_plays():
     """Per-run-play feed: gap / direction / box / formation / personnel
-    + result. Used to build the run scheme profile per RB."""
-    return _read_remote("nfl_rusher_plays.parquet")
+    + result. Used to build the run scheme profile per RB.
+
+    Adds `fo_success` for PFF/PFR alignment (see _load_targeted_plays
+    for rationale)."""
+    return _add_fo_success_column(_read_remote("nfl_rusher_plays.parquet"))
 
 
 def _data_ready() -> bool:
@@ -540,6 +575,76 @@ def _coverage_matchup_header():
     )
 
 
+def _apply_route_filters(pf: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
+    """Top-row filter pills for the coverage matchup panel — Coverage /
+    Man-Zone / Pass rush / Down. Returns the filtered slice. All
+    filters cascade through the panel.
+
+    (Defense personnel filter dropped — ~30% of plays have null
+    defense_personnel labels, which would mislead users by silently
+    excluding data. Pass rush is the more reliable defensive filter.)"""
+    f1, f2, f4, f5 = st.columns(4)
+
+    # Coverage shell
+    canonical_cov = ["Cover-0", "Cover-1", "Cover-2", "Cover-3",
+                      "Cover-4", "Cover-6", "Cover-9", "2-Man"]
+    if "coverage_shell" in pf.columns:
+        present = set(pf["coverage_shell"].dropna().unique())
+        cov_options = ["All"] + [c for c in canonical_cov if c in present]
+    else:
+        cov_options = ["All"]
+    with f1:
+        cov_pick = st.selectbox(
+            "Coverage", cov_options,
+            key=f"{key_prefix}_filt_cov",
+            help="Coverage shell faced. NGS coverage labels (2018+).",
+        )
+
+    # Man / Zone
+    mz_options = ["All", "Man", "Zone"]
+    with f2:
+        mz_pick = st.selectbox(
+            "Man / Zone", mz_options,
+            key=f"{key_prefix}_filt_mz",
+        )
+
+    # Blitz
+    canonical_blitz = ["Drop (3 or fewer)", "Standard rush (4)",
+                        "Blitz (5)", "Heavy blitz (6+)"]
+    if "blitz_bucket" in pf.columns:
+        present = set(pf["blitz_bucket"].dropna().unique())
+        blitz_options = ["All"] + [b for b in canonical_blitz if b in present]
+    else:
+        blitz_options = ["All"]
+    with f4:
+        blitz_pick = st.selectbox(
+            "Pass rush", blitz_options,
+            key=f"{key_prefix}_filt_blitz",
+            help="Number of pass rushers — 4 is standard, 5+ is a blitz.",
+        )
+
+    # Down
+    down_options = ["All", "1st", "2nd", "3rd", "4th"]
+    with f5:
+        down_pick = st.selectbox(
+            "Down", down_options,
+            key=f"{key_prefix}_filt_down",
+        )
+
+    # Apply filters
+    if cov_pick != "All" and "coverage_shell" in pf.columns:
+        pf = pf[pf["coverage_shell"] == cov_pick]
+    if mz_pick != "All":
+        pf = pf[pf["man_zone"] == mz_pick]
+    if blitz_pick != "All" and "blitz_bucket" in pf.columns:
+        pf = pf[pf["blitz_bucket"] == blitz_pick]
+    if down_pick != "All" and "down" in pf.columns:
+        d_map = {"1st": 1, "2nd": 2, "3rd": 3, "4th": 4}
+        pf = pf[pf["down"] == d_map[down_pick]]
+
+    return pf
+
+
 def _render_coverage_matchup_panel(pf: pd.DataFrame, key_prefix: str,
                                      wrap_in_expander: bool = True,
                                      render_header: bool = True) -> None:
@@ -563,13 +668,16 @@ def _render_coverage_matchup_panel(pf: pd.DataFrame, key_prefix: str,
             _coverage_matchup_header()
         container = st.container()
     with container:
+        # Top-row filter pills (Coverage / Man-Zone / Defense / Blitz / Down)
+        pf = _apply_route_filters(pf, key_prefix)
+
         n = len(pf)
         n_man = int((pf["man_zone"] == "Man").sum())
         n_zone = int((pf["man_zone"] == "Zone").sum())
         n_labeled = n_man + n_zone
         if n_labeled == 0:
             st.info("No coverage labels for this slice. "
-                    "Coverage data is 2018+ only.")
+                    "Coverage data is 2018+ only — try loosening the filters.")
             return
 
         # ── Top: 3 stat tiles (Targets / Man / Zone) ──
@@ -601,71 +709,46 @@ def _render_coverage_matchup_panel(pf: pd.DataFrame, key_prefix: str,
 
         c_left, c_right = st.columns([1, 1])
 
-        # ── LEFT: route × man/zone bar chart ──
+        # ── LEFT: route tree — every route radiates from the receiver ──
         with c_left:
-            st.markdown("**Route distribution by coverage**")
-            cov_pool = pf[pf["man_zone"].isin(["Man", "Zone"])
-                          & pf["route"].notna() & (pf["route"] != "")]
-            if cov_pool.empty:
-                st.caption("_No labeled routes vs man/zone in this slice._")
+            st.markdown("**Route tree** _(every route the receiver runs · color = EPA per target)_")
+            rt_pool = pf[pf["route"].notna() & (pf["route"] != "")]
+            if rt_pool.empty:
+                st.caption("_No labeled routes in this slice._")
             else:
-                grouped = (cov_pool.groupby(["route", "man_zone"])
-                                    .size().reset_index(name="n"))
-                top_routes = (grouped.groupby("route")["n"].sum()
-                                     .sort_values(ascending=False)
-                                     .head(8).index.tolist())
-                grouped = grouped[grouped["route"].isin(top_routes)]
-                grouped["route"] = pd.Categorical(
-                    grouped["route"], categories=top_routes, ordered=True
-                )
-                grouped = grouped.sort_values(["route", "man_zone"])
-
-                fig = go.Figure()
-                for mz, color in [("Man", "#d62728"), ("Zone", "#1f77b4")]:
-                    sub = grouped[grouped["man_zone"] == mz]
-                    fig.add_trace(go.Bar(
-                        y=sub["route"].astype(str),
-                        x=sub["n"],
-                        name=mz,
-                        orientation="h",
-                        marker=dict(color=color),
-                        hovertemplate="%{y} vs " + mz + ": %{x} targets<extra></extra>",
-                    ))
-                fig.update_layout(
-                    barmode="group",
-                    height=340, margin=dict(l=10, r=10, t=40, b=40),
-                    xaxis=dict(title="Targets", gridcolor="#eee"),
-                    yaxis=dict(autorange="reversed"),
-                    # Legend ABOVE the chart so it doesn't crash into
-                    # the X-axis title.
-                    legend=dict(orientation="h",
-                                yanchor="bottom", y=1.02,
-                                x=0.5, xanchor="center",
-                                bgcolor="rgba(255,255,255,0.7)"),
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                )
+                from lib_field_viz import build_route_tree
+                fig = build_route_tree(rt_pool, metric="epa_per_target")
                 st.plotly_chart(fig, use_container_width=True,
-                                  key=f"{key_prefix}_coverage_route_chart")
+                                  key=f"{key_prefix}_route_tree")
+                st.caption(
+                    "_Each route line is colored by EPA per target on a heatmap "
+                    "and weighted by target volume. Hover for full breakdown. "
+                    "Targeted routes only — non-targeted routes (the receiver "
+                    "running but not getting the ball) and option-route "
+                    "designations require PFF charting._",
+                    unsafe_allow_html=True,
+                )
 
-        # ── RIGHT: performance per coverage shell ──
+        # ── RIGHT: per-route performance table — responds to filters ──
         with c_right:
-            st.markdown("**Performance by coverage shell**")
-            shell_pool = pf[pf["coverage_shell"].notna()]
-            if shell_pool.empty:
-                st.caption("_No labeled coverage shells in this slice._")
+            st.markdown("**Performance by route** _(this slice)_")
+            rt_pool = pf[pf["route"].notna() & (pf["route"] != "")]
+            if rt_pool.empty:
+                st.caption("_No labeled routes in this slice._")
             else:
-                rows = []
-                for shell, grp in shell_pool.groupby("coverage_shell"):
+                route_rows = []
+                for route, grp in rt_pool.groupby("route"):
                     targets = len(grp)
+                    if targets < 1:
+                        continue
                     catches = int(grp["complete_pass"].fillna(0).sum())
                     yards = float(grp["yards_gained"].fillna(0).sum())
                     tds = int(grp["pass_touchdown"].fillna(0).sum())
                     epa_per_tgt = float(grp["epa"].fillna(0).mean())
                     catch_pct = (catches / targets) if targets else 0
                     ypt = (yards / targets) if targets else 0
-                    rows.append({
-                        "Coverage": shell,
+                    route_rows.append({
+                        "Route": route,
                         "Tgts": targets,
                         "Rec": catches,
                         "Catch%": f"{catch_pct*100:.0f}%",
@@ -673,51 +756,17 @@ def _render_coverage_matchup_panel(pf: pd.DataFrame, key_prefix: str,
                         "TD": tds,
                         "EPA/Tgt": f"{epa_per_tgt:+.2f}",
                     })
-                table = (pd.DataFrame(rows)
-                           .sort_values("Tgts", ascending=False)
-                           .reset_index(drop=True))
-                st.dataframe(_style_epa_table(table, "EPA/Tgt"),
-                              use_container_width=True, hide_index=True)
-
-        # ── Performance by route (same shape as shell table, full-width) ──
-        rt_pool = pf[pf["route"].notna() & (pf["route"] != "")]
-        if not rt_pool.empty:
-            st.markdown("**Performance by route**")
-            route_rows = []
-            for route, grp in rt_pool.groupby("route"):
-                targets = len(grp)
-                if targets < 3:  # skip noise from one-off route labels
-                    continue
-                catches = int(grp["complete_pass"].fillna(0).sum())
-                yards = float(grp["yards_gained"].fillna(0).sum())
-                tds = int(grp["pass_touchdown"].fillna(0).sum())
-                epa_per_tgt = float(grp["epa"].fillna(0).mean())
-                catch_pct = (catches / targets) if targets else 0
-                ypt = (yards / targets) if targets else 0
-                # man / zone split (within this route)
-                n_man = int((grp["man_zone"] == "Man").sum())
-                n_zone = int((grp["man_zone"] == "Zone").sum())
-                route_rows.append({
-                    "Route": route,
-                    "Tgts": targets,
-                    "Rec": catches,
-                    "Catch%": f"{catch_pct*100:.0f}%",
-                    "Y/Tgt": f"{ypt:.1f}",
-                    "TD": tds,
-                    "EPA/Tgt": f"{epa_per_tgt:+.2f}",
-                    "Vs Man": n_man,
-                    "Vs Zone": n_zone,
-                })
-            if route_rows:
-                rtable = (pd.DataFrame(route_rows)
-                            .sort_values("Tgts", ascending=False)
-                            .reset_index(drop=True))
-                st.dataframe(_style_epa_table(rtable, "EPA/Tgt"),
-                              use_container_width=True, hide_index=True)
-                st.caption(
-                    "_Routes with fewer than 3 targets in this slice are "
-                    "hidden to keep the table signal-heavy._"
-                )
+                if route_rows:
+                    rtable = (pd.DataFrame(route_rows)
+                                .sort_values("Tgts", ascending=False)
+                                .reset_index(drop=True))
+                    st.dataframe(_style_epa_table(rtable, "EPA/Tgt"),
+                                  use_container_width=True, hide_index=True)
+                    st.caption(
+                        "_Per-route stats for the current filter slice — "
+                        "table updates live when you change Coverage / "
+                        "Defense / Pass rush / Down._"
+                    )
 
 
 def render_run_scheme_section(*, player_name: str, season,
@@ -748,9 +797,22 @@ def render_run_scheme_section(*, player_name: str, season,
     pf_all["season"] = pf_all["season"].astype(int)
     pf_all["week"] = pf_all["week"].astype(int)
 
+    # Pull this player's most recent team for theming. The adjusted
+    # parquet has weekly rows with `team` per row — take the latest
+    # season's most-frequent team in case of mid-season trade.
+    team_abbr = None
+    if "team" in full_career.columns:
+        latest_season = full_career["season"].max()
+        latest_rows = full_career[full_career["season"] == latest_season]
+        team_counts = latest_rows["team"].dropna().value_counts()
+        if not team_counts.empty:
+            team_abbr = str(team_counts.index[0])
+    from lib_shared import team_theme
+    theme = team_theme(team_abbr)
+
     # Render the header BEFORE the dropdown so the dropdown sits
     # under the section title.
-    _run_scheme_header()
+    _run_scheme_header(theme=theme)
 
     seasons_present = sorted(pf_all["season"].unique().tolist(), reverse=True)
     default_label = ("All career" if is_career_view
@@ -838,22 +900,126 @@ def _epa_bar_color(epa: float) -> str:
     return "#b3261e"       # strong red
 
 
-def _run_scheme_header():
+def _run_scheme_header(theme: dict | None = None):
     """Section header — pulled out so the public section can render
-    the in-panel season/career dropdown between header and body."""
+    the in-panel season/career dropdown between header and body.
+
+    `theme` is the team theme from lib_shared.team_theme(). When
+    provided, the accent border uses the team's primary color and a
+    small logo sits inline with the title. Falls back to Lions blue.
+    """
+    accent = (theme or {}).get("primary", "#0076B6")
+    logo = (theme or {}).get("logo", "")
+    title_inline = ""
+    if logo:
+        title_inline = (
+            f"<img src='{logo}' style='height:24px;width:auto;"
+            f"vertical-align:middle;margin-right:8px;"
+            f"object-fit:contain;'/>")
     st.markdown(
-        "<div style='margin:18px 0 6px 0;padding-left:12px;"
-        "border-left:5px solid #0076B6;'>"
-        "<div style='font-size:1.25rem;font-weight:800;color:#0a3d62;"
-        "letter-spacing:0.3px;'>🏃 Run scheme profile</div>"
-        "<div style='font-size:0.78rem;color:#5b6b7e;margin-top:2px;'>"
-        "Where he runs, how he handles different boxes, and how the "
-        "formation affects production. Free PBP + NGS data only — "
-        "block grades and yards-after-contact need PFF."
-        "</div>"
-        "</div>",
+        f"<div style='margin:18px 0 6px 0;padding-left:12px;"
+        f"border-left:5px solid {accent};'>"
+        f"<div style='font-size:1.25rem;font-weight:800;color:#0a3d62;"
+        f"letter-spacing:0.3px;display:flex;align-items:center;'>"
+        f"{title_inline}<span>🏃 Run scheme profile</span></div>"
+        f"<div style='font-size:0.78rem;color:#5b6b7e;margin-top:2px;'>"
+        f"Where he runs, how he handles different boxes, and how the "
+        f"formation affects production. Free PBP + NGS data only — "
+        f"block grades and yards-after-contact need PFF."
+        f"</div>"
+        f"</div>",
         unsafe_allow_html=True,
     )
+
+
+def _apply_run_scheme_filters(pf: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
+    """Top-row filter pills for the run-scheme panel — Formation /
+    Personnel / Box / Down. Returns the filtered slice. All filters
+    cascade through the whole panel.
+
+    (Defense personnel filter dropped — ~30% of plays have null
+    defense_personnel labels in nflverse, which would silently
+    exclude data and mislead the user.)"""
+    f1, f2, f4, f5 = st.columns(4)
+
+    # Formation
+    formations_present = ["All"] + sorted(
+        f.title() for f in pf["offense_formation"].dropna().unique()
+        if f and str(f).strip()
+    )
+    with f1:
+        form_pick = st.selectbox(
+            "Formation", formations_present,
+            key=f"{key_prefix}_filt_form",
+            help="Restrict to runs out of this offensive formation.",
+        )
+
+    # Personnel — derive bucket from offense_personnel
+    def _pers_bucket(d):
+        if d is None or pd.isna(d) or not d:
+            return None
+        rb = te = 0
+        for chunk in str(d).split(","):
+            chunk = chunk.strip()
+            parts = chunk.split(" ", 1)
+            if len(parts) != 2:
+                continue
+            try:
+                n = int(parts[0])
+            except ValueError:
+                continue
+            pos = parts[1].strip()
+            if pos == "RB":
+                rb = n
+            elif pos == "TE":
+                te = n
+        if 0 <= rb <= 9 and 0 <= te <= 9:
+            return f"{rb}{te}"
+        return None
+
+    pf = pf.copy()
+    pf["pers_bucket"] = pf["offense_personnel"].apply(_pers_bucket)
+    pers_present = ["All"] + sorted(
+        p for p in pf["pers_bucket"].dropna().unique() if p
+    )
+    with f2:
+        pers_pick = st.selectbox(
+            "Personnel", pers_present,
+            key=f"{key_prefix}_filt_pers",
+            help="11 = 1 RB · 1 TE · 3 WR. 12 = 1 RB · 2 TE · 2 WR. "
+                 "21 = 2 RB · 1 TE · 2 WR. 13 = 1 RB · 3 TE · 1 WR.",
+        )
+
+    # Box count bucket
+    pf["box_bucket"] = pf["defenders_in_box"].apply(_bucket_box)
+    box_options = ["All", "Light (≤6)", "Neutral (7)", "Stacked (8+)"]
+    with f4:
+        box_pick = st.selectbox(
+            "Box", box_options,
+            key=f"{key_prefix}_filt_box",
+            help="Defenders in the box — number the offense had to block.",
+        )
+
+    # Down
+    down_options = ["All", "1st", "2nd", "3rd", "4th"]
+    with f5:
+        down_pick = st.selectbox(
+            "Down", down_options,
+            key=f"{key_prefix}_filt_down",
+        )
+
+    # Apply filters
+    if form_pick != "All":
+        pf = pf[pf["offense_formation"].str.title() == form_pick]
+    if pers_pick != "All":
+        pf = pf[pf["pers_bucket"] == pers_pick]
+    if box_pick != "All":
+        pf = pf[pf["box_bucket"] == box_pick]
+    if down_pick != "All":
+        d_map = {"1st": 1, "2nd": 2, "3rd": 3, "4th": 4}
+        pf = pf[pf["down"] == d_map[down_pick]]
+
+    return pf
 
 
 def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str,
@@ -874,17 +1040,25 @@ def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str,
     pf = pf.copy()
     pf["gap_code"] = pf.apply(_classify_gap, axis=1)
 
-    # ── Gap selector ──
+    # ── TOP FILTER ROW: alignment + down + box ──
+    # All filters narrow the entire panel — stat tiles, gap chart,
+    # detail table, box count, formation table — so the user can ask
+    # "how does this RB do on Shotgun 11 personnel runs against a
+    # heavy box on first down" with four clicks.
+    pf = _apply_run_scheme_filters(pf, key_prefix)
+
+    # ── Gap selector — narrows the box-count + formation tables to
+    # one specific gap so you can drill: "On B-Right, how do
+    # different formations look?"
     gap_options = ["All", "D-L", "C-L", "B-L", "A", "B-R", "C-R", "D-R"]
     gap_choice = st.pills(
-        "Filter by gap",
+        "Drill by gap",
         gap_options,
         default="All",
         key=f"{key_prefix}_gap_pick",
-        help="Filter the stat tiles, box-count table, and formation table "
-             "to runs through this gap. The gap-distribution chart and the "
-             "detail table directly under it always show the full split so "
-             "you keep your bearings.",
+        help="Filter the right-side box-count table and bottom formation "
+             "table to runs through this gap. The gap-distribution chart "
+             "always shows the full split so you keep your bearings.",
     )
     if gap_choice is None:
         gap_choice = "All"
@@ -937,136 +1111,105 @@ def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str,
         )
     st.markdown("")
 
-    c_left, c_right = st.columns([1, 1])
+    # ── FULL-WIDTH: line-of-scrimmage gap diagram ──
+    st.markdown("**Line of scrimmage** _(vertical bars = gap zones · "
+                "color = EPA per carry)_")
+    gap_pool = pf[pf["gap_code"].notna()]
+    if gap_pool.empty:
+        st.caption("_No labeled run locations in this slice. "
+                   "Loosen the filters above._")
+    else:
+        from lib_field_viz import build_gap_diagram
+        fig = build_gap_diagram(gap_pool, metric="epa_per_carry")
+        st.plotly_chart(fig, use_container_width=True,
+                          key=f"{key_prefix}_gap_diagram")
+        st.caption(
+            "_Each gap colored by EPA per carry — "
+            "<span style='color:#14b428'>vivid green</span> = elite, "
+            "<span style='color:#c8141c'>vivid red</span> = struggles. "
+            "Hover any zone for full breakdown. Where the back **ended up**, "
+            "not where the play was designed — design intent requires PFF._",
+            unsafe_allow_html=True,
+        )
 
-    # ── LEFT: gap distribution (always full pf, never filtered) ──
-    with c_left:
-        st.markdown("**Gap distribution** _(where the runs go · color = EPA)_")
-        gap_pool = pf[pf["gap_code"].notna()]
-        if gap_pool.empty:
-            st.caption("_No labeled run locations in this slice._")
-        else:
-            agg = (gap_pool.groupby("gap_code")
-                            .agg(carries=("yards_gained", "size"),
-                                  yards=("yards_gained", "sum"),
-                                  epa=("epa", "mean"),
-                                  success=("success", "mean"),
-                                  stuffs=("yards_gained",
-                                           lambda s: int((s.fillna(0) <= 0).sum())),
-                                  chunks=("yards_gained",
-                                           lambda s: int((s.fillna(0) >= 10).sum())),
-                                  tds=("touchdown",
-                                        lambda s: int(s.fillna(0).sum())))
-                            .reset_index())
-            agg["ypc"] = agg["yards"] / agg["carries"]
-            agg["display"] = agg["gap_code"].map(_GAP_DISPLAY).fillna(agg["gap_code"])
-            agg["sort"] = agg["gap_code"].apply(
-                lambda x: _GAP_ORDER.index(x) if x in _GAP_ORDER else 99)
-            agg = agg.sort_values("sort").reset_index(drop=True)
+        # Build the agg dataframe for the detail table below.
+        agg = (gap_pool.groupby("gap_code")
+                        .agg(carries=("yards_gained", "size"),
+                              yards=("yards_gained", "sum"),
+                              epa=("epa", "mean"),
+                              success=("fo_success", "mean"),
+                              stuffs=("yards_gained",
+                                       lambda s: int((s.fillna(0) <= 0).sum())),
+                              chunks=("yards_gained",
+                                       lambda s: int((s.fillna(0) >= 10).sum())),
+                              tds=("touchdown",
+                                    lambda s: int(s.fillna(0).sum())))
+                        .reset_index())
+        agg["ypc"] = agg["yards"] / agg["carries"]
+        agg["display"] = agg["gap_code"].map(_GAP_DISPLAY).fillna(agg["gap_code"])
+        agg["sort"] = agg["gap_code"].apply(
+            lambda x: _GAP_ORDER.index(x) if x in _GAP_ORDER else 99)
+        agg = agg.sort_values("sort").reset_index(drop=True)
 
-            bar_colors = [_epa_bar_color(e) for e in agg["epa"]]
-            hover = [
-                (f"<b>{d}</b><br>"
-                 f"{c} carries · {y:.2f} YPC<br>"
-                 f"EPA/Car: {e:+.2f}<br>"
-                 f"Success: {s*100:.0f}%<br>"
-                 f"Stuffed: {st_/c*100:.0f}% · Chunks: {ch/c*100:.0f}%<br>"
-                 f"TDs: {td}")
-                for d, c, y, e, s, st_, ch, td in zip(
-                    agg["display"], agg["carries"], agg["ypc"], agg["epa"],
-                    agg["success"], agg["stuffs"], agg["chunks"], agg["tds"])
-            ]
-            fig = go.Figure(go.Bar(
-                y=agg["display"], x=agg["carries"], orientation="h",
-                marker=dict(color=bar_colors,
-                             line=dict(color="rgba(0,0,0,0.15)", width=0.5)),
-                text=[f"{c} car · {y:.2f} YPC · {e:+.2f} EPA"
-                       for c, y, e in zip(agg["carries"], agg["ypc"], agg["epa"])],
-                textposition="outside",
-                textfont=dict(size=11, color="#2a3a4d"),
-                hovertext=hover, hoverinfo="text",
-            ))
-            fig.update_layout(
-                height=340, margin=dict(l=10, r=110, t=10, b=30),
-                xaxis=dict(title="Carries", gridcolor="#eef1f5",
-                            zeroline=False),
-                yaxis=dict(autorange="reversed"),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                showlegend=False,
-                bargap=0.25,
-            )
-            st.plotly_chart(fig, use_container_width=True,
-                              key=f"{key_prefix}_run_gap_chart")
-            st.caption(
-                "_Bar color: <span style='color:#1a8c3d'>strong green</span> = "
-                "EPA ≥ +0.10 · <span style='color:#7ab87a'>green</span> = positive · "
-                "<span style='color:#e08a8a'>red</span> = negative · "
-                "<span style='color:#b3261e'>strong red</span> = EPA ≤ −0.10. "
-                "Hover any bar for full breakdown._",
-                unsafe_allow_html=True,
-            )
+        # Compact detail table — full width below the diagram.
+        detail = pd.DataFrame({
+            "Gap": agg["display"],
+            "Car": agg["carries"].astype(int),
+            "YPC": [f"{y:.2f}" for y in agg["ypc"]],
+            "EPA/Car": [f"{e:+.2f}" for e in agg["epa"]],
+            "Success%": [f"{s*100:.0f}%" for s in agg["success"]],
+            "Stuff%": [f"{st_/c*100:.0f}%"
+                       for st_, c in zip(agg["stuffs"], agg["carries"])],
+            "Chunk%": [f"{ch/c*100:.0f}%"
+                       for ch, c in zip(agg["chunks"], agg["carries"])],
+            "TD": agg["tds"].astype(int),
+        })
+        st.dataframe(_style_epa_table(detail, "EPA/Car"),
+                      use_container_width=True, hide_index=True)
 
-            # Compact detail table beneath the chart — same agg, tabular form.
-            detail = pd.DataFrame({
-                "Gap": agg["display"],
-                "Car": agg["carries"].astype(int),
-                "YPC": [f"{y:.2f}" for y in agg["ypc"]],
-                "EPA/Car": [f"{e:+.2f}" for e in agg["epa"]],
-                "Success%": [f"{s*100:.0f}%" for s in agg["success"]],
-                "Stuff%": [f"{st_/c*100:.0f}%"
-                           for st_, c in zip(agg["stuffs"], agg["carries"])],
-                "Chunk%": [f"{ch/c*100:.0f}%"
-                           for ch, c in zip(agg["chunks"], agg["carries"])],
-                "TD": agg["tds"].astype(int),
+    # ── Performance by box count (full-width, filtered to gap pill) ──
+    title_suffix = "" if gap_choice == "All" else f"  ·  {gap_choice} only"
+    st.markdown(f"**Performance by box count**{title_suffix}")
+    pf2 = pf_filtered.copy()
+    pf2["box_bucket"] = pf2["defenders_in_box"].apply(_bucket_box)
+    box_pool = pf2[pf2["box_bucket"].notna()]
+    if box_pool.empty:
+        st.caption("_No labeled box counts in this slice._")
+    else:
+        min_n = 5 if gap_choice != "All" else 1
+        rows = []
+        for bucket in ["Light (≤6)", "Neutral (7)", "Stacked (8+)"]:
+            grp = box_pool[box_pool["box_bucket"] == bucket]
+            if len(grp) < min_n:
+                continue
+            car = len(grp)
+            yds = float(grp["yards_gained"].fillna(0).sum())
+            tds = int(grp["touchdown"].fillna(0).sum())
+            success = float(grp["fo_success"].fillna(0).mean())
+            epa = float(grp["epa"].fillna(0).mean())
+            chunks = int((grp["yards_gained"].fillna(0) >= 10).sum())
+            rows.append({
+                "Box": bucket,
+                "Car": car,
+                "YPC": f"{yds/car:.2f}",
+                "Success%": f"{success*100:.0f}%",
+                "EPA/Car": f"{epa:+.2f}",
+                "Chunks": chunks,
+                "TD": tds,
             })
-            st.dataframe(_style_epa_table(detail, "EPA/Car"),
+        if rows:
+            box_table = pd.DataFrame(rows)
+            st.dataframe(_style_epa_table(box_table, "EPA/Car"),
                           use_container_width=True, hide_index=True)
-
-    # ── RIGHT: performance by box count (filtered to selected gap) ──
-    with c_right:
-        title_suffix = "" if gap_choice == "All" else f"  ·  {gap_choice} only"
-        st.markdown(f"**Performance by box count**{title_suffix}")
-        pf2 = pf_filtered.copy()
-        pf2["box_bucket"] = pf2["defenders_in_box"].apply(_bucket_box)
-        box_pool = pf2[pf2["box_bucket"].notna()]
-        if box_pool.empty:
-            st.caption("_No labeled box counts in this slice._")
-        else:
-            min_n = 5 if gap_choice != "All" else 1
-            rows = []
-            for bucket in ["Light (≤6)", "Neutral (7)", "Stacked (8+)"]:
-                grp = box_pool[box_pool["box_bucket"] == bucket]
-                if len(grp) < min_n:
-                    continue
-                car = len(grp)
-                yds = float(grp["yards_gained"].fillna(0).sum())
-                tds = int(grp["touchdown"].fillna(0).sum())
-                success = float(grp["success"].fillna(0).mean())
-                epa = float(grp["epa"].fillna(0).mean())
-                chunks = int((grp["yards_gained"].fillna(0) >= 10).sum())
-                rows.append({
-                    "Box": bucket,
-                    "Car": car,
-                    "YPC": f"{yds/car:.2f}",
-                    "Success%": f"{success*100:.0f}%",
-                    "EPA/Car": f"{epa:+.2f}",
-                    "Chunks": chunks,
-                    "TD": tds,
-                })
-            if rows:
-                box_table = pd.DataFrame(rows)
-                st.dataframe(_style_epa_table(box_table, "EPA/Car"),
-                              use_container_width=True, hide_index=True)
-                if gap_choice != "All":
-                    st.caption(
-                        f"_Buckets with fewer than {min_n} carries through "
-                        f"the {gap_choice} gap are hidden — sample too thin._")
-            else:
+            if gap_choice != "All":
                 st.caption(
-                    f"_All box-count buckets have fewer than {min_n} "
-                    f"carries through the {gap_choice} gap. "
-                    "Try 'All career' in the dropdown above for a bigger sample._")
+                    f"_Buckets with fewer than {min_n} carries through "
+                    f"the {gap_choice} gap are hidden — sample too thin._")
+        else:
+            st.caption(
+                f"_All box-count buckets have fewer than {min_n} "
+                f"carries through the {gap_choice} gap. "
+                "Try 'All career' in the dropdown above for a bigger sample._")
 
     # ── Below: performance by formation × personnel (filtered) ──
     if pf_filtered["offense_formation"].notna().any():
@@ -1109,7 +1252,7 @@ def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str,
             car = len(grp)
             yds = float(grp["yards_gained"].fillna(0).sum())
             tds = int(grp["touchdown"].fillna(0).sum())
-            success = float(grp["success"].fillna(0).mean())
+            success = float(grp["fo_success"].fillna(0).mean())
             epa = float(grp["epa"].fillna(0).mean())
             chunks = int((grp["yards_gained"].fillna(0) >= 10).sum())
             stuffs = int((grp["yards_gained"].fillna(0) <= 0).sum())
@@ -1152,13 +1295,64 @@ def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str,
                 f"through the {gap_choice} gap. Try 'All career' above._")
 
 
+# Canonical order of cohort labels for each "color games by" choice.
+# The ordering matters — palette colors get assigned in this sequence,
+# so for ordinal axes (defense tier, box weight, blitz rate) the user
+# sees the gradient walk in the right direction.
+_COHORT_ORDERS = {
+    "Defense tier": ["🟥 Top 10%", "🟧 Top 25%", "🟨 Top half",
+                      "🟩 Bottom half", "🟦 Bottom 25%"],
+    "Roof":        ["Outdoor", "Indoor"],
+    "Surface":     ["Grass", "Turf"],
+    "Weather":     ["Cold (<40°)", "Windy (>15mph)", "Mild / clear"],
+    "Location":    ["Home", "Away"],
+    "Result":      ["Win", "Loss", "Tie"],
+    "Box defenders": ["Light box", "Balanced box", "Heavy box"],
+    "Blitz rate":  ["Low blitz (<20%)", "Avg blitz (20–35%)",
+                     "High blitz (>35%)"],
+    "Man / zone":  ["Zone-heavy (<40% man)", "Mixed coverage",
+                     "Man-heavy (>55% man)"],
+    "Top coverage shell": ["Cover-0", "Cover-1", "Cover-2", "Cover-3",
+                            "Cover-4", "Cover-6", "Cover-9", "2-Man"],
+    "Own personnel": ["11-heavy", "12-heavy", "21-heavy", "Mixed"],
+    "Own pace":    ["Run-heavy (<50%)", "Balanced (50–60%)",
+                     "Pass-heavy (>60%)"],
+    "Own formation profile": ["Under-center heavy", "Shotgun-heavy"],
+}
+
+
+# Coloring strategy per "color by" choice.
+#   "heatmap_forward":  first cohort = unfavorable for the player → red,
+#                       last = favorable → green. Use when the canonical
+#                       order goes hard→easy (e.g., Defense tier where
+#                       "Top 10%" is the toughest defense).
+#   "heatmap_reverse":  first cohort = favorable → green, last = unfavorable
+#                       → red. Use when canonical order goes easy→hard
+#                       (e.g., Box defenders: Light → Heavy).
+#   anything else / missing: categorical — use team palette shades.
+_COHORT_DIRECTIONS = {
+    "Defense tier":  "heatmap_forward",
+    "Box defenders": "heatmap_reverse",
+    "Blitz rate":    "heatmap_reverse",
+    "Man / zone":    "heatmap_reverse",
+}
+
+
 def _render_cohort_chart(games: pd.DataFrame, cfg: dict,
-                          key_prefix: str) -> None:
+                          key_prefix: str,
+                          theme: dict | None = None) -> None:
     """Game-by-game chart of the chosen stat. A 'Metric' picker switches
     which stat is plotted; a 'Color by' picker splits games into cohorts
     (legend doubles as a show/hide toggle). A dotted line shows the
-    season's expected baseline for each game's opponent."""
+    season's expected baseline for each game's opponent.
+
+    `theme` is the team theme from lib_shared.team_theme(). When given,
+    cohort colors are generated as shades of the team's primary +
+    secondary so every chart on the player's page stays in their team's
+    color family. Falls back to a generic palette if no theme.
+    """
     import plotly.graph_objects as go
+    from lib_shared import team_palette
 
     # Build the metric options from the position's summary_stats.
     # Each entry maps a friendly label → (actual_col, fmt).
@@ -1230,67 +1424,40 @@ def _render_cohort_chart(games: pd.DataFrame, cfg: dict,
     }
     color_col = color_col_map[color_by]
 
-    # Stable, intuitive color order — tougher D = warmer color, etc.
-    cohort_colors = {
-        # Defense tiers
-        "🟥 Top 10%": "#d62728",
-        "🟧 Top 25%": "#ff7f0e",
-        "🟨 Top half": "#bcbd22",
-        "🟩 Bottom half": "#2ca02c",
-        "🟦 Bottom 25%": "#1f77b4",
-        # Roof
-        "Outdoor": "#1f77b4",
-        "Indoor": "#9467bd",
-        # Surface
-        "Grass": "#2ca02c",
-        "Turf": "#8c564b",
-        # Weather
-        "Cold (<40°)": "#1f77b4",
-        "Windy (>15mph)": "#7f7f7f",
-        "Mild / clear": "#ff7f0e",
-        # Location
-        "Home": "#2ca02c",
-        "Away": "#d62728",
-        # Result
-        "Win": "#2ca02c",
-        "Loss": "#d62728",
-        "Tie": "#7f7f7f",
-        # Box defenders
-        "Light box": "#1f77b4",
-        "Balanced box": "#bcbd22",
-        "Heavy box": "#d62728",
-        # Blitz rate
-        "Low blitz (<20%)": "#2ca02c",
-        "Avg blitz (20–35%)": "#bcbd22",
-        "High blitz (>35%)": "#d62728",
-        # Man / zone
-        "Zone-heavy (<40% man)": "#1f77b4",
-        "Mixed coverage": "#bcbd22",
-        "Man-heavy (>55% man)": "#d62728",
-        # Coverage shells (categorical, distinct hues)
-        "Cover-0": "#8c0000",
-        "Cover-1": "#d62728",
-        "Cover-2": "#1f77b4",
-        "Cover-3": "#2ca02c",
-        "Cover-4": "#9467bd",
-        "Cover-6": "#ff7f0e",
-        "Cover-9": "#17becf",
-        "2-Man": "#e377c2",
-        # Own personnel
-        "11-heavy": "#1f77b4",
-        "12-heavy": "#ff7f0e",
-        "21-heavy": "#2ca02c",
-        "Mixed": "#7f7f7f",
-        # Own pace
-        "Run-heavy (<50%)": "#2ca02c",
-        "Balanced (50–60%)": "#bcbd22",
-        "Pass-heavy (>60%)": "#d62728",
-        # Own formation profile
-        "Under-center heavy": "#8c564b",
-        "Shotgun-heavy": "#1f77b4",
-        # Generic
-        "—": "#cccccc",
-    }
+    # Build the cohort → color map. Two strategies:
+    #   1. Ordinal (Defense tier, Box defenders, Blitz rate, Man/zone):
+    #      use a smooth red→yellow→green heatmap so color carries
+    #      data signal — red = unfavorable context for the player,
+    #      green = favorable. Direction is configured per color_by in
+    #      _COHORT_DIRECTIONS.
+    #   2. Categorical (everything else — Surface, Roof, Weather,
+    #      coverage shells, etc.): the categories don't have inherent
+    #      better/worse, so use shades of the team's primary/secondary
+    #      so identity stays consistent.
+    canonical = _COHORT_ORDERS.get(color_by, [])
+    cohorts_present = [c for c in games[color_col].dropna().unique()]
+    ordered = [c for c in canonical if c in cohorts_present]
+    extras = [c for c in cohorts_present if c not in canonical and c != "—"]
+    ordered = ordered + extras
+
+    direction = _COHORT_DIRECTIONS.get(color_by, "categorical")
+    if direction in ("heatmap_forward", "heatmap_reverse") and len(ordered) > 1:
+        from lib_shared import heatmap_color
+        n = len(ordered)
+        if direction == "heatmap_forward":
+            # First cohort = unfavorable → red (t=0); last = favorable → green (t=1)
+            colors_list = [heatmap_color(i / (n - 1), lo=0.0, hi=1.0)
+                           for i in range(n)]
+        else:  # heatmap_reverse
+            # First cohort = favorable → green; last = unfavorable → red
+            colors_list = [heatmap_color(i / (n - 1), lo=0.0, hi=1.0,
+                                          reverse=True)
+                           for i in range(n)]
+    else:
+        colors_list = team_palette(theme or {}, len(ordered))
+
+    cohort_colors = dict(zip(ordered, colors_list))
+    cohort_colors["—"] = "#cccccc"  # missing-data sentinel stays neutral
 
     # Career view = games span multiple seasons. Use date X-axis so
     # weeks from different years don't collide; single-season uses
@@ -1516,6 +1683,20 @@ def render_splits_section(*, player_name: str, season,
         games = adj[base_mask & (adj["season"] == season)].copy()
     if games.empty:
         return
+
+    # Resolve theme once at the top — every chart in this section
+    # inherits team primary/secondary so the player's page reads as a
+    # unified visual identity. Use the most-recent-season team in case
+    # of mid-career trade.
+    team_abbr = None
+    if "team" in games.columns:
+        latest_season = games["season"].max()
+        latest_rows = games[games["season"] == latest_season]
+        team_counts = latest_rows["team"].dropna().value_counts()
+        if not team_counts.empty:
+            team_abbr = str(team_counts.index[0])
+    from lib_shared import team_theme as _team_theme
+    section_theme = _team_theme(team_abbr)
 
     # Join schedule data on (season, week, team). Each game has one team
     # entry per side, so we match the player's `team` column.
@@ -2034,7 +2215,7 @@ def render_splits_section(*, player_name: str, season,
 
         # ── Cohort chart now uses the filtered set ──
         st.markdown("**Game-by-game performance**")
-        _render_cohort_chart(filt, cfg, key_prefix)
+        _render_cohort_chart(filt, cfg, key_prefix, theme=section_theme)
         st.markdown("")
 
         # ── Game-by-game table ──

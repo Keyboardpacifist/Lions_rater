@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ..base import PositionConfig
+from ..base import PositionConfig, fo_success_per_play
 
 
 # ── PBP aggregation: rushing (advanced/situational only) ─────────────────────
@@ -59,12 +59,15 @@ def agg_rusher_advanced(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.DataF
         (rush_plays["is_gl"] == 1)
         & (rush_plays.get("rush_touchdown", pd.Series(0)).fillna(0) == 1)
     ).astype(int)
+    # FO/PFR success rate — replaces nflverse's EPA-based success
+    # so our numbers align with PFF / Pro-Football-Reference.
+    rush_plays["fo_success"] = fo_success_per_play(rush_plays)
 
     def _agg(group):
         return pd.Series({
             "pbp_carries": len(group),
             "epa_per_rush": group["epa"].mean(),
-            "rush_success_rate": group["success"].mean(),
+            "rush_success_rate": group["fo_success"].mean(),
             "explosive_10_count": group["is_explosive_10"].sum(),
             "explosive_15_count": group["is_explosive_15"].sum(),
             "rz_carries": group["is_rz"].sum(),
@@ -99,10 +102,13 @@ def agg_rb_receiver_advanced(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.
     if passes.empty:
         return pd.DataFrame()
 
+    # FO/PFR success rate — aligns with PFF / PFR conventions
+    passes["fo_success"] = fo_success_per_play(passes)
+
     def _agg(group):
         return pd.Series({
             "rec_epa_per_target": group["epa"].mean(),
-            "rec_success_rate": group["success"].mean(),
+            "rec_success_rate": group["fo_success"].mean(),
         })
 
     stats = (
