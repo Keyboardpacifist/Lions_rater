@@ -1,185 +1,222 @@
 {
   "ARI": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/ari.png",
     "name": "Arizona Cardinals",
     "primary": "#97233F",
     "secondary": "#000000"
   },
   "ATL": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/atl.png",
     "name": "Atlanta Falcons",
     "primary": "#A71930",
     "secondary": "#000000"
   },
   "BAL": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png",
     "name": "Baltimore Ravens",
     "primary": "#241773",
     "secondary": "#9E7C0C"
   },
   "BUF": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/buf.png",
     "name": "Buffalo Bills",
     "primary": "#00338D",
     "secondary": "#C60C30"
   },
   "CAR": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500-dark/car.png",
     "name": "Carolina Panthers",
     "primary": "#0085CA",
     "secondary": "#000000"
   },
   "CHI": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/chi.png",
     "name": "Chicago Bears",
     "primary": "#0B162A",
     "secondary": "#E64100"
   },
   "CIN": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/cin.png",
     "name": "Cincinnati Bengals",
     "primary": "#FB4F14",
     "secondary": "#000000"
   },
   "CLE": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/cle.png",
     "name": "Cleveland Browns",
     "primary": "#FF3C00",
     "secondary": "#311D00"
   },
   "DAL": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/dal.png",
     "name": "Dallas Cowboys",
     "primary": "#002244",
     "secondary": "#B0B7BC"
   },
   "DEN": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/den.png",
     "name": "Denver Broncos",
     "primary": "#002244",
     "secondary": "#FB4F14"
   },
   "DET": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/det.png",
     "name": "Detroit Lions",
     "primary": "#0076B6",
     "secondary": "#B0B7BC"
   },
   "GB": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/gb.png",
     "name": "Green Bay Packers",
     "primary": "#203731",
     "secondary": "#FFB612"
   },
   "HOU": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/hou.png",
     "name": "Houston Texans",
     "primary": "#03202F",
     "secondary": "#A71930"
   },
   "IND": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/ind.png",
     "name": "Indianapolis Colts",
     "primary": "#002C5F",
     "secondary": "#a5acaf"
   },
   "JAX": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/jax.png",
     "name": "Jacksonville Jaguars",
     "primary": "#006778",
     "secondary": "#000000"
   },
   "KC": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
     "name": "Kansas City Chiefs",
     "primary": "#E31837",
     "secondary": "#FFB612"
   },
   "LA": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/lar.png",
     "name": "Los Angeles Rams",
     "primary": "#003594",
     "secondary": "#FFD100"
   },
   "LAC": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/lac.png",
     "name": "Los Angeles Chargers",
     "primary": "#007BC7",
     "secondary": "#ffc20e"
   },
   "LAR": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/lar.png",
     "name": "Los Angeles Rams",
     "primary": "#003594",
     "secondary": "#FFD100"
   },
   "LV": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/lv.png",
     "name": "Las Vegas Raiders",
     "primary": "#000000",
     "secondary": "#A5ACAF"
   },
   "MIA": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/mia.png",
     "name": "Miami Dolphins",
     "primary": "#008E97",
     "secondary": "#F58220"
   },
   "MIN": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/min.png",
     "name": "Minnesota Vikings",
     "primary": "#4F2683",
     "secondary": "#FFC62F"
   },
   "NE": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/ne.png",
     "name": "New England Patriots",
     "primary": "#002244",
     "secondary": "#C60C30"
   },
   "NO": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/no.png",
     "name": "New Orleans Saints",
     "primary": "#D3BC8D",
     "secondary": "#000000"
   },
   "NYG": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/nyg.png",
     "name": "New York Giants",
     "primary": "#0B2265",
     "secondary": "#A71930"
   },
   "NYJ": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/nyj.png",
     "name": "New York Jets",
     "primary": "#003F2D",
     "secondary": "#000000"
   },
   "OAK": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/lv.png",
     "name": "Oakland Raiders",
     "primary": "#000000",
     "secondary": "#A5ACAF"
   },
   "PHI": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
     "name": "Philadelphia Eagles",
     "primary": "#004C54",
     "secondary": "#A5ACAF"
   },
   "PIT": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/pit.png",
     "name": "Pittsburgh Steelers",
     "primary": "#000000",
     "secondary": "#FFB612"
   },
   "SD": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/lac.png",
     "name": "San Diego Chargers",
     "primary": "#007BC7",
     "secondary": "#ffc20e"
   },
   "SEA": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/sea.png",
     "name": "Seattle Seahawks",
     "primary": "#002244",
     "secondary": "#69be28"
   },
   "SF": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png",
     "name": "San Francisco 49ers",
     "primary": "#AA0000",
     "secondary": "#B3995D"
   },
   "STL": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/lar.png",
     "name": "St. Louis Rams",
     "primary": "#003594",
     "secondary": "#FFD100"
   },
   "TB": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/tb.png",
     "name": "Tampa Bay Buccaneers",
     "primary": "#A71930",
     "secondary": "#322F2B"
   },
   "TEN": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/ten.png",
     "name": "Tennessee Titans",
     "primary": "#4495D2",
     "secondary": "#D50A0A"
   },
   "WAS": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/wsh.png",
     "name": "Washington Commanders",
     "primary": "#5A1414",
     "secondary": "#FFB612"
   },
   "WSH": {
+    "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/wsh.png",
     "name": "Washington Commanders",
     "primary": "#5A1414",
     "secondary": "#FFB612"

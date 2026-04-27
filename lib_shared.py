@@ -788,6 +788,148 @@ def _load_team_colors_cached(path_str: str):
     return _json.loads(p.read_text())
 
 
+# Default fallback theme — Lions colors. Used when an abbreviation
+# isn't in team_colors.json (college players, free agents, anomalies).
+_FALLBACK_THEME = {
+    "abbr": "",
+    "name": "",
+    "primary": "#0076B6",
+    "secondary": "#B0B7BC",
+    "logo": "",
+}
+
+
+def _hex_to_rgb(h: str) -> tuple[int, int, int]:
+    h = h.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+def _rgb_to_hex(r: float, g: float, b: float) -> str:
+    return f"#{int(round(r)):02x}{int(round(g)):02x}{int(round(b)):02x}"
+
+
+def _adjust_lightness(hex_color: str, factor: float) -> str:
+    """Multiply HSL lightness by `factor`, clamp to [0.15, 0.78] so the
+    palette stays readable on a white background — colors never get so
+    light they vanish or so dark they look black. factor>1 lightens,
+    <1 darkens. Saturation is also nudged up slightly when lightening
+    so that washed-out secondaries (silver, gold) keep some chroma."""
+    import colorsys
+    r, g, b = _hex_to_rgb(hex_color)
+    h, l, s = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+    l = max(0.15, min(0.78, l * factor))
+    if factor > 1.0 and s < 0.4:
+        s = min(1.0, s + 0.15)  # boost chroma on lightened pale colors
+    r2, g2, b2 = colorsys.hls_to_rgb(h, l, s)
+    return _rgb_to_hex(r2 * 255, g2 * 255, b2 * 255)
+
+
+def heatmap_color(value: float, lo: float = 0.0, hi: float = 1.0,
+                  reverse: bool = False) -> str:
+    """Map a numeric value to a binary-diverging red↔green heatmap.
+
+    Below the midpoint = shades of red (vivid at the floor, pale near
+    the middle). Above the midpoint = shades of green (pale near the
+    middle, vivid at the ceiling). **No yellow zone** — the signal is
+    binary "good or bad," intensity says "how far."
+
+    Used anywhere a number means good or bad — combine percentile
+    bars, gap-chart EPA bars, ordinal cohort buckets. Colors are
+    HSL-derived at controlled saturation/lightness so they stay
+    vivid yet readable on a white background.
+
+    `lo` and `hi` define the value range; values outside the range
+    clamp to the extreme color. `reverse=True` flips the meaning
+    (use when "higher is worse" — e.g., heavy-box-rate where
+    Heavy Box is the unfavorable cohort for the player).
+    """
+    if hi == lo:
+        t = 0.5
+    else:
+        t = max(0.0, min(1.0, (value - lo) / (hi - lo)))
+    if reverse:
+        t = 1.0 - t
+
+    # Direct RGB interpolation between fixed red and green endpoints —
+    # NO hue rotation through orange/yellow. Distance from midpoint
+    # controls intensity (0 = very pale, 1 = vivid).
+    #   Pale red  (250, 200, 200)  →  Vivid red  (200,  20,  28)
+    #   Pale green (200, 245, 205) →  Vivid green ( 20, 180,  40)
+    distance = abs(t - 0.5) * 2.0
+    if t >= 0.5:
+        r = 200.0 - 180.0 * distance
+        g = 245.0 -  65.0 * distance
+        b = 205.0 - 165.0 * distance
+    else:
+        r = 250.0 -  50.0 * distance
+        g = 200.0 - 180.0 * distance
+        b = 200.0 - 172.0 * distance
+    return f"#{int(round(r)):02x}{int(round(g)):02x}{int(round(b)):02x}"
+
+
+def team_palette(theme: dict, n: int) -> list[str]:
+    """Generate `n` distinct chart colors derived from the team's
+    primary + secondary. Used for any chart with multiple categories
+    (cohort splits, multi-line, multi-category bar) so every visual
+    on a player's page stays in the team's color family.
+
+    Pattern for n ≥ 3: alternate primary and secondary, walking through
+    increasing lightness contrast. Each team produces a unique-looking
+    palette that's still tribally identifiable.
+    """
+    primary = (theme or {}).get("primary", "#0076B6")
+    secondary = (theme or {}).get("secondary", "#B0B7BC")
+    if n <= 0:
+        return []
+    if n == 1:
+        return [primary]
+    if n == 2:
+        return [primary, secondary]
+    # Lightness factors: base, light, dark, very-light, very-dark.
+    factors = [1.0, 1.4, 0.65, 1.7, 0.4]
+    bases = [primary, secondary]
+    palette: list[str] = []
+    for i in range(n):
+        layer = i // 2
+        base = bases[i % 2]
+        factor = factors[layer % len(factors)]
+        palette.append(_adjust_lightness(base, factor))
+    return palette
+
+
+def team_theme(team_abbr: str | None) -> dict:
+    """Return the visual theme for an NFL team — the single source of
+    truth for color and logo on every player surface (panels, cards,
+    trading-card export). One call returns:
+
+        {abbr, name, primary, secondary, logo}
+
+    Falls back to Lions blue when the abbr isn't recognized. The logo
+    URL comes from data/team_colors.json (sourced from nflverse, served
+    by ESPN's CDN). When the JSON entry has no logo (legacy / college
+    case), falls back to building the ESPN URL from the abbr.
+    """
+    from pathlib import Path
+    if not team_abbr:
+        return dict(_FALLBACK_THEME)
+    colors_path = Path(__file__).resolve().parent / "data" / "team_colors.json"
+    tc_all = _load_team_colors_cached(str(colors_path))
+    info = tc_all.get(team_abbr)
+    if not info:
+        return dict(_FALLBACK_THEME, abbr=team_abbr)
+    logo = info.get("logo")
+    if not logo:
+        espn_abbr = _ESPN_LOGO_OVERRIDES.get(team_abbr, team_abbr.lower())
+        logo = f"https://a.espncdn.com/i/teamlogos/nfl/500/{espn_abbr}.png"
+    return {
+        "abbr": team_abbr,
+        "name": info.get("name", team_abbr),
+        "primary": info.get("primary", _FALLBACK_THEME["primary"]),
+        "secondary": info.get("secondary", _FALLBACK_THEME["secondary"]),
+        "logo": logo,
+    }
+
+
 def render_player_card(*, player_name, position_label, season_str,
                        score, stat_specs, view_row,
                        team_abbr=None,
@@ -992,9 +1134,13 @@ def _position_workout_means(path_str: str, positions: tuple):
 
 def render_combine_chart(*, player_name, position, workouts_path, key,
                          pool_positions=None,
-                         above_color="#0076B6", below_color="#C8102E"):
+                         above_color=None, below_color=None):
     """Render a horizontal percentile bar chart of the player's combine
     workout measurables, vs. the all-time pool for `position`.
+
+    Each bar is colored by its percentile via a smooth red→yellow→green
+    heatmap (vivid green at 90th+, red at 10th-) — color carries data
+    signal, not team identity, because this is an *information* chart.
 
     `position` is the display label (e.g., 'WR', 'RB', 'OL', 'LB', 'S').
     `pool_positions`, if given, is the list of pos codes used to build
@@ -1004,6 +1150,9 @@ def render_combine_chart(*, player_name, position, workouts_path, key,
     Z-scores for lower-is-better metrics (40, 3-cone, shuttle) are flipped
     so positive always means 'above the position mean'. Skips silently if
     the player has no usable combine data.
+
+    `above_color` / `below_color` are deprecated and ignored — kept on
+    the signature for backwards compatibility with existing callers.
     """
     import streamlit as st
     import plotly.graph_objects as go
@@ -1067,7 +1216,8 @@ def render_combine_chart(*, player_name, position, workouts_path, key,
         )
         # Bar end label: player's value, then the historical mean in parens.
         texts.append(f"{raw_str} ({mean_str})")
-        colors.append(above_color if pct >= 50 else below_color)
+        # Smooth percentile heatmap — red at 10th-, green at 90th+.
+        colors.append(heatmap_color(pct, lo=0.0, hi=100.0))
 
     fig.add_trace(go.Bar(
         x=pcts, y=y_idx, orientation="h",

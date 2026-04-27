@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ..base import PositionConfig
+from ..base import PositionConfig, fo_success_per_play
 
 
 # ── PBP aggregation: passing advanced ────────────────────────────────────────
@@ -34,10 +34,14 @@ def agg_passing_advanced(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.Data
     if drops.empty:
         return pd.DataFrame()
 
+    # FO/PFR success rate — replaces nflverse EPA-success so QB
+    # success rate aligns with PFF / PFR conventions.
+    drops["fo_success"] = fo_success_per_play(drops)
+
     def _agg(group):
         return pd.Series({
             "pbp_dropbacks": len(group),
-            "pass_success_rate": group["success"].mean(),
+            "pass_success_rate": group["fo_success"].mean(),
             "pbp_pass_epa_per_play": group["epa"].mean(),
             # CPOE per stint: mean across this QB's pass attempts on this team.
             # PBP cpoe is per-play; mean is the right per-stint aggregate.
@@ -68,10 +72,12 @@ def agg_qb_rushing_advanced(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.D
     if rushes.empty:
         return pd.DataFrame()
 
+    rushes["fo_success"] = fo_success_per_play(rushes)
+
     def _agg(group):
         return pd.Series({
             "rush_epa_per_carry": group["epa"].mean(),
-            "rush_success_rate": group["success"].mean(),
+            "rush_success_rate": group["fo_success"].mean(),
         })
 
     stats = (

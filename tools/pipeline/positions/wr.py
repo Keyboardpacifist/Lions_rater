@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ..base import PositionConfig
+from ..base import PositionConfig, fo_success_per_play
 
 
 # ── PBP aggregation: ADVANCED stats only ────────────────────────────────────
@@ -39,11 +39,14 @@ def agg_receiver_advanced(pbp: pd.DataFrame, population: pd.DataFrame) -> pd.Dat
     if passes.empty:
         return pd.DataFrame()
 
+    # FO/PFR success rate — what fans see on PFR & broadcast graphics.
+    passes["fo_success"] = fo_success_per_play(passes)
+
     def _agg(group):
         return pd.Series(
             {
                 "epa_per_target": group["epa"].mean(),
-                "success_rate": group["success"].mean(),
+                "success_rate": group["fo_success"].mean(),
                 "avg_cpoe": (
                     group["cpoe"].mean() if "cpoe" in group.columns else np.nan
                 ),
