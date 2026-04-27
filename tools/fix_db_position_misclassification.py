@@ -87,11 +87,19 @@ def fix_pool(parquet_name: str,
     else:
         kept = df[primary_mask].copy()
 
+    # Drop exact-duplicate rows that accumulate when this script (or
+    # the augmenter) is re-run. Without this, repeated invocations
+    # silently double the row count for affected players.
+    pre_dedupe = len(kept)
+    kept = kept.drop_duplicates().reset_index(drop=True)
+    deduped = pre_dedupe - len(kept)
+
     after = len(kept)
     dropped = before - after
 
     print(f"\n→ {parquet_name}")
-    print(f"   {before:,} rows → {after:,} rows ({dropped:,} dropped)")
+    print(f"   {before:,} rows → {after:,} rows ({dropped:,} dropped, "
+          f"{deduped:,} of those were exact duplicates)")
     print(f"   Primary positions kept: {sorted(primary_positions)}")
     if allowed_depth_for_pool:
         print(f"   Ambiguous '{ambiguous_position}' rows kept when "
