@@ -482,12 +482,11 @@ def render_card_download_button(*,
     safe_name = safe_name.replace(" ", "_") or "player"
     filename = f"{safe_name}_card.png"
 
-    # Inline preview — centered, ~360px wide so the 4:5 portrait
-    # card sits nicely beside the rest of the page without
-    # dominating it. Followed by the download button.
-    _spacer_l, _img_col, _spacer_r = st.columns([1, 2, 1])
+    # The trading card is the page hero. Centered, capped at 480px so
+    # the 4:5 portrait dominates the top-of-page without overflowing.
+    _spacer_l, _img_col, _spacer_r = st.columns([1, 3, 1])
     with _img_col:
-        st.image(png_bytes, width=360,
+        st.image(png_bytes, width=480,
                   caption=f"{player_name} — {season_str}")
         st.download_button(
             label="🃏  Download trading card",
