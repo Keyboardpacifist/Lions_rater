@@ -525,6 +525,16 @@ with c2:
                 else:
                     st.caption(f"_No NFL data for {_cmp_name}._")
 
+# ── Game-by-game splits explorer ─────────────────────────────
+from lib_splits import render_splits_section as _render_splits_section
+_render_splits_section(
+    player_name=selected,
+    season=selected_season,
+    position_group="S",
+    key_prefix=f"safety_{player.get('player_id') or selected}",
+    is_career_view=_yr["is_career_view"],
+)
+
 career_arc_section(
     player=player,
     league_parquet_path=DATA_PATH,

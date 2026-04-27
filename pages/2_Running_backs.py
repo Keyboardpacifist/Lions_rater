@@ -1081,6 +1081,39 @@ with c2:
                     st.caption(f"_No NFL data for {_cmp_name}._")
 
 
+# ── Run scheme profile (exposed, full-width) ─────────────────
+from lib_splits import render_run_scheme_section as _render_run_scheme_section
+_render_run_scheme_section(
+    player_name=selected,
+    season=selected_season,
+    key_prefix=f"rb_run_{player.get('player_id') or selected}",
+    is_career_view=_yr["is_career_view"],
+)
+
+# ── Coverage matchup profile (exposed, full-width) ───────────
+from lib_splits import render_coverage_matchup_section as _render_coverage_matchup_section
+_render_coverage_matchup_section(
+    player_name=selected,
+    season=selected_season,
+    position_group="RB",
+    key_prefix=f"rb_cov_{player.get('player_id') or selected}",
+    is_career_view=_yr["is_career_view"],
+)
+
+# ── Game-by-game splits explorer (NEW) ───────────────────────
+# Schedule-adjusted form / strength / consistency tiles + filters
+# (opponent strength, roof, surface, weather, location, result).
+# Single-season only; renders nothing in all-career view.
+from lib_splits import render_splits_section as _render_splits_section
+_render_splits_section(
+    player_name=selected,
+    season=selected_season,
+    position_group="RB",
+    key_prefix=f"rb_{player.get('player_id') or selected}",
+    is_career_view=_yr["is_career_view"],
+)
+
+
 # ============================================================
 # Community algorithms
 # ============================================================

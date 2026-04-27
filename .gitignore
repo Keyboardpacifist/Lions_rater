@@ -52,3 +52,6 @@ data.zip
 # See CLAUDE.md Phase 3 for the plan to move parquets out of git
 # data/*.parquet
 # data/college/*.parquet
+
+# Game logs — reproducible from tools/game_logs/ scripts; do not commit
+data/games/
