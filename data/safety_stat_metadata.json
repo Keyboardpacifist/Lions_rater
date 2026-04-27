@@ -6,7 +6,13 @@
     "passes_defended_per_game_z": 1,
     "interceptions_per_game_z": 1,
     "tfl_per_game_z": 2,
-    "sacks_per_game_z": 1
+    "sacks_per_game_z": 1,
+    "targets_per_game_z": 2,
+    "completion_pct_allowed_z": 1,
+    "yards_per_target_allowed_z": 1,
+    "passer_rating_allowed_z": 1,
+    "avg_depth_of_target_z": 3,
+    "missed_tackle_pct_z": 2
   },
   "stat_labels": {
     "solo_tackle_rate_z": "Solo tackle rate",
@@ -15,7 +21,13 @@
     "passes_defended_per_game_z": "Passes defended/game",
     "interceptions_per_game_z": "Interceptions/game",
     "tfl_per_game_z": "TFLs per game",
-    "sacks_per_game_z": "Sacks per game"
+    "sacks_per_game_z": "Sacks per game",
+    "targets_per_game_z": "Targets per game (in coverage)",
+    "completion_pct_allowed_z": "Completion % allowed",
+    "yards_per_target_allowed_z": "Yards per target allowed",
+    "passer_rating_allowed_z": "Passer rating allowed",
+    "avg_depth_of_target_z": "Average depth of target (ADOT)",
+    "missed_tackle_pct_z": "Missed tackle %"
   },
   "stat_methodology": {
     "solo_tackle_rate_z": {
@@ -52,6 +64,36 @@
       "what": "Sacks per game",
       "how": "Sacks / games.",
       "limits": "Blitzing safeties only."
+    },
+    "passer_rating_allowed_z": {
+      "what": "QB rating when targeting this safety. The classic coverage stat.",
+      "how": "PFR season-level passer rating allowed, z-scored with sign inverted.",
+      "limits": "Volume-dependent. Free safeties see more attempts than box safeties."
+    },
+    "completion_pct_allowed_z": {
+      "what": "% of passes completed when this safety was targeted. Lower is better.",
+      "how": "PFR cmp_percent allowed; z-score inverted.",
+      "limits": "Slot safeties face shorter, easier-to-complete throws."
+    },
+    "yards_per_target_allowed_z": {
+      "what": "Yards allowed per target. Lower is better.",
+      "how": "PFR yds_tgt allowed; z-score inverted.",
+      "limits": "YAC partly out of the safety's control."
+    },
+    "targets_per_game_z": {
+      "what": "How often opponents threw at this safety.",
+      "how": "PFR targets / games.",
+      "limits": "High volume can be 'most-targeted area' OR 'weak link picked on' — context matters."
+    },
+    "avg_depth_of_target_z": {
+      "what": "Average depth of target on plays this safety was the nearest defender.",
+      "how": "PFR dadot.",
+      "limits": "Free safeties play deeper than strong / nickel safeties."
+    },
+    "missed_tackle_pct_z": {
+      "what": "% of tackle attempts missed. Lower is better.",
+      "how": "PFR missed_tackle_pct, z-score inverted so positive = reliable tackler.",
+      "limits": "PFR scoring; not always identical to PFF's."
     }
   }
 }

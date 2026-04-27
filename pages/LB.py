@@ -33,39 +33,89 @@ def load_lb_metadata():
     with open(METADATA_PATH) as f: return json.load(f)
 
 RAW_COL_MAP = {
+    "tackles_per_game_z": "tackles_per_game",
     "solo_tackle_rate_z": "solo_tackle_rate", "tackles_per_snap_z": "tackles_per_snap",
     "tfl_per_game_z": "tfl_per_game", "sacks_per_game_z": "sacks_per_game",
     "qb_hits_per_game_z": "qb_hits_per_game",
     "forced_fumbles_per_game_z": "forced_fumbles_per_game",
     "passes_defended_per_game_z": "passes_defended_per_game",
     "interceptions_per_game_z": "interceptions_per_game",
+    # Pass rush (PFR — added Phase 2.5)
+    "pressures_per_game_z": "pressures_per_game",
+    "hurries_per_game_z": "hurries_per_game",
+    "qb_knockdowns_per_game_z": "qb_knockdowns_per_game",
+    "missed_tackle_pct_z": "missed_tackle_pct",
+    # Coverage (PFR — LBs in pass coverage)
+    "coverage_targets_per_game_z": "coverage_targets_per_game",
+    "completion_pct_allowed_z": "completion_pct_allowed",
+    "yards_per_target_allowed_z": "yards_per_target_allowed",
+    "passer_rating_allowed_z": "passer_rating_allowed",
 }
 
 BUNDLES = {
     "tackling": {
         "label": "🎯 Tackling",
-        "description": "Does he make tackles reliably? Solo tackle rate and tackles per snap.",
+        "description": "Does he tackle reliably? Volume + reliability — total tackles, solo rate, missed-tackle %.",
         "why": "Think sure tackling is the foundation of great linebacker play? Crank this up.",
-        "stats": {"solo_tackle_rate_z": 0.50, "tackles_per_snap_z": 0.50},
+        "stats": {
+            "tackles_per_game_z": 0.30, "solo_tackle_rate_z": 0.20,
+            "tackles_per_snap_z": 0.20, "missed_tackle_pct_z": 0.30,
+        },
     },
     "pass_rush": {
         "label": "🔥 Blitzing",
-        "description": "Can he rush the passer? Sacks, QB hits, and TFLs.",
-        "why": "Value linebackers who can get to the QB on blitzes? Slide this right.",
-        "stats": {"sacks_per_game_z": 0.35, "qb_hits_per_game_z": 0.30, "tfl_per_game_z": 0.35},
+        "description": "Can he rush the passer when sent? Sacks, hits, hurries, knockdowns.",
+        "why": "Value linebackers who get to the QB on blitzes? Slide this right.",
+        "stats": {
+            "sacks_per_game_z": 0.25, "qb_hits_per_game_z": 0.15,
+            "pressures_per_game_z": 0.25, "hurries_per_game_z": 0.15,
+            "qb_knockdowns_per_game_z": 0.10, "tfl_per_game_z": 0.10,
+        },
     },
     "coverage": {
-        "label": "🛡️ Coverage & playmaking",
-        "description": "Does he create turnovers and break up passes? INTs, PDs, and forced fumbles.",
-        "why": "Want linebackers who can cover and create turnovers? Slide right.",
-        "stats": {"interceptions_per_game_z": 0.30, "passes_defended_per_game_z": 0.35, "forced_fumbles_per_game_z": 0.35},
+        "label": "🛡️ Pass coverage",
+        "description": "How does he hold up in coverage? Targets faced, catch rate allowed, passer rating.",
+        "why": "Coverage LBs vs run-stopping LBs — slide this right if you value the cover skill.",
+        "stats": {
+            "passer_rating_allowed_z": 0.30,
+            "completion_pct_allowed_z": 0.25,
+            "yards_per_target_allowed_z": 0.20,
+            "passes_defended_per_game_z": 0.15,
+            "interceptions_per_game_z": 0.10,
+        },
+    },
+    "playmaking": {
+        "label": "💥 Playmaking",
+        "description": "Does he create turnovers? Forced fumbles, pass deflections, picks.",
+        "why": "Want LBs who change games with takeaways? Slide right.",
+        "stats": {
+            "forced_fumbles_per_game_z": 0.40,
+            "passes_defended_per_game_z": 0.30,
+            "interceptions_per_game_z": 0.30,
+        },
     },
 }
-DEFAULT_BUNDLE_WEIGHTS = {"tackling": 50, "pass_rush": 40, "coverage": 40}
+DEFAULT_BUNDLE_WEIGHTS = {"tackling": 50, "pass_rush": 40, "coverage": 40, "playmaking": 30}
 
-RADAR_STATS = ["solo_tackle_rate_z", "tackles_per_snap_z", "tfl_per_game_z", "sacks_per_game_z", "qb_hits_per_game_z", "forced_fumbles_per_game_z", "passes_defended_per_game_z", "interceptions_per_game_z"]
+RADAR_STATS = list(RAW_COL_MAP.keys())
 RADAR_INVERT = set()
-RADAR_LABEL_OVERRIDES = {"solo_tackle_rate_z": "Solo tackle %", "tackles_per_snap_z": "Tackles/snap", "tfl_per_game_z": "TFLs", "sacks_per_game_z": "Sacks", "qb_hits_per_game_z": "QB hits", "forced_fumbles_per_game_z": "Forced fumbles", "passes_defended_per_game_z": "Pass defense", "interceptions_per_game_z": "Interceptions"}
+RADAR_LABEL_OVERRIDES = {
+    "tackles_per_game_z": "Tackles/game",
+    "solo_tackle_rate_z": "Solo tackle %", "tackles_per_snap_z": "Tackles/snap",
+    "tfl_per_game_z": "TFLs", "sacks_per_game_z": "Sacks",
+    "qb_hits_per_game_z": "QB hits",
+    "forced_fumbles_per_game_z": "Forced fumbles",
+    "passes_defended_per_game_z": "Pass defense",
+    "interceptions_per_game_z": "Interceptions",
+    "pressures_per_game_z": "Pressures",
+    "hurries_per_game_z": "Hurries",
+    "qb_knockdowns_per_game_z": "Knockdowns",
+    "missed_tackle_pct_z": "Tackle reliability",
+    "coverage_targets_per_game_z": "Coverage targets",
+    "completion_pct_allowed_z": "Catch% allowed",
+    "yards_per_target_allowed_z": "Y/Tgt allowed",
+    "passer_rating_allowed_z": "Passer rating allowed",
+}
 
 
 # ── Score formatting ──────────────────────────────────────────

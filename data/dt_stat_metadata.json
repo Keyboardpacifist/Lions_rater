@@ -7,6 +7,10 @@
     "sacks_per_game_z": 1,
     "qb_hits_per_game_z": 2,
     "pressure_rate_z": 3,
+    "pressures_per_game_z": 1,
+    "hurries_per_game_z": 2,
+    "qb_knockdowns_per_game_z": 2,
+    "missed_tackle_pct_z": 2,
     "tfl_per_game_z": 1,
     "solo_tackle_rate_z": 2,
     "tackles_per_snap_z": 2,
@@ -18,6 +22,10 @@
     "sacks_per_game_z": "Sacks per game",
     "qb_hits_per_game_z": "QB hits per game",
     "pressure_rate_z": "Pressure rate",
+    "pressures_per_game_z": "Pressures per game",
+    "hurries_per_game_z": "Hurries per game",
+    "qb_knockdowns_per_game_z": "QB knockdowns per game",
+    "missed_tackle_pct_z": "Missed tackle % (lower is better)",
     "tfl_per_game_z": "Tackles for loss per game",
     "solo_tackle_rate_z": "Solo tackle rate",
     "tackles_per_snap_z": "Tackles per snap",
@@ -70,7 +78,29 @@
       "what": "Interceptions per game.",
       "how": "From player_stats. Per-stint count / games.",
       "limits": "Even rarer than forced fumbles for edge players."
+    },
+    "pressures_per_game_z": {
+      "what": "Total pressures per game (sacks + hits + hurries).",
+      "how": "PFR pressures / games_played.",
+      "limits": "PFR's chart, not PFF's. Methods differ slightly between sources."
+    },
+    "hurries_per_game_z": {
+      "what": "Hurries per game (pressure that didn't sack or knock down).",
+      "how": "PFR hurries / games_played.",
+      "limits": "Subset of total pressures. Sometimes overlaps with hits."
+    },
+    "qb_knockdowns_per_game_z": {
+      "what": "QB knockdowns per game (got the QB to the ground without a sack).",
+      "how": "PFR qb_knockdowns / games_played.",
+      "limits": "Different from QB hits in nflverse player_stats."
+    },
+    "missed_tackle_pct_z": {
+      "what": "% of tackle attempts that were missed. Lower is better \u2014 z-score is INVERTED so higher z = more reliable tackler.",
+      "how": "PFR missed_tackle_pct, then z-scored with sign flipped so positive = good.",
+      "limits": "PFR's charting subjectivity; not always the same as PFF's missed tackle count."
     }
   },
-  "invert_stats": []
+  "invert_stats": [
+    "missed_tackle_pct"
+  ]
 }

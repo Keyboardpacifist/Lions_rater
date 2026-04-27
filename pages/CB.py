@@ -38,33 +38,70 @@ RAW_COL_MAP = {
     "forced_fumbles_per_game_z": "forced_fumbles_per_game",
     "passes_defended_per_game_z": "passes_defended_per_game",
     "interceptions_per_game_z": "interceptions_per_game",
+    # Coverage quality (PFR — added Phase 2.5)
+    "targets_per_game_z": "targets_per_game",
+    "completion_pct_allowed_z": "completion_pct_allowed",
+    "yards_per_target_allowed_z": "yards_per_target_allowed",
+    "passer_rating_allowed_z": "passer_rating_allowed",
+    "avg_depth_of_target_z": "avg_depth_of_target",
+    "missed_tackle_pct_z": "missed_tackle_pct",
 }
 
 BUNDLES = {
     "coverage": {
-        "label": "🛡️ Coverage",
-        "description": "Does he lock down receivers? Passes defended and interceptions.",
-        "why": "Think ball skills and coverage are what define a great CB? Crank this up.",
-        "stats": {"passes_defended_per_game_z": 0.45, "interceptions_per_game_z": 0.55},
+        "label": "🛡️ Coverage quality",
+        "description": "Catch rate allowed, yards per target allowed, passer rating against.",
+        "why": "Think the heart of CB play is suppressing what the QB can do when targeting you? Crank this up.",
+        "stats": {
+            "passer_rating_allowed_z": 0.35,
+            "completion_pct_allowed_z": 0.25,
+            "yards_per_target_allowed_z": 0.25,
+            "passes_defended_per_game_z": 0.10,
+            "interceptions_per_game_z": 0.05,
+        },
+    },
+    "ball_hawking": {
+        "label": "🦅 Ball hawking",
+        "description": "Plays on the ball. PDs and INTs in volume.",
+        "why": "Want CBs who turn targets into incompletions and turnovers? Slide right.",
+        "stats": {
+            "passes_defended_per_game_z": 0.45,
+            "interceptions_per_game_z": 0.55,
+        },
     },
     "tackling": {
         "label": "🎯 Tackling",
-        "description": "Does he finish plays? Solo tackles and tackle rate.",
-        "why": "Value corners who tackle well in the run game and on screens? Slide right.",
-        "stats": {"solo_tackle_rate_z": 0.40, "tackles_per_snap_z": 0.40, "tfl_per_game_z": 0.20},
+        "description": "Does he finish plays in the run game and on screens? Tackle reliability.",
+        "why": "Value CBs who tackle well rather than dance around contact? Slide right.",
+        "stats": {
+            "solo_tackle_rate_z": 0.30, "tackles_per_snap_z": 0.30,
+            "missed_tackle_pct_z": 0.30, "tfl_per_game_z": 0.10,
+        },
     },
     "playmaking": {
         "label": "💥 Playmaking",
-        "description": "Does he force turnovers beyond just INTs? Forced fumbles and TFLs.",
+        "description": "Forced fumbles and TFLs — does he create chaos?",
         "why": "Want corners who create chaos, not just coverage? Slide right.",
         "stats": {"forced_fumbles_per_game_z": 0.50, "tfl_per_game_z": 0.50},
     },
 }
-DEFAULT_BUNDLE_WEIGHTS = {"coverage": 60, "tackling": 30, "playmaking": 30}
+DEFAULT_BUNDLE_WEIGHTS = {"coverage": 70, "ball_hawking": 40, "tackling": 30, "playmaking": 30}
 
-RADAR_STATS = ["solo_tackle_rate_z", "tackles_per_snap_z", "tfl_per_game_z", "forced_fumbles_per_game_z", "passes_defended_per_game_z", "interceptions_per_game_z"]
+RADAR_STATS = list(RAW_COL_MAP.keys())
 RADAR_INVERT = set()
-RADAR_LABEL_OVERRIDES = {"solo_tackle_rate_z": "Solo tackle %", "tackles_per_snap_z": "Tackles/snap", "tfl_per_game_z": "TFLs", "forced_fumbles_per_game_z": "Forced fumbles", "passes_defended_per_game_z": "Pass defense", "interceptions_per_game_z": "Interceptions"}
+RADAR_LABEL_OVERRIDES = {
+    "solo_tackle_rate_z": "Solo tackle %", "tackles_per_snap_z": "Tackles/snap",
+    "tfl_per_game_z": "TFLs",
+    "forced_fumbles_per_game_z": "Forced fumbles",
+    "passes_defended_per_game_z": "Pass defense",
+    "interceptions_per_game_z": "Interceptions",
+    "targets_per_game_z": "Targets",
+    "completion_pct_allowed_z": "Catch% allowed",
+    "yards_per_target_allowed_z": "Y/Tgt allowed",
+    "passer_rating_allowed_z": "Passer rating allowed",
+    "avg_depth_of_target_z": "ADOT",
+    "missed_tackle_pct_z": "Tackle reliability",
+}
 
 
 # ── Score formatting ──────────────────────────────────────────

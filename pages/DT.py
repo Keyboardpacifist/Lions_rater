@@ -34,7 +34,12 @@ def load_dt_metadata():
 
 RAW_COL_MAP = {
     "sacks_per_game_z": "sacks_per_game", "qb_hits_per_game_z": "qb_hits_per_game",
-    "pressure_rate_z": "pressure_rate", "tfl_per_game_z": "tfl_per_game",
+    "pressure_rate_z": "pressure_rate",
+    "pressures_per_game_z": "pressures_per_game",
+    "hurries_per_game_z": "hurries_per_game",
+    "qb_knockdowns_per_game_z": "qb_knockdowns_per_game",
+    "missed_tackle_pct_z": "missed_tackle_pct",
+    "tfl_per_game_z": "tfl_per_game",
     "solo_tackle_rate_z": "solo_tackle_rate", "tackles_per_snap_z": "tackles_per_snap",
     "forced_fumbles_per_game_z": "forced_fumbles_per_game",
     "passes_defended_per_game_z": "passes_defended_per_game",
@@ -43,15 +48,22 @@ RAW_COL_MAP = {
 BUNDLES = {
     "pass_rush": {
         "label": "🔥 Interior pressure",
-        "description": "Can he collapse the pocket? Sacks, QB hits, and total pressures from the inside.",
+        "description": "Can he collapse the pocket? Sacks, hits, hurries, and total pressures from the inside.",
         "why": "Think interior pass rush is what separates great DTs from good ones? Crank this up.",
-        "stats": {"sacks_per_game_z": 0.35, "qb_hits_per_game_z": 0.30, "pressure_rate_z": 0.35},
+        "stats": {
+            "sacks_per_game_z": 0.25, "qb_hits_per_game_z": 0.15,
+            "pressures_per_game_z": 0.25, "hurries_per_game_z": 0.15,
+            "qb_knockdowns_per_game_z": 0.10, "pressure_rate_z": 0.10,
+        },
     },
     "run_defense": {
         "label": "🛡️ Run stuffing",
-        "description": "Can he plug gaps and stop the run? TFLs, solo tackles, and tackle rate.",
+        "description": "Can he plug gaps and stop the run? TFLs, solo tackles, tackle reliability.",
         "why": "Value DTs who eat blockers and stuff the run? Slide this right.",
-        "stats": {"tfl_per_game_z": 0.40, "solo_tackle_rate_z": 0.30, "tackles_per_snap_z": 0.30},
+        "stats": {
+            "tfl_per_game_z": 0.35, "solo_tackle_rate_z": 0.20,
+            "tackles_per_snap_z": 0.25, "missed_tackle_pct_z": 0.20,
+        },
     },
     "playmaking": {
         "label": "💥 Playmaking",
@@ -62,9 +74,19 @@ BUNDLES = {
 }
 DEFAULT_BUNDLE_WEIGHTS = {"pass_rush": 60, "run_defense": 50, "playmaking": 30}
 
-RADAR_STATS = ["sacks_per_game_z", "qb_hits_per_game_z", "pressure_rate_z", "tfl_per_game_z", "solo_tackle_rate_z", "tackles_per_snap_z", "forced_fumbles_per_game_z", "passes_defended_per_game_z"]
+RADAR_STATS = list(RAW_COL_MAP.keys())
 RADAR_INVERT = set()
-RADAR_LABEL_OVERRIDES = {"sacks_per_game_z": "Sacks", "qb_hits_per_game_z": "QB hits", "pressure_rate_z": "Pressure", "tfl_per_game_z": "TFLs", "solo_tackle_rate_z": "Solo tackle %", "tackles_per_snap_z": "Tackles/snap", "forced_fumbles_per_game_z": "Forced fumbles", "passes_defended_per_game_z": "Pass defense"}
+RADAR_LABEL_OVERRIDES = {
+    "sacks_per_game_z": "Sacks", "qb_hits_per_game_z": "QB hits",
+    "pressure_rate_z": "Pressure rate", "tfl_per_game_z": "TFLs",
+    "pressures_per_game_z": "Pressures",
+    "hurries_per_game_z": "Hurries",
+    "qb_knockdowns_per_game_z": "Knockdowns",
+    "missed_tackle_pct_z": "Tackle reliability",
+    "solo_tackle_rate_z": "Solo tackle %", "tackles_per_snap_z": "Tackles/snap",
+    "forced_fumbles_per_game_z": "Forced fumbles",
+    "passes_defended_per_game_z": "Pass defense",
+}
 
 
 # ── Score formatting ──────────────────────────────────────────

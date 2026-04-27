@@ -58,7 +58,7 @@ DT_CONFIG = PositionConfig(
     },
     compute_derived=compute_dt_derived,
     stats_to_zscore=STATS_TO_ZSCORE,
-    invert_stats=set(),
+    invert_stats={"missed_tackle_pct"},  # lower is better
     zscore_groups=None,
     output_columns=OUTPUT_COLUMNS,
     stat_tiers=STAT_TIERS,
