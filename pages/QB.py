@@ -538,18 +538,7 @@ NFL_SUM_COLS = {"off_snaps", "def_snaps", "snaps", "games", "targets",
                 "fg_att", "xp_made", "punts", "punt_yards", "total_yards"}
 # ── Trading-card visual ────────────────────────────────────────
 _team_abbr = _yr["team_str"] if _yr["team_str"] else (player.get("recent_team") or "")
-render_player_card(
-    player_name=selected,
-    position_label=(player.get("position") or "QB"),
-    team_abbr=_team_abbr,
-    season_str=_yr["season_str"],
-    score=_view_score,
-    stat_specs=QB_STAT_SPECS,
-    view_row=view_row,
-    player_career=player_career,
-    is_career_view=_yr["is_career_view"],
-    sum_cols=NFL_SUM_COLS,
-)
+# In-page banner removed — the trading card below is now the page hero.
 
 # ── Trading-card export ──────────────────────────────────────────
 def _safe_fmt(v, fmt="{:.0f}"):
