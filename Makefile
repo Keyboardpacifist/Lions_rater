@@ -1,4 +1,4 @@
-.PHONY: install run test lint data-refresh game-logs game-logs-nfl game-logs-college game-logs-pbp game-logs-participation defense-scheme clean
+.PHONY: install run test lint data-refresh game-logs game-logs-nfl game-logs-college game-logs-pbp game-logs-participation defense-scheme data-upload clean
 
 PYTHON := python3
 VENV := venv
@@ -73,6 +73,11 @@ game-logs-participation: install
 # Depends on pbp + participation parquets — run those first if missing.
 defense-scheme: install
 	$(VENV)/bin/python tools/game_logs/build_defense_scheme.py
+
+# Upload runtime parquets to Supabase Storage so production reads them.
+# Run after `make game-logs` / `make defense-scheme` to refresh live.
+data-upload: install
+	$(VENV)/bin/python tools/game_logs/upload_to_supabase.py
 
 # ── Cleanup ──────────────────────────────────────────────────
 

@@ -18,6 +18,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from lib_data_remote import get_parquet_path
 
 _DATA_GAMES = Path(__file__).resolve().parent / "data" / "games"
 _ADJUSTED = _DATA_GAMES / "nfl_weekly_adjusted.parquet"
@@ -227,39 +228,40 @@ POSITION_CONFIG = {
 }
 
 
+# All loaders go through the remote helper: locally they pick up the
+# file from data/games/; on Streamlit Cloud they download once from
+# Supabase Storage and cache. Returning None in either path keeps every
+# downstream renderer's silent-skip branch working.
+def _read_remote(filename: str):
+    p = get_parquet_path(filename)
+    if p is None:
+        return None
+    return pd.read_parquet(p)
+
+
 @st.cache_data
 def _load_adjusted():
-    if not _ADJUSTED.exists():
-        return None
-    return pd.read_parquet(_ADJUSTED)
+    return _read_remote("nfl_weekly_adjusted.parquet")
 
 
 @st.cache_data
 def _load_defensive_player_adjusted():
-    if not _DEF_PLAYER_ADJ.exists():
-        return None
-    return pd.read_parquet(_DEF_PLAYER_ADJ)
+    return _read_remote("nfl_defensive_player_adjusted.parquet")
 
 
 @st.cache_data
 def _load_offense_baselines():
-    if not _OFF_BASELINES.exists():
-        return None
-    return pd.read_parquet(_OFF_BASELINES)
+    return _read_remote("nfl_offense_baselines.parquet")
 
 
 @st.cache_data
 def _load_baselines():
-    if not _BASELINES.exists():
-        return None
-    return pd.read_parquet(_BASELINES)
+    return _read_remote("nfl_defense_baselines.parquet")
 
 
 @st.cache_data
 def _load_schedules():
-    if not _SCHEDULES.exists():
-        return None
-    return pd.read_parquet(_SCHEDULES)
+    return _read_remote("nfl_schedules.parquet")
 
 
 @st.cache_data
@@ -267,45 +269,35 @@ def _load_def_scheme_game():
     """Per-game defensive scheme profile (box, blitz, man/zone, shells,
     personnel). Optional — older seasons (2016-17) have a subset of
     these fields; 2018+ has the full set."""
-    if not _DEF_SCHEME_GAME.exists():
-        return None
-    return pd.read_parquet(_DEF_SCHEME_GAME)
+    return _read_remote("nfl_defense_game_scheme.parquet")
 
 
 @st.cache_data
 def _load_explosive_player_games():
     """Per (player_id, season, week, team) explosive run + reception
     counts. Industry standard cuts: rush ≥10 yds, rec ≥20 yds."""
-    if not _EXPL_PLAYER_GAMES.exists():
-        return None
-    return pd.read_parquet(_EXPL_PLAYER_GAMES)
+    return _read_remote("nfl_explosive_player_games.parquet")
 
 
 @st.cache_data
 def _load_explosive_def_baselines():
     """Per (defense_team, season, position) avg explosive plays
     allowed per qualifying player-game."""
-    if not _EXPL_DEF_BASELINES.exists():
-        return None
-    return pd.read_parquet(_EXPL_DEF_BASELINES)
+    return _read_remote("nfl_explosive_def_baselines.parquet")
 
 
 @st.cache_data
 def _load_advanced_player_games():
     """Per-(player, game) advanced offensive metrics: chunk completions,
     deep attempts, YAC chunks, RZ targets, etc."""
-    if not _ADV_PLAYER_GAMES.exists():
-        return None
-    return pd.read_parquet(_ADV_PLAYER_GAMES)
+    return _read_remote("nfl_advanced_player_games.parquet")
 
 
 @st.cache_data
 def _load_advanced_def_baselines():
     """Per (defense_team, season, position) avg advanced metrics
     allowed per qualifying player-game."""
-    if not _ADV_DEF_BASELINES.exists():
-        return None
-    return pd.read_parquet(_ADV_DEF_BASELINES)
+    return _read_remote("nfl_advanced_def_baselines.parquet")
 
 
 @st.cache_data
@@ -313,40 +305,39 @@ def _load_offense_game_scheme():
     """Per-game OFFENSIVE scheme profile: shotgun rate, personnel
     breakdown, pass rate, deep attempt rate, etc. Used as 'own
     offense' context on offensive player pages."""
-    if not _OFF_SCHEME_GAME.exists():
-        return None
-    return pd.read_parquet(_OFF_SCHEME_GAME)
+    return _read_remote("nfl_offense_game_scheme.parquet")
 
 
 @st.cache_data
 def _load_route_distribution():
     """Per (player_id, season, week, team) targeted-route counts —
     rt_go / rt_hitch / rt_slant / rt_out / etc."""
-    if not _ROUTE_PLAYER_GAMES.exists():
-        return None
-    return pd.read_parquet(_ROUTE_PLAYER_GAMES)
+    return _read_remote("nfl_route_distribution_player_games.parquet")
 
 
 @st.cache_data
 def _load_targeted_plays():
     """Per-targeted-play feed: route × man/zone × coverage shell ×
     result. Used to build the coverage matchup profile per receiver."""
-    if not _TARGETED_PLAYS.exists():
-        return None
-    return pd.read_parquet(_TARGETED_PLAYS)
+    return _read_remote("nfl_targeted_plays.parquet")
 
 
 @st.cache_data
 def _load_rusher_plays():
     """Per-run-play feed: gap / direction / box / formation / personnel
     + result. Used to build the run scheme profile per RB."""
-    if not _RUSHER_PLAYS.exists():
-        return None
-    return pd.read_parquet(_RUSHER_PLAYS)
+    return _read_remote("nfl_rusher_plays.parquet")
 
 
 def _data_ready() -> bool:
-    return all(p.exists() for p in (_ADJUSTED, _BASELINES, _SCHEDULES))
+    """True if the core parquets are obtainable (locally OR remotely).
+    On production, get_parquet_path triggers a download which is then
+    cached, so this becomes True once Supabase has the files."""
+    return all(get_parquet_path(f) is not None for f in (
+        "nfl_weekly_adjusted.parquet",
+        "nfl_defense_baselines.parquet",
+        "nfl_schedules.parquet",
+    ))
 
 
 # ──────────────────────────────────────────────────────────────
