@@ -470,16 +470,7 @@ if "rb_tiers_enabled" not in st.session_state:
 # ============================================================
 # Header
 # ============================================================
-st.subheader(f"{team_name} running backs")
-st.markdown(
-    "What makes a great player? **You decide.** Drag the sliders to weight what you "
-    "value, and watch the Lions running backs re-rank in real time. "
-    "_No 'best back' — just **your** best back._"
-)
-st.caption(
-    f"{selected_season} regular season • Compared against all RBs with 100+ snaps • "
-    "Every Lions RB visible"
-)
+st.subheader("Running backs")
 
 
 # ============================================================
@@ -544,11 +535,6 @@ if st.session_state.rb_loaded_algo:
 # ============================================================
 # Tier filter (main content area)
 # ============================================================
-st.markdown("### Which stats should count?")
-st.caption(
-    "Check more boxes to include more types of stats. More boxes = more data, but less certainty."
-)
-
 tier_cols = st.columns(4)
 new_enabled = []
 for i, tier in enumerate([1, 2, 3, 4]):
@@ -712,8 +698,6 @@ else:
 # ============================================================
 # Ranking table
 # ============================================================
-st.subheader("Ranking")
-
 # Hide-small-samples checkbox
 hide_small = st.checkbox(
     "Hide players with severe small samples (<20% of group leader's carries)",
@@ -753,13 +737,6 @@ if len(ranked) > 0:
     )
     _top_warn = sample_size_caption(_top_pct)
 
-st.caption(
-    "⚠️ Backs with very few carries have noisy scores — extreme values "
-    "reflect small sample sizes, not skill. Use the 'Minimum carries' "
-    "filter in the sidebar to hide low-volume backs if desired. "
-    "🔴 = severe small sample (<20% of group leader's carries), 🟡 = caution (20–50%)."
-)
-
 def _fmt_int(v): return f"{int(v)}" if pd.notna(v) else "—"
 def _fmt_signed(v, places=2): return f"{v:+.{places}f}" if pd.notna(v) else "—"
 def _fmt_float(v, places=2): return f"{v:.{places}f}" if pd.notna(v) else "—"
@@ -786,12 +763,7 @@ selected = render_master_detail_leaderboard(
     season=selected_season,
     top_banner_html=_top_html,
     top_banner_warn=_top_warn,
-    leaderboard_caption=(
-        "**YPC** = yards per carry · **EPA/rush** = Expected Points Added per rush "
-        "(modern efficiency stat) · **YACO/att** = yards after contact per attempt "
-        "(PFR — playmaker indicator). "
-        "**Click any player name above** to view their profile."
-    ),
+    leaderboard_caption="",
 )
 if selected is None:
     with st.expander("ℹ️ How is this score calculated?"):
@@ -869,7 +841,6 @@ if len(season_stints) > 1:
         "YACO/att": _fmt_float(season_yaco, 2),
     })
     st.dataframe(pd.DataFrame(split_rows), use_container_width=True, hide_index=True)
-    st.caption(f"⮕ marks the stint shown on this page ({display_abbr(player['recent_team'])}). Stints chronological. Total uses weighted aggregates.")
 
 # ── Unified Season picker — drives stat bar + bundle table + radar ──
 player_career = all_rbs_full[all_rbs_full["player_id"] == player.get("player_id")]
