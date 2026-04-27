@@ -7,3 +7,4 @@ polars>=1.0,<2
 plotly>=5.0
 scipy>=1.11
 nflreadpy>=0.1.5
+requests>=2.28
