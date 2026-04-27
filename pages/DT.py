@@ -557,6 +557,48 @@ render_player_card(
     sum_cols=NFL_SUM_COLS,
 )
 
+# ── Trading-card export ──────────────────────────────────────────
+def _safe_fmt(v, fmt="{:.0f}"):
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+    try: return fmt.format(v)
+    except: return str(v)
+
+_card_narrative = None
+try:
+    from lib_field_viz import build_position_narrative
+    _season_pool = all_dts_full[all_dts_full["season_year"] == selected_season]
+    _card_narrative = build_position_narrative(
+        player_row=view_row, peer_pool=_season_pool,
+        stat_labels=stat_labels, position_label="interior linemen",
+    )
+except Exception:
+    _card_narrative = None
+
+_card_stats = [
+    ("TFL",    _safe_fmt(view_row.get("def_tackles_for_loss"), "{:.1f}"), ""),
+    ("Sacks",  _safe_fmt(view_row.get("def_sacks"), "{:.1f}"),
+               _safe_fmt(view_row.get("def_qb_hits"), "{:.0f} hits")),
+    ("Press%", _safe_fmt(view_row.get("pressure_rate"), "{:.1%}"), ""),
+    ("Snaps",  _safe_fmt(view_row.get("def_snaps")), ""),
+]
+
+from lib_shared import team_theme as _theme
+from lib_trading_card import render_card_download_button as _render_card
+_render_card(
+    player_name=selected,
+    position_label=(player.get("position") or "DT"),
+    season_str=_yr["season_str"] or f"Season {selected_season}",
+    score=_view_score,
+    narrative=_card_narrative,
+    key_stats=_card_stats,
+    player_id=player.get("player_id") or selected,
+    team_abbr=_team_abbr,
+    theme=_theme(_team_abbr),
+    preset_name=(st.session_state.dt_loaded_algo.get("name")
+                  if st.session_state.get("dt_loaded_algo") else None),
+    key_prefix=f"dt_{player.get('player_id') or selected}",
+)
+
 # ── Combine workout chart vs. all-time DT/NT pool ──────────────
 _WORKOUTS_PATH = Path(__file__).resolve().parent.parent / "data" / "college" / "nfl_all_workouts.parquet"
 render_combine_chart(

@@ -897,6 +897,63 @@ render_player_card(
     sum_cols=NFL_SUM_COLS,
 )
 
+# ── Trading-card export ──────────────────────────────────────────
+# One-click PNG download for sharing. Card is composed from the
+# current slider preset's score + signature/weakness narrative +
+# 4 headline counting/rate stats.
+def _safe_format(val, fmt: str = "{:.0f}") -> str:
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return "—"
+    try:
+        return fmt.format(val)
+    except (ValueError, TypeError):
+        return str(val)
+
+# Build the narrative for the card (same engine the page panel uses).
+_card_narrative = None
+try:
+    from lib_field_viz import build_rb_narrative
+    from lib_splits import _classify_gap, _load_rusher_plays, _load_rb_peer_pools
+    rp_full = _load_rusher_plays()
+    if rp_full is not None and player.get("player_id"):
+        pf_career = rp_full[rp_full["player_id"] == player.get("player_id")].copy()
+        if not pf_career.empty:
+            pf_career["gap_code"] = pf_career.apply(_classify_gap, axis=1)
+            _card_narrative = build_rb_narrative(
+                pf_career, peer_pools=_load_rb_peer_pools(),
+            )
+except Exception:
+    _card_narrative = None
+
+# 4 headline stats for the card stats row.
+_card_stats = [
+    ("Carries",  _safe_format(view_row.get("carries")),
+                 _safe_format(view_row.get("yards_per_carry"), "{:.1f} YPC")),
+    ("Rush yds", _safe_format(view_row.get("rush_yards")),
+                 _safe_format(view_row.get("rush_tds"), "{:.0f} TD")),
+    ("EPA/Car",  _safe_format(view_row.get("epa_per_rush"), "{:+.2f}"), ""),
+    ("Success%", _safe_format(view_row.get("rush_success_rate"), "{:.0%}"),
+                 "FO definition"),
+]
+
+from lib_shared import team_theme as _theme
+from lib_trading_card import render_card_download_button as _render_card
+
+_render_card(
+    player_name=selected,
+    position_label=(player.get("position") or "RB"),
+    season_str=_yr["season_str"] or f"Season {selected_season}",
+    score=_view_score,
+    narrative=_card_narrative,
+    key_stats=_card_stats,
+    player_id=player.get("player_id") or selected,
+    team_abbr=_team_abbr,
+    theme=_theme(_team_abbr),
+    preset_name=(st.session_state.rb_loaded_algo.get("name")
+                  if st.session_state.get("rb_loaded_algo") else None),
+    key_prefix=f"rb_{player.get('player_id') or selected}",
+)
+
 # ── Combine workout chart vs. all-time RB pool ────────────────
 _WORKOUTS_PATH = Path(__file__).resolve().parent.parent / "data" / "college" / "nfl_all_workouts.parquet"
 render_combine_chart(
