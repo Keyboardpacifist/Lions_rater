@@ -18,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from lib_data_remote import get_parquet_path
+from lib_data_remote import get_parquet_path, get_last_failure
 
 _DATA_GAMES = Path(__file__).resolve().parent / "data" / "games"
 _ADJUSTED = _DATA_GAMES / "nfl_weekly_adjusted.parquet"
@@ -333,11 +333,20 @@ def _data_ready() -> bool:
     """True if the core parquets are obtainable (locally OR remotely).
     On production, get_parquet_path triggers a download which is then
     cached, so this becomes True once Supabase has the files."""
-    return all(get_parquet_path(f) is not None for f in (
+    ok = all(get_parquet_path(f) is not None for f in (
         "nfl_weekly_adjusted.parquet",
         "nfl_defense_baselines.parquet",
         "nfl_schedules.parquet",
     ))
+    if not ok:
+        # TEMPORARY diagnostic — surface why the panels aren't showing
+        # on production so we can debug without server logs. Remove
+        # once the panels are reliably loading.
+        reason = get_last_failure() or "unknown"
+        st.caption(f"⚠️ _Game-log data not available on this server — "
+                    f"`{reason}`. Splits / coverage / run-scheme panels "
+                    f"will be missing._")
+    return ok
 
 
 # ──────────────────────────────────────────────────────────────
