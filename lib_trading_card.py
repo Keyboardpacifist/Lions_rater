@@ -482,12 +482,49 @@ def render_card_download_button(*,
     safe_name = safe_name.replace(" ", "_") or "player"
     filename = f"{safe_name}_card.png"
 
-    # The trading card is the page hero. Centered, capped at 480px so
-    # the 4:5 portrait dominates the top-of-page without overflowing.
-    _spacer_l, _img_col, _spacer_r = st.columns([1, 3, 1])
-    with _img_col:
-        st.image(png_bytes, width=480,
-                  caption=f"{player_name} — {season_str}")
+    # Render the card inside a full-width team-themed gradient frame so
+    # the 4:5 portrait fills the page hero slot without warping its
+    # share-ready aspect. Embed the PNG as a base64 data URI inside the
+    # gradient div — this is the only reliable way to make Streamlit
+    # render a colored background *behind* an image.
+    import base64
+    primary = theme.get("primary", "#1F2A44")
+    secondary = theme.get("secondary", "#0B1730")
+    b64 = base64.b64encode(png_bytes).decode("ascii")
+    st.markdown(
+        f"""
+<div style="
+    background: linear-gradient(135deg, {primary} 0%, {secondary} 100%);
+    padding: 36px 24px 28px 24px;
+    border-radius: 18px;
+    margin: 0 0 12px 0;
+    text-align: center;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+">
+    <img src="data:image/png;base64,{b64}"
+         alt="{player_name} trading card"
+         style="
+             max-width: 560px;
+             width: 100%;
+             border-radius: 12px;
+             box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+         "/>
+    <div style="
+        margin-top: 12px;
+        color: rgba(255,255,255,0.85);
+        font-size: 13px;
+        font-weight: 500;
+        letter-spacing: 0.3px;
+    ">
+        {player_name} — {season_str}
+    </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    _spacer_l, _btn_col, _spacer_r = st.columns([1, 2, 1])
+    with _btn_col:
         st.download_button(
             label="🃏  Download trading card",
             data=png_bytes,
