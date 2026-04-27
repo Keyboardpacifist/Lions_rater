@@ -431,28 +431,40 @@ def render_card_download_button(*,
     from scipy.stats import norm
 
     @st.cache_data
-    def _headshot_url_for(pid: str) -> str | None:
+    def _player_meta_for(pid: str) -> dict:
+        """One rosters round-trip → headshot URL + jersey number.
+        Returns {} on any failure so callers can default cleanly."""
         try:
             import nflreadpy as nfl
         except Exception:
-            return None
+            return {}
         try:
-            # Use most-recent season for the headshot — players' team
-            # photos refresh annually, so the latest is freshest.
+            # Most-recent season first (team photos refresh annually).
             ros = nfl.load_rosters([2025]).to_pandas()
             matches = ros[ros.get("gsis_id") == pid]
             if matches.empty:
-                # Fall back to the prior season
                 ros = nfl.load_rosters([2024]).to_pandas()
                 matches = ros[ros.get("gsis_id") == pid]
             if matches.empty:
-                return None
-            url = matches["headshot_url"].dropna()
-            return str(url.iloc[0]) if not url.empty else None
+                return {}
+            row = matches.iloc[0]
+            out = {}
+            url = row.get("headshot_url")
+            if url and not pd.isna(url):
+                out["headshot"] = str(url)
+            num = row.get("jersey_number")
+            if num is not None and not pd.isna(num):
+                try:
+                    out["number"] = int(num)
+                except (ValueError, TypeError):
+                    pass
+            return out
         except Exception:
-            return None
+            return {}
 
-    headshot_url = _headshot_url_for(str(player_id)) if player_id else None
+    _meta = _player_meta_for(str(player_id)) if player_id else {}
+    headshot_url = _meta.get("headshot")
+    jersey_number = _meta.get("number")
 
     if score is None or pd.isna(score):
         score_label = "—"
@@ -482,42 +494,82 @@ def render_card_download_button(*,
     safe_name = safe_name.replace(" ", "_") or "player"
     filename = f"{safe_name}_card.png"
 
-    # Render the card inside a full-width team-themed gradient frame so
-    # the 4:5 portrait fills the page hero slot without warping its
-    # share-ready aspect. Embed the PNG as a base64 data URI inside the
-    # gradient div — this is the only reliable way to make Streamlit
-    # render a colored background *behind* an image.
+    # Render the card mounted on a full-width team banner — wings flank
+    # the card with team logo (left) and jersey number (right). Wings
+    # stretch to match the card's height via flexbox align-items: stretch.
+    # Card stays clean (4:5 share-ready PNG); wings are HTML-only chrome.
     import base64
     primary = theme.get("primary", "#1F2A44")
     secondary = theme.get("secondary", "#0B1730")
+    logo_url = theme.get("logo", "")
     b64 = base64.b64encode(png_bytes).decode("ascii")
+
+    left_wing = (
+        f'<img src="{logo_url}" alt="team logo" '
+        f'style="max-width: 78%; max-height: 55%; object-fit: contain; '
+        f'filter: drop-shadow(0 4px 10px rgba(0,0,0,0.35));"/>'
+        if logo_url else ""
+    )
+    right_wing = (
+        f'<div style="font-family: -apple-system, BlinkMacSystemFont, '
+        f'\'Segoe UI\', sans-serif; font-size: clamp(80px, 12vw, 200px); '
+        f'font-weight: 900; color: rgba(255,255,255,0.92); line-height: 1; '
+        f'text-shadow: 0 4px 14px rgba(0,0,0,0.35); letter-spacing: -4px;">'
+        f'#{jersey_number}</div>'
+        if jersey_number is not None else ""
+    )
+
     st.markdown(
         f"""
-<div style="
+<style>
+.lr-card-banner {{
     background: linear-gradient(135deg, {primary} 0%, {secondary} 100%);
-    padding: 36px 24px 28px 24px;
     border-radius: 18px;
     margin: 0 0 12px 0;
-    text-align: center;
     box-shadow: 0 6px 18px rgba(0,0,0,0.18);
-">
-    <img src="data:image/png;base64,{b64}"
-         alt="{player_name} trading card"
-         style="
-             max-width: 560px;
-             width: 100%;
-             border-radius: 12px;
-             box-shadow: 0 12px 32px rgba(0,0,0,0.45);
-         "/>
-    <div style="
-        margin-top: 12px;
-        color: rgba(255,255,255,0.85);
-        font-size: 13px;
-        font-weight: 500;
-        letter-spacing: 0.3px;
-    ">
-        {player_name} — {season_str}
+    padding: 28px 24px;
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    gap: 24px;
+}}
+.lr-card-wing {{
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+}}
+.lr-card-center {{
+    flex: 0 0 auto;
+}}
+.lr-card-img {{
+    max-width: 480px;
+    width: 100%;
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+    display: block;
+}}
+.lr-card-caption {{
+    color: rgba(255,255,255,0.85);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    text-align: center;
+    margin-top: 10px;
+}}
+@media (max-width: 800px) {{
+    .lr-card-wing {{ display: none; }}
+    .lr-card-banner {{ padding: 24px 16px; }}
+}}
+</style>
+<div class="lr-card-banner">
+    <div class="lr-card-wing">{left_wing}</div>
+    <div class="lr-card-center">
+        <img src="data:image/png;base64,{b64}" class="lr-card-img" alt="{player_name} trading card"/>
+        <div class="lr-card-caption">{player_name} — {season_str}</div>
     </div>
+    <div class="lr-card-wing">{right_wing}</div>
 </div>
 """,
         unsafe_allow_html=True,
