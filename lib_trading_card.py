@@ -541,10 +541,9 @@ def render_card_download_button(*,
     min-width: 0;
 }}
 .lr-card-wing-right {{
-    /* Nudge the jersey number a touch left of dead-center so it
-       sits closer to the card without crowding it. */
-    justify-content: flex-start;
-    padding-left: 4%;
+    /* Constrict the right side so the centered number shifts
+       leftward toward the card photo. */
+    padding-right: 12%;
 }}
 .lr-card-center {{
     flex: 0 0 auto;
