@@ -126,14 +126,31 @@ def find_college_history(nfl_player_name, nfl_player_id, position_group):
     if len(college_data) == 0:
         return pd.DataFrame()
     
-    # Try matching via linkage table
-    player_link = linkage[
-        linkage["player"].str.contains(nfl_player_name.split()[-1], na=False, case=False)
-    ]
-    
+    # Match priority: nfl_id (most reliable) → exact name → fuzzy.
+    # The old code did fuzzy FIRST, which collided on common last names —
+    # "Jack Campbell" matched "Roderick Campbell" (Northwestern), giving
+    # the wrong school. We now exhaust precise matches before fuzzy AND
+    # disable fuzzy entirely when an nfl_id was provided (in that case
+    # a missing match means "not in linkage" — better to show no data
+    # than guess and risk a wrong-school credibility hit).
+    player_link = pd.DataFrame()
+
+    if nfl_player_id and "nfl_id" in linkage.columns:
+        player_link = linkage[linkage["nfl_id"] == nfl_player_id]
+
     if len(player_link) == 0:
         player_link = linkage[linkage["player"] == nfl_player_name]
-    
+
+    if len(player_link) == 0 and not nfl_player_id:
+        # Fuzzy last-name fallback — only when caller had no nfl_id
+        # to disambiguate. Risky (collides on common last names) so
+        # we never run it when nfl_id was supplied and missed.
+        player_link = linkage[
+            linkage["player"].str.contains(
+                nfl_player_name.split()[-1], na=False, case=False
+            )
+        ]
+
     if len(player_link) == 0:
         return pd.DataFrame()
     
