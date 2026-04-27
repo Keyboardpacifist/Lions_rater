@@ -862,6 +862,232 @@ def format_rank(rank: int | None, total: int) -> str:
     return f"{rank}{suffix} of {total}"
 
 
+def render_player_comparison(*,
+                               player_row,
+                               player_name: str,
+                               league_df,
+                               name_col: str,
+                               year_choice,
+                               year_col: str = "season_year",
+                               primary_score: float | None = None,
+                               compute_comparison_score=None,
+                               radar_builder=None,
+                               benchmark=None,
+                               benchmark_raw=None,
+                               stat_labels: dict | None = None,
+                               stat_methodology: dict | None = None,
+                               key_prefix: str,
+                               position_label: str = "player",
+                               theme: dict | None = None) -> None:
+    """Surface the player-vs-player comparison feature at the top of
+    a player detail panel.
+
+    Replaces the buried "🔍 Compare radar to another player" checkbox
+    that lived at the bottom of every page. New layout:
+
+        ┌ Compare with: [<- dropdown ->]   [×]   ┐
+        │                                          │
+        │ ┌ Score: Player A +1.23  vs  Player B +0.89  ·  +0.34 diff ┐
+        │ │                                                            │
+        │ │  ┌─ Radar A ─┐    ┌─ Radar B ─┐                           │
+        │ │  │           │    │           │                           │
+        │ │  └───────────┘    └───────────┘                           │
+        │ └────────────────────────────────────────────────────────┘
+        └──────────────────────────────────────────────────────────────┘
+
+    Args:
+        player_row: pandas Series for the current player (the page's
+            view_row used for the radar).
+        player_name: display name of the current player.
+        league_df: full league dataframe (used to source comparison
+            options + look up the comparison player's row).
+        name_col: column name in league_df that has player display
+            names ("player_display_name" / "full_name" / "player").
+        year_choice: the page's year picker value (number or
+            "All-career mean" sentinel) so the comparison uses the
+            same season slice.
+        year_col: column name for season year (default season_year).
+        score_col: optional column name in league_df with the
+            scored composite — drives the score-comparison headline.
+            None to skip the score line.
+        radar_builder: callable (row, stat_labels, stat_methodology,
+            **opts) -> plotly.Figure or None. Each page passes its
+            own build_radar_figure.
+        benchmark / benchmark_raw: passed through to radar_builder.
+        stat_labels / stat_methodology: passed through to radar_builder.
+        key_prefix: unique key prefix for Streamlit widgets on this page.
+        position_label: short label for the comparison dropdown
+            placeholder ("running back", "wide receiver", etc.).
+        theme: team theme dict for accent coloring.
+    """
+    import streamlit as st
+
+    accent = (theme or {}).get("primary", "#0076B6")
+
+    # ── Comparison picker (player — season aware) ────────────
+    # Build a list of (player, season) options so users can pick
+    # ANY season of ANY player — including the same player at a
+    # different season ("rookie Gibbs vs sophomore Gibbs"). Plus an
+    # "all career" entry per player at the bottom.
+    name_series = league_df.get(name_col, pd.Series())
+    if name_series is None or name_series.empty:
+        return
+    options_pairs: list[tuple[str, object, str]] = []   # (label, season_value, player_name)
+
+    distinct_players = sorted(set(
+        str(n) for n in name_series.dropna().unique() if str(n).strip()
+    ))
+    if not distinct_players:
+        return
+
+    # Per-player season list. Most-recent season first; "All-career"
+    # entry appended last for each player.
+    if year_col in league_df.columns:
+        for p in distinct_players:
+            p_rows = league_df[name_series == p]
+            if p_rows.empty:
+                continue
+            seasons = sorted(p_rows[year_col].dropna().unique().tolist(),
+                              reverse=True)
+            for s in seasons:
+                try:
+                    s_int = int(s)
+                except (ValueError, TypeError):
+                    continue
+                # Skip the (player, season) the user is already viewing —
+                # comparing a player to themselves at the same season is a no-op.
+                if p == player_name and s == year_choice:
+                    continue
+                options_pairs.append((f"{p} — {s_int}", s_int, p))
+            options_pairs.append((f"{p} — All career", "All-career mean", p))
+    else:
+        for p in distinct_players:
+            if p == player_name:
+                continue
+            options_pairs.append((p, "All-career mean", p))
+
+    if not options_pairs:
+        return
+
+    options_labels = ["— off —"] + [opt[0] for opt in options_pairs]
+
+    cmp_col, _ = st.columns([1, 2])
+    with cmp_col:
+        cmp_pick_label = st.selectbox(
+            f"⚔️  Compare with another {position_label}",
+            options=options_labels,
+            index=0,
+            key=f"{key_prefix}_cmp_pick",
+            help="Pick any player at any season — including the same "
+                 "player at a different season ('rookie vs sophomore'). "
+                 "Both radars render side-by-side with a score delta.",
+        )
+
+    if cmp_pick_label == "— off —":
+        return
+
+    # Look up which (season, player) the chosen label refers to.
+    chosen = next(((s, n) for (lbl, s, n) in options_pairs
+                    if lbl == cmp_pick_label), None)
+    if chosen is None:
+        return
+    cmp_season, cmp_choice = chosen
+
+    # ── Resolve the comparison player's row ────────────────────
+    cmp_career = league_df[league_df[name_col] == cmp_choice]
+    if cmp_career.empty:
+        st.caption(f"_No data for {cmp_choice}._")
+        return
+
+    if cmp_season == "All-career mean":
+        cmp_radar_row = cmp_career.select_dtypes(include="number").mean()
+        cmp_year_label = f"All-career · {len(cmp_career)} seasons"
+    else:
+        cmp_yr = cmp_career[cmp_career.get(year_col, pd.Series()) == cmp_season]
+        if len(cmp_yr) == 1:
+            cmp_radar_row = cmp_yr.iloc[0]
+            cmp_year_label = f"{int(cmp_season)}"
+        elif len(cmp_yr) > 1:
+            cmp_radar_row = cmp_yr.select_dtypes(include="number").mean()
+            cmp_year_label = f"{int(cmp_season)} · weighted"
+        else:
+            cmp_radar_row = cmp_career.iloc[0]
+            cmp_year_label = "(closest available)"
+    cmp_score_row = cmp_radar_row
+
+    # ── Score-comparison headline ─────────────────────────────
+    # Caller provides primary_score directly (already computed against
+    # their slider preset) and a callable to compute comparison_score
+    # using the same formula on the comparison row.
+    cmp_score = float("nan")
+    if compute_comparison_score is not None:
+        try:
+            cmp_score = float(compute_comparison_score(cmp_score_row))
+        except Exception:
+            cmp_score = float("nan")
+    if (primary_score is not None and not pd.isna(primary_score)
+            and not pd.isna(cmp_score)):
+        diff = float(primary_score) - cmp_score
+        diff_color = "#1a8c3d" if diff >= 0 else "#b3261e"
+        st.markdown(
+                f"<div style='background:#fff;border:1px solid #e6e9ee;"
+                f"border-left:4px solid {accent};border-radius:6px;"
+                f"padding:14px 18px;margin:8px 0 14px 0;'>"
+                f"<div style='display:flex;justify-content:space-around;"
+                f"align-items:center;gap:20px;'>"
+                f"<div style='text-align:center;'>"
+                f"<div style='font-size:0.65rem;color:#5b6b7e;letter-spacing:1.4px;"
+                f"text-transform:uppercase;font-weight:700;'>{player_name}</div>"
+                f"<div style='font-size:1.8rem;font-weight:900;color:#0a3d62;'>"
+                f"{primary_score:+.2f}</div></div>"
+                f"<div style='font-size:1.2rem;color:#5b6b7e;font-weight:600;'>vs</div>"
+                f"<div style='text-align:center;'>"
+                f"<div style='font-size:0.65rem;color:#5b6b7e;letter-spacing:1.4px;"
+                f"text-transform:uppercase;font-weight:700;'>{cmp_choice}</div>"
+                f"<div style='font-size:1.8rem;font-weight:900;color:#0a3d62;'>"
+                f"{cmp_score:+.2f}</div></div>"
+                f"<div style='font-size:1.2rem;color:#5b6b7e;'>·</div>"
+                f"<div style='text-align:center;'>"
+                f"<div style='font-size:0.65rem;color:#5b6b7e;letter-spacing:1.4px;"
+                f"text-transform:uppercase;font-weight:700;'>diff</div>"
+                f"<div style='font-size:1.5rem;font-weight:900;color:{diff_color};'>"
+                f"{diff:+.2f}</div></div>"
+                f"</div></div>",
+                unsafe_allow_html=True,
+            )
+
+    # ── Side-by-side radars ───────────────────────────────────
+    if radar_builder is None:
+        st.caption(f"_Comparison set to {cmp_choice} — radar build callable not provided._")
+        return
+
+    c_left, c_right = st.columns(2)
+    with c_left:
+        st.markdown(f"**{player_name}**")
+        try:
+            fig_a = radar_builder(player_row, stat_labels or {}, stat_methodology or {},
+                                   benchmark=benchmark, benchmark_raw=benchmark_raw)
+        except TypeError:
+            fig_a = radar_builder(player_row, stat_labels or {}, stat_methodology or {})
+        if fig_a:
+            st.plotly_chart(fig_a, use_container_width=True,
+                              key=f"{key_prefix}_cmp_radar_a")
+        else:
+            st.caption("_No radar data for this player._")
+    with c_right:
+        st.markdown(f"**{cmp_choice}** — _{cmp_year_label}_")
+        try:
+            fig_b = radar_builder(cmp_radar_row, stat_labels or {}, stat_methodology or {},
+                                   benchmark=benchmark, benchmark_raw=benchmark_raw)
+        except TypeError:
+            fig_b = radar_builder(cmp_radar_row, stat_labels or {}, stat_methodology or {})
+        if fig_b:
+            st.plotly_chart(fig_b, use_container_width=True,
+                              key=f"{key_prefix}_cmp_radar_b")
+        else:
+            st.caption(f"_No radar data for {cmp_choice}._")
+
+
 def heatmap_color(value: float, lo: float = 0.0, hi: float = 1.0,
                   reverse: bool = False) -> str:
     """Map a numeric value to a binary-diverging red↔green heatmap.
