@@ -827,7 +827,66 @@ def render_run_scheme_section(*, player_name: str, season,
     if pf is None or len(pf) < 5:
         return
 
-    _render_run_scheme_panel(pf, key_prefix, render_header=False)
+    _render_run_scheme_panel(pf, key_prefix, render_header=False,
+                              theme=theme)
+
+
+@st.cache_data
+def _load_rb_peer_pools():
+    """League-wide peer pools per gap — cached once per session.
+    Used by the narrative engine to compute "Nth of 47 RBs at this
+    gap" rank context. Returns a dict {gap_code: pd.DataFrame}.
+    """
+    rp = _load_rusher_plays()
+    if rp is None:
+        return {}
+    rp = rp.copy()
+    rp["gap_code"] = rp.apply(_classify_gap, axis=1)
+    from lib_field_viz import _build_peer_gap_pools
+    return _build_peer_gap_pools(rp, min_carries=50)
+
+
+@st.cache_data
+def _load_rb_volume_pool(min_carries: int = 100):
+    """Per-player career carry totals across the rusher_plays parquet,
+    filtered to RBs with at least `min_carries` total. Used to rank
+    a player by career volume in the Carries stat tile."""
+    rp = _load_rusher_plays()
+    if rp is None:
+        return None
+    totals = (rp.groupby("player_id")
+                .size()
+                .reset_index(name="career_carries"))
+    totals = totals[totals["career_carries"] >= min_carries]
+    return totals
+
+
+def _render_rb_narrative_blurb(pf: pd.DataFrame, theme: dict | None) -> None:
+    """Render the auto-generated 'signature + weakness' blurb above
+    the filter row. Theme primary color drives the accent border so
+    the blurb feels team-native."""
+    if pf is None or pf.empty:
+        return
+    from lib_field_viz import build_rb_narrative
+    # Reuse the cached peer pools instead of rebuilding them per render.
+    peer_pools = _load_rb_peer_pools()
+    narrative = build_rb_narrative(pf, peer_pools=peer_pools,
+                                    min_player_carries_per_gap=8,
+                                    min_peer_carries_per_gap=50)
+    if not narrative:
+        return
+    accent = (theme or {}).get("primary", "#0076B6")
+    st.markdown(
+        f"<div style='background:#fff;border:1px solid #e6e9ee;"
+        f"border-left:4px solid {accent};border-radius:6px;"
+        f"padding:12px 16px;margin:8px 0 14px 0;'>"
+        f"<div style='font-size:0.62rem;color:#5b6b7e;letter-spacing:1.4px;"
+        f"text-transform:uppercase;font-weight:700;margin-bottom:5px;'>"
+        f"📖 Story</div>"
+        f"<div style='font-size:0.95rem;color:#2a3a4d;line-height:1.5;'>"
+        f"{narrative}</div></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _bucket_box(v):
@@ -1023,14 +1082,18 @@ def _apply_run_scheme_filters(pf: pd.DataFrame, key_prefix: str) -> pd.DataFrame
 
 
 def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str,
-                              render_header: bool = True) -> None:
+                              render_header: bool = True,
+                              theme: dict | None = None) -> None:
     """The actual run scheme rendering. Layout:
 
-        ┌ stat tiles (filter-aware) ──────────────────────────┐
-        │ Gap selector pills (A · B-L · C-L · D-L · …)        │
-        ├ Gap distribution chart ─────┬ Performance by box ───┤
-        │ Gap detail table            │   (filtered to gap)   │
-        └ Performance by formation × personnel (filtered) ────┘
+        ┌ Auto-narrative blurb (career signature + weakness) ─┐
+        │ Filter pills (Formation · Personnel · Box · Down)   │
+        │ Stat tiles (filter-aware)                            │
+        │ Gap pill (drill into one gap)                        │
+        ├ Gap diagram ────── + detail table ──────────────────┤
+        │ Performance by box count (filtered)                  │
+        │ Performance by formation × personnel (filtered)      │
+        └──────────────────────────────────────────────────────┘
     """
     import plotly.graph_objects as go
 
@@ -1039,6 +1102,27 @@ def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str,
 
     pf = pf.copy()
     pf["gap_code"] = pf.apply(_classify_gap, axis=1)
+
+    # Capture the unfiltered player carries for "career rank" lookup
+    # before filters narrow pf below. Look up player_id and total
+    # career carries against the league pool.
+    career_carries = len(pf)
+    career_rank_label = ""
+    if "player_id" in pf.columns and not pf.empty:
+        pid = pf["player_id"].dropna().iloc[0] if not pf["player_id"].dropna().empty else None
+        if pid:
+            volume_pool = _load_rb_volume_pool()
+            if volume_pool is not None and not volume_pool.empty:
+                from lib_shared import compute_rank_in_pool, format_rank
+                rank, total = compute_rank_in_pool(
+                    career_carries, volume_pool["career_carries"], ascending=False
+                )
+                career_rank_label = format_rank(rank, total)
+
+    # ── Career-signature narrative blurb ──
+    # Computed from the UNFILTERED player career so the headline
+    # story stays stable when the user changes filters below.
+    _render_rb_narrative_blurb(pf, theme)
 
     # ── TOP FILTER ROW: alignment + down + box ──
     # All filters narrow the entire panel — stat tiles, gap chart,
@@ -1081,10 +1165,15 @@ def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str,
                   / n_carries * 100) if n_carries else 0
 
     suffix = "" if gap_choice == "All" else f" · {gap_choice}"
+    # Build the Carries tile sub-text. Includes career-volume rank
+    # context (always vs the full unfiltered career) when available.
+    carries_sub = f"{total_yards:.0f} total yds · {ypc:.2f} YPC"
+    if career_rank_label and career_rank_label != "—":
+        carries_sub += f" · career: {career_rank_label}"
     t1, t2, t3, t4 = st.columns(4)
     for col, label, big, sub, accent in [
         (t1, f"Carries{suffix}", f"{n_carries}",
-         f"{total_yards:.0f} total yds · {ypc:.2f} YPC",
+         carries_sub,
          "#0076B6"),
         (t2, "Avg box", f"{avg_box:.2f}" if not pd.isna(avg_box) else "—",
          "defenders in the box per run",

@@ -824,6 +824,44 @@ def _adjust_lightness(hex_color: str, factor: float) -> str:
     return _rgb_to_hex(r2 * 255, g2 * 255, b2 * 255)
 
 
+def compute_rank_in_pool(value: float,
+                          peer_values,
+                          ascending: bool = False) -> tuple[int | None, int]:
+    """Return (rank, total) where `rank` is this player's position in
+    a peer pool sorted by their value. By default higher value =
+    better (rank 1 = best). Set ascending=True for "lower is better"
+    metrics like INT rate or sack rate.
+
+    Returns (None, total) if `value` is null or peer pool is empty.
+    Pool is silently de-duped by index — pass a Series indexed by
+    player_id to keep it honest.
+    """
+    import pandas as pd
+    if value is None or pd.isna(value):
+        peer_values = pd.Series(peer_values).dropna()
+        return None, len(peer_values)
+    peer_values = pd.Series(peer_values).dropna()
+    if peer_values.empty:
+        return None, 0
+    if ascending:
+        # rank 1 = lowest value
+        better = (peer_values < value).sum()
+    else:
+        # rank 1 = highest value
+        better = (peer_values > value).sum()
+    return int(better) + 1, len(peer_values)
+
+
+def format_rank(rank: int | None, total: int) -> str:
+    """Tidy 1-line rank display. '3rd of 47' / '#12 of 84' style."""
+    if rank is None or total == 0:
+        return "—"
+    suffix = "th"
+    if rank % 100 not in (11, 12, 13):
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(rank % 10, "th")
+    return f"{rank}{suffix} of {total}"
+
+
 def heatmap_color(value: float, lo: float = 0.0, hi: float = 1.0,
                   reverse: bool = False) -> str:
     """Map a numeric value to a binary-diverging red↔green heatmap.
