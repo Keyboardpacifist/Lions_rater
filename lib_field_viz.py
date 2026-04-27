@@ -472,6 +472,179 @@ def build_gap_diagram(plays: pd.DataFrame, *, metric: str = "epa_per_carry",
     return fig
 
 
+def build_rb_narrative(player_carries: pd.DataFrame,
+                        full_rusher_plays: pd.DataFrame | None = None,
+                        peer_pools: dict | None = None,
+                        min_player_carries_per_gap: int = 8,
+                        min_peer_carries_per_gap: int = 50) -> str | None:
+    """Generate 2-3 sentences describing the RB's gap profile.
+
+    Pattern:
+        "Gibbs's signature is the A-gap — 3rd of 47 RBs (50+ carries)
+         at +0.19 EPA per carry. His weakness is the right-B-gap —
+         stuffed on 19% of attempts, ranks 38 of 41 in EPA there."
+
+    Args:
+        player_carries: this player's full per-play rusher dataframe
+            (already classified into gap_code via _classify_gap).
+            Must have columns: gap_code, epa, yards_gained, fo_success.
+        full_rusher_plays: the complete league rusher_plays dataframe
+            for peer pool construction. Must include gap_code column
+            (or we'll classify on the fly).
+        min_player_carries_per_gap: don't pick a "signature" or "weakness"
+            from a gap with fewer than this many carries — too noisy.
+        min_peer_carries_per_gap: minimum carries through a gap for an
+            RB to count as a peer for ranking purposes.
+
+    Returns None if the player has too little data for a meaningful
+    narrative (< 50 career carries or < 2 gaps with sample).
+    """
+    if player_carries is None or player_carries.empty:
+        return None
+    if len(player_carries) < 50:
+        return None  # journeyman with too little data — skip blurb
+    if "gap_code" not in player_carries.columns:
+        return None
+
+    # Player's per-gap aggregate
+    player_pool = player_carries[player_carries["gap_code"].notna()]
+    if player_pool.empty:
+        return None
+    player_agg = (player_pool.groupby("gap_code")
+                              .agg(carries=("yards_gained", "size"),
+                                    epa=("epa", "mean"),
+                                    yards=("yards_gained", "sum"),
+                                    stuffs=("yards_gained",
+                                             lambda s: int((s.fillna(0) <= 0).sum())))
+                              .reset_index())
+    player_agg["ypc"] = player_agg["yards"] / player_agg["carries"]
+    player_agg["stuff_rate"] = player_agg["stuffs"] / player_agg["carries"]
+
+    # Drop gaps with too few carries — protects against noise.
+    qualifying = player_agg[player_agg["carries"] >= min_player_carries_per_gap]
+    if len(qualifying) < 2:
+        return None
+
+    # Build peer pools per gap — RBs with ≥ min_peer carries through
+    # that gap. Use the caller's pre-built pools when available
+    # (typically from a Streamlit cached loader); otherwise build
+    # from `full_rusher_plays`.
+    if peer_pools is None:
+        if full_rusher_plays is None:
+            return None
+        peer_pools = _build_peer_gap_pools(full_rusher_plays,
+                                             min_carries=min_peer_carries_per_gap)
+
+    # Signature gap: highest EPA among qualifying gaps.
+    sig = qualifying.loc[qualifying["epa"].idxmax()]
+    weak = qualifying.loc[qualifying["epa"].idxmin()]
+
+    sig_label = _GAP_PROSE.get(sig["gap_code"], sig["gap_code"])
+    weak_label = _GAP_PROSE.get(weak["gap_code"], weak["gap_code"])
+
+    # Look up rank for each
+    from lib_shared import compute_rank_in_pool
+
+    sig_rank, sig_total = (None, 0)
+    if sig["gap_code"] in peer_pools:
+        sig_rank, sig_total = compute_rank_in_pool(
+            sig["epa"], peer_pools[sig["gap_code"]]["epa"], ascending=False
+        )
+
+    weak_rank, weak_total = (None, 0)
+    if weak["gap_code"] in peer_pools:
+        weak_rank, weak_total = compute_rank_in_pool(
+            weak["epa"], peer_pools[weak["gap_code"]]["epa"], ascending=False
+        )
+
+    # Format the sentences.
+    sentences = []
+
+    # Signature sentence
+    sig_epa_str = f"{sig['epa']:+.2f}"
+    if sig_rank and sig_total:
+        sentences.append(
+            f"**Signature: the {sig_label}** — "
+            f"{sig_rank} of {sig_total} RBs (50+ carries) at "
+            f"{sig_epa_str} EPA per carry on {int(sig['carries'])} attempts."
+        )
+    else:
+        sentences.append(
+            f"**Signature: the {sig_label}** — "
+            f"{sig_epa_str} EPA per carry on {int(sig['carries'])} attempts."
+        )
+
+    # Weakness sentence — only show if it's meaningfully negative or
+    # ranks poorly. If everything is positive, frame as "second-best."
+    if sig["gap_code"] != weak["gap_code"]:
+        weak_epa_str = f"{weak['epa']:+.2f}"
+        if weak["epa"] < 0 or (weak_rank and weak_total
+                                and weak_rank > weak_total * 0.6):
+            stuff_pct = f"{weak['stuff_rate']*100:.0f}%"
+            if weak_rank and weak_total:
+                sentences.append(
+                    f"**Weakness: the {weak_label}** — "
+                    f"{weak_epa_str} EPA, stuffed on {stuff_pct} of attempts, "
+                    f"{weak_rank} of {weak_total} in EPA there."
+                )
+            else:
+                sentences.append(
+                    f"**Weakness: the {weak_label}** — "
+                    f"{weak_epa_str} EPA, stuffed on {stuff_pct} of attempts."
+                )
+        else:
+            # Player is productive everywhere — soften the framing
+            sentences.append(
+                f"Productive in every direction — even his "
+                f"least-effective gap ({weak_label}) is at "
+                f"{weak_epa_str} EPA per carry."
+            )
+
+    return " ".join(sentences)
+
+
+# Long-form prose names for each gap, used in narrative sentences.
+_GAP_PROSE = {
+    "A":   "A-gap (up the middle)",
+    "B-L": "left B-gap",
+    "B-R": "right B-gap",
+    "C-L": "left C-gap (off-tackle)",
+    "C-R": "right C-gap (off-tackle)",
+    "D-L": "left D-gap (outside)",
+    "D-R": "right D-gap (outside)",
+}
+
+
+def _build_peer_gap_pools(full_rusher_plays: pd.DataFrame,
+                            min_carries: int = 50) -> dict[str, pd.DataFrame]:
+    """For each gap, return a per-player aggregate DataFrame containing
+    only RBs with ≥ `min_carries` through that gap. Used as the peer
+    pool for ranking calculations.
+
+    The result is keyed by gap_code; each value is a DataFrame with
+    columns: player_id, carries, epa.
+    """
+    if full_rusher_plays is None or full_rusher_plays.empty:
+        return {}
+
+    df = full_rusher_plays.copy()
+    # Ensure gap_code is present (caller may have already classified)
+    if "gap_code" not in df.columns:
+        from lib_splits import _classify_gap   # avoid circular at module load
+        df["gap_code"] = df.apply(_classify_gap, axis=1)
+    df = df[df["gap_code"].notna()]
+
+    pools: dict[str, pd.DataFrame] = {}
+    for gap, sub in df.groupby("gap_code"):
+        per_player = (sub.groupby("player_id")
+                          .agg(carries=("yards_gained", "size"),
+                                epa=("epa", "mean"))
+                          .reset_index())
+        qualified = per_player[per_player["carries"] >= min_carries]
+        pools[str(gap)] = qualified
+    return pools
+
+
 def _empty_fig(message: str) -> go.Figure:
     """Placeholder figure for empty slices — keeps layout stable."""
     fig = go.Figure()
