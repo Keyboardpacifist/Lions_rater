@@ -511,9 +511,10 @@ def render_card_download_button(*,
         if logo_url else ""
     )
     right_wing = (
-        f'<div style="font-family: -apple-system, BlinkMacSystemFont, '
-        f'\'Segoe UI\', sans-serif; font-size: clamp(80px, 12vw, 200px); '
-        f'font-weight: 900; color: rgba(255,255,255,0.92); line-height: 1; '
+        f'<div class="lr-jersey-num" style="font-family: -apple-system, '
+        f'BlinkMacSystemFont, \'Segoe UI\', sans-serif; '
+        f'font-size: clamp(80px, 12vw, 200px); font-weight: 900; '
+        f'color: rgba(255,255,255,0.92); line-height: 1; '
         f'text-shadow: 0 4px 14px rgba(0,0,0,0.35); letter-spacing: -4px;">'
         f'#{jersey_number}</div>'
         if jersey_number is not None else ""
@@ -541,9 +542,18 @@ def render_card_download_button(*,
     min-width: 0;
 }}
 .lr-card-wing-right {{
-    /* Constrict the right side so the centered number shifts
-       leftward toward the card photo. */
+    /* Number sits absolute-positioned to align with the
+       "percentile" text on the card (~37% from card top).
+       padding-right keeps it nudged toward the card. */
+    position: relative;
     padding-right: 12%;
+}}
+.lr-jersey-num {{
+    position: absolute;
+    top: 32%;
+    left: 0;
+    right: 12%;
+    text-align: center;
 }}
 .lr-card-center {{
     flex: 0 0 auto;
