@@ -18,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from lib_data_remote import get_parquet_path, get_last_failure
+from lib_data_remote import get_parquet_path
 
 _DATA_GAMES = Path(__file__).resolve().parent / "data" / "games"
 _ADJUSTED = _DATA_GAMES / "nfl_weekly_adjusted.parquet"
@@ -333,20 +333,11 @@ def _data_ready() -> bool:
     """True if the core parquets are obtainable (locally OR remotely).
     On production, get_parquet_path triggers a download which is then
     cached, so this becomes True once Supabase has the files."""
-    ok = all(get_parquet_path(f) is not None for f in (
+    return all(get_parquet_path(f) is not None for f in (
         "nfl_weekly_adjusted.parquet",
         "nfl_defense_baselines.parquet",
         "nfl_schedules.parquet",
     ))
-    if not ok:
-        # TEMPORARY diagnostic — surface why the panels aren't showing
-        # on production so we can debug without server logs. Remove
-        # once the panels are reliably loading.
-        reason = get_last_failure() or "unknown"
-        st.caption(f"⚠️ _Game-log data not available on this server — "
-                    f"`{reason}`. Splits / coverage / run-scheme panels "
-                    f"will be missing._")
-    return ok
 
 
 # ──────────────────────────────────────────────────────────────
@@ -787,6 +778,66 @@ def _bucket_box(v):
     return "Stacked (8+)"
 
 
+# ─────────────────────────────────────────────────────────────
+# Gap classification — translate nflverse run_location/run_gap
+# into football's A/B/C/D-gap convention. The selector below
+# uses these short codes so the user picks "B-L" instead of
+# "Left guard." Mapping:
+#     middle             → A   (PBP doesn't tag a side for A-gap)
+#     left  + guard      → B-L
+#     left  + tackle     → C-L
+#     left  + end        → D-L
+#     right + guard      → B-R
+#     right + tackle     → C-R
+#     right + end        → D-R
+# ─────────────────────────────────────────────────────────────
+def _classify_gap(row) -> str | None:
+    loc = row.get("run_location")
+    gap = row.get("run_gap")
+    if loc is None or pd.isna(loc) or loc == "":
+        return None
+    if loc == "middle":
+        return "A"
+    if pd.isna(gap) or gap is None or gap == "":
+        return None
+    side = "L" if loc == "left" else "R" if loc == "right" else None
+    if side is None:
+        return None
+    letter = {"guard": "B", "tackle": "C", "end": "D"}.get(gap)
+    if letter is None:
+        return None
+    return f"{letter}-{side}"
+
+
+# Display label for the bar chart (longer/clearer than the pill code).
+_GAP_DISPLAY = {
+    "D-L": "Left end (D)",
+    "C-L": "Left tackle (C)",
+    "B-L": "Left guard (B)",
+    "A":   "Middle (A)",
+    "B-R": "Right guard (B)",
+    "C-R": "Right tackle (C)",
+    "D-R": "Right end (D)",
+}
+# Render order: outside-left → middle → outside-right
+_GAP_ORDER = ["D-L", "C-L", "B-L", "A", "B-R", "C-R", "D-R"]
+
+
+def _epa_bar_color(epa: float) -> str:
+    """Green-to-red diverging palette tied to EPA per carry. Used
+    for the gap chart bars so coloring tracks an objective benchmark
+    rather than the player's own average."""
+    if pd.isna(epa):
+        return "#9aa6b3"
+    if epa >= 0.10:
+        return "#1a8c3d"   # strong green
+    if epa >= 0.0:
+        return "#7ab87a"   # light green
+    if epa >= -0.10:
+        return "#e08a8a"   # light red
+    return "#b3261e"       # strong red
+
+
 def _run_scheme_header():
     """Section header — pulled out so the public section can render
     the in-panel season/career dropdown between header and body."""
@@ -807,25 +858,58 @@ def _run_scheme_header():
 
 def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str,
                               render_header: bool = True) -> None:
-    """The actual run scheme rendering — three views in the same
-    visual language as the coverage matchup panel."""
+    """The actual run scheme rendering. Layout:
+
+        ┌ stat tiles (filter-aware) ──────────────────────────┐
+        │ Gap selector pills (A · B-L · C-L · D-L · …)        │
+        ├ Gap distribution chart ─────┬ Performance by box ───┤
+        │ Gap detail table            │   (filtered to gap)   │
+        └ Performance by formation × personnel (filtered) ────┘
+    """
     import plotly.graph_objects as go
 
     if render_header:
         _run_scheme_header()
 
-    n_carries = len(pf)
-    total_yards = float(pf["yards_gained"].fillna(0).sum())
-    ypc = total_yards / n_carries if n_carries else 0
-    avg_box = float(pf["defenders_in_box"].dropna().mean()) if pf["defenders_in_box"].notna().any() else float("nan")
-    stacked_n = int((pf["defenders_in_box"].fillna(0) >= 8).sum())
-    stacked_pct = (stacked_n / n_carries * 100) if n_carries else 0
-    light_pct = ((pf["defenders_in_box"].fillna(0) <= 6).sum() / n_carries * 100) if n_carries else 0
+    pf = pf.copy()
+    pf["gap_code"] = pf.apply(_classify_gap, axis=1)
 
-    # ── Top: 3 stat tiles ──
+    # ── Gap selector ──
+    gap_options = ["All", "D-L", "C-L", "B-L", "A", "B-R", "C-R", "D-R"]
+    gap_choice = st.pills(
+        "Filter by gap",
+        gap_options,
+        default="All",
+        key=f"{key_prefix}_gap_pick",
+        help="Filter the stat tiles, box-count table, and formation table "
+             "to runs through this gap. The gap-distribution chart and the "
+             "detail table directly under it always show the full split so "
+             "you keep your bearings.",
+    )
+    if gap_choice is None:
+        gap_choice = "All"
+
+    if gap_choice == "All":
+        pf_filtered = pf
+    else:
+        pf_filtered = pf[pf["gap_code"] == gap_choice]
+
+    # ── Top stat tiles (filter-aware) ──
+    n_carries = len(pf_filtered)
+    total_yards = float(pf_filtered["yards_gained"].fillna(0).sum())
+    ypc = total_yards / n_carries if n_carries else 0
+    avg_box = (float(pf_filtered["defenders_in_box"].dropna().mean())
+                if pf_filtered["defenders_in_box"].notna().any()
+                else float("nan"))
+    stacked_n = int((pf_filtered["defenders_in_box"].fillna(0) >= 8).sum())
+    stacked_pct = (stacked_n / n_carries * 100) if n_carries else 0
+    light_pct = ((pf_filtered["defenders_in_box"].fillna(0) <= 6).sum()
+                  / n_carries * 100) if n_carries else 0
+
+    suffix = "" if gap_choice == "All" else f" · {gap_choice}"
     t1, t2, t3, t4 = st.columns(4)
     for col, label, big, sub, accent in [
-        (t1, "Carries", f"{n_carries}",
+        (t1, f"Carries{suffix}", f"{n_carries}",
          f"{total_yards:.0f} total yds · {ypc:.2f} YPC",
          "#0076B6"),
         (t2, "Avg box", f"{avg_box:.2f}" if not pd.isna(avg_box) else "—",
@@ -855,74 +939,105 @@ def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str,
 
     c_left, c_right = st.columns([1, 1])
 
-    # ── LEFT: gap × direction chart ──
+    # ── LEFT: gap distribution (always full pf, never filtered) ──
     with c_left:
-        st.markdown("**Gap distribution** _(where the runs go)_")
-        # Build direction-gap label e.g., "Left guard"
-        gap_pool = pf[pf["run_location"].notna() & (pf["run_location"] != "")]
+        st.markdown("**Gap distribution** _(where the runs go · color = EPA)_")
+        gap_pool = pf[pf["gap_code"].notna()]
         if gap_pool.empty:
             st.caption("_No labeled run locations in this slice._")
         else:
-            dir_label = {"left": "Left", "middle": "Middle", "right": "Right"}
-            gap_label = {"guard": "guard", "tackle": "tackle", "end": "end"}
-            def _label(row):
-                d = dir_label.get(row.get("run_location"), str(row.get("run_location")))
-                g = row.get("run_gap")
-                if pd.isna(g) or not g or row.get("run_location") == "middle":
-                    return d
-                return f"{d} {gap_label.get(g, g)}"
-            gap_pool = gap_pool.copy()
-            gap_pool["dirgap"] = gap_pool.apply(_label, axis=1)
-            agg = (gap_pool.groupby("dirgap")
+            agg = (gap_pool.groupby("gap_code")
                             .agg(carries=("yards_gained", "size"),
                                   yards=("yards_gained", "sum"),
-                                  epa=("epa", "mean"))
+                                  epa=("epa", "mean"),
+                                  success=("success", "mean"),
+                                  stuffs=("yards_gained",
+                                           lambda s: int((s.fillna(0) <= 0).sum())),
+                                  chunks=("yards_gained",
+                                           lambda s: int((s.fillna(0) >= 10).sum())),
+                                  tds=("touchdown",
+                                        lambda s: int(s.fillna(0).sum())))
                             .reset_index())
             agg["ypc"] = agg["yards"] / agg["carries"]
-            # Order: Left end / tackle / guard / Middle / Right guard / tackle / end
-            order = ["Left end", "Left tackle", "Left guard", "Middle",
-                     "Right guard", "Right tackle", "Right end"]
-            agg["sort"] = agg["dirgap"].apply(
-                lambda x: order.index(x) if x in order else 99)
-            agg = agg.sort_values("sort")
-            colors = ["#1f77b4" if y >= ypc else "#d62728"
-                      for y in agg["ypc"]]
+            agg["display"] = agg["gap_code"].map(_GAP_DISPLAY).fillna(agg["gap_code"])
+            agg["sort"] = agg["gap_code"].apply(
+                lambda x: _GAP_ORDER.index(x) if x in _GAP_ORDER else 99)
+            agg = agg.sort_values("sort").reset_index(drop=True)
+
+            bar_colors = [_epa_bar_color(e) for e in agg["epa"]]
+            hover = [
+                (f"<b>{d}</b><br>"
+                 f"{c} carries · {y:.2f} YPC<br>"
+                 f"EPA/Car: {e:+.2f}<br>"
+                 f"Success: {s*100:.0f}%<br>"
+                 f"Stuffed: {st_/c*100:.0f}% · Chunks: {ch/c*100:.0f}%<br>"
+                 f"TDs: {td}")
+                for d, c, y, e, s, st_, ch, td in zip(
+                    agg["display"], agg["carries"], agg["ypc"], agg["epa"],
+                    agg["success"], agg["stuffs"], agg["chunks"], agg["tds"])
+            ]
             fig = go.Figure(go.Bar(
-                y=agg["dirgap"], x=agg["carries"], orientation="h",
-                marker=dict(color=colors,
-                             line=dict(color="rgba(0,0,0,0.2)", width=0.5)),
-                text=[f"{c:.0f} car · {y:.2f} YPC"
-                       for c, y in zip(agg["carries"], agg["ypc"])],
+                y=agg["display"], x=agg["carries"], orientation="h",
+                marker=dict(color=bar_colors,
+                             line=dict(color="rgba(0,0,0,0.15)", width=0.5)),
+                text=[f"{c} car · {y:.2f} YPC · {e:+.2f} EPA"
+                       for c, y, e in zip(agg["carries"], agg["ypc"], agg["epa"])],
                 textposition="outside",
-                hovertemplate="<b>%{y}</b><br>%{x} carries<extra></extra>",
+                textfont=dict(size=11, color="#2a3a4d"),
+                hovertext=hover, hoverinfo="text",
             ))
             fig.update_layout(
-                height=320, margin=dict(l=10, r=80, t=10, b=30),
-                xaxis=dict(title="Carries", gridcolor="#eee"),
+                height=340, margin=dict(l=10, r=110, t=10, b=30),
+                xaxis=dict(title="Carries", gridcolor="#eef1f5",
+                            zeroline=False),
                 yaxis=dict(autorange="reversed"),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
                 showlegend=False,
+                bargap=0.25,
             )
             st.plotly_chart(fig, use_container_width=True,
                               key=f"{key_prefix}_run_gap_chart")
-            st.caption("_Blue = above his own YPC · red = below. "
-                       "Middle runs aren't gap-tagged in PBP, so they "
-                       "appear as a single bucket._")
+            st.caption(
+                "_Bar color: <span style='color:#1a8c3d'>strong green</span> = "
+                "EPA ≥ +0.10 · <span style='color:#7ab87a'>green</span> = positive · "
+                "<span style='color:#e08a8a'>red</span> = negative · "
+                "<span style='color:#b3261e'>strong red</span> = EPA ≤ −0.10. "
+                "Hover any bar for full breakdown._",
+                unsafe_allow_html=True,
+            )
 
-    # ── RIGHT: performance by box count ──
+            # Compact detail table beneath the chart — same agg, tabular form.
+            detail = pd.DataFrame({
+                "Gap": agg["display"],
+                "Car": agg["carries"].astype(int),
+                "YPC": [f"{y:.2f}" for y in agg["ypc"]],
+                "EPA/Car": [f"{e:+.2f}" for e in agg["epa"]],
+                "Success%": [f"{s*100:.0f}%" for s in agg["success"]],
+                "Stuff%": [f"{st_/c*100:.0f}%"
+                           for st_, c in zip(agg["stuffs"], agg["carries"])],
+                "Chunk%": [f"{ch/c*100:.0f}%"
+                           for ch, c in zip(agg["chunks"], agg["carries"])],
+                "TD": agg["tds"].astype(int),
+            })
+            st.dataframe(_style_epa_table(detail, "EPA/Car"),
+                          use_container_width=True, hide_index=True)
+
+    # ── RIGHT: performance by box count (filtered to selected gap) ──
     with c_right:
-        st.markdown("**Performance by box count**")
-        pf2 = pf.copy()
+        title_suffix = "" if gap_choice == "All" else f"  ·  {gap_choice} only"
+        st.markdown(f"**Performance by box count**{title_suffix}")
+        pf2 = pf_filtered.copy()
         pf2["box_bucket"] = pf2["defenders_in_box"].apply(_bucket_box)
         box_pool = pf2[pf2["box_bucket"].notna()]
         if box_pool.empty:
             st.caption("_No labeled box counts in this slice._")
         else:
+            min_n = 5 if gap_choice != "All" else 1
             rows = []
             for bucket in ["Light (≤6)", "Neutral (7)", "Stacked (8+)"]:
                 grp = box_pool[box_pool["box_bucket"] == bucket]
-                if grp.empty:
+                if len(grp) < min_n:
                     continue
                 car = len(grp)
                 yds = float(grp["yards_gained"].fillna(0).sum())
@@ -939,13 +1054,24 @@ def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str,
                     "Chunks": chunks,
                     "TD": tds,
                 })
-            box_table = pd.DataFrame(rows)
-            st.dataframe(_style_epa_table(box_table, "EPA/Car"),
-                          use_container_width=True, hide_index=True)
+            if rows:
+                box_table = pd.DataFrame(rows)
+                st.dataframe(_style_epa_table(box_table, "EPA/Car"),
+                              use_container_width=True, hide_index=True)
+                if gap_choice != "All":
+                    st.caption(
+                        f"_Buckets with fewer than {min_n} carries through "
+                        f"the {gap_choice} gap are hidden — sample too thin._")
+            else:
+                st.caption(
+                    f"_All box-count buckets have fewer than {min_n} "
+                    f"carries through the {gap_choice} gap. "
+                    "Try 'All career' in the dropdown above for a bigger sample._")
 
-    # ── Below: performance by formation × personnel (full-width) ──
-    if pf["offense_formation"].notna().any():
-        st.markdown("**Performance by formation × personnel**")
+    # ── Below: performance by formation × personnel (filtered) ──
+    if pf_filtered["offense_formation"].notna().any():
+        title_suffix = "" if gap_choice == "All" else f"  ·  {gap_choice} only"
+        st.markdown(f"**Performance by formation × personnel**{title_suffix}")
 
         def _pers_bucket(d):
             """'1 RB, 1 TE, 3 WR' → '11', '1 RB, 2 TE, 2 WR' → '12'."""
@@ -970,13 +1096,15 @@ def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str,
                 return f"{rb}{te}"
             return None
 
-        pf2 = pf.copy()
+        pf2 = pf_filtered.copy()
         pf2["pers_bucket"] = pf2["offense_personnel"].apply(_pers_bucket)
         form_pool = pf2[pf2["offense_formation"].notna()]
+        # Tighter threshold when filtered — fewer carries per cell.
+        min_combo = 5 if gap_choice != "All" else 3
         rows = []
         for (form, pers), grp in form_pool.groupby(
                 ["offense_formation", "pers_bucket"], dropna=False):
-            if len(grp) < 3:  # keep 11/12/21 main combos; cut singletons
+            if len(grp) < min_combo:
                 continue
             car = len(grp)
             yds = float(grp["yards_gained"].fillna(0).sum())
@@ -1009,12 +1137,19 @@ def _render_run_scheme_panel(pf: pd.DataFrame, key_prefix: str,
                             .reset_index(drop=True))
             st.dataframe(_style_epa_table(form_table, "EPA/Car"),
                           use_container_width=True, hide_index=True)
+            cap_extra = (f" Combos with <{min_combo} carries through the "
+                          f"{gap_choice} gap are hidden — sample too thin."
+                          if gap_choice != "All"
+                          else f" Combos with fewer than {min_combo} carries hidden.")
             st.caption(
                 "_Personnel: '11' = 1 RB + 1 TE + 3 WR · '12' = 1 RB + 2 TE + 2 WR · "
                 "'21' = 2 RB + 1 TE + 2 WR · '13' = 1 RB + 3 TE + 1 WR. "
-                "Stuffed = run for ≤0 yards · Chunks = ≥10 yards · "
-                "Combos with fewer than 3 carries hidden._"
+                "Stuffed = run for ≤0 yards · Chunks = ≥10 yards." + cap_extra + "_"
             )
+        elif gap_choice != "All":
+            st.caption(
+                f"_No formation × personnel combo has ≥{min_combo} carries "
+                f"through the {gap_choice} gap. Try 'All career' above._")
 
 
 def _render_cohort_chart(games: pd.DataFrame, cfg: dict,

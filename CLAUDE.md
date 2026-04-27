@@ -142,6 +142,7 @@ All other parquets (14 league files, 19 college files, coaches/GM/coordinator fi
 - [ ] Pin dependency versions in `requirements.txt` (`>=` → `==`)
 - [ ] Remove `gm_exploration_output.csv` from repo root
 - [ ] Update README.md to match current repo structure
+- [ ] Verify community algorithms still work on live after the Supabase URL change — saved slider presets load, save/fork/upvote round-trip, position scoping correct. Local + Cloud now point at the same Supabase project, so behavior should match across both.
 
 ### Phase 1: Local Development (week 1)
 
