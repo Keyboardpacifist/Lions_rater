@@ -49,7 +49,8 @@ INVERTED_COVERAGE_STATS = {
 
 def _load_pfr_def_seasons(seasons: list[int]) -> pd.DataFrame:
     """Pull PFR season-level def stats for the given seasons. Returns
-    a DataFrame indexed by (pfr_id, season)."""
+    one row per (pfr_id, season) — for traded players, prefers the
+    "2TM" combined row over team-specific rows."""
     import nflreadpy as nfl
 
     frames = []
@@ -62,7 +63,21 @@ def _load_pfr_def_seasons(seasons: list[int]) -> pd.DataFrame:
             print(f"  PFR def {s}: {len(df):,} rows")
         except Exception as e:
             print(f"  PFR def {s}: FAILED ({e})")
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if not frames:
+        return pd.DataFrame()
+    raw = pd.concat(frames, ignore_index=True)
+
+    # Dedupe to one row per (pfr_id, season). Prefer combined "2TM"
+    # (or "3TM" / "4TM") rows for traded players; otherwise the
+    # single team-stint row.
+    raw["_is_combined"] = raw["tm"].astype(str).str.contains("TM", na=False)
+    raw = (raw.sort_values(["pfr_id", "season", "_is_combined", "g"],
+                            ascending=[True, True, False, False])
+                .drop_duplicates(["pfr_id", "season"], keep="first")
+                .drop(columns=["_is_combined"])
+                .reset_index(drop=True))
+    print(f"  PFR def (deduped): {len(raw):,} unique (player, season) rows")
+    return raw
 
 
 def augment_position(
