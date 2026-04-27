@@ -570,22 +570,26 @@ with c1:
     st.caption("_This score is based on your slider settings. Change the sliders and the score changes._")
     st.markdown("Each row shows how much one skill contributed to the total, based on your slider weights.")
     if not advanced_mode:
-        bundle_rows = []
-        for bk, bundle in active_bundles.items():
-            bw = bundle_weights.get(bk, 0)
-            if bw == 0: continue
-            contribution = sum(view_row.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(view_row.get(z)) and total_weight > 0)
-            bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
-        if bundle_rows: st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
-        with st.expander("See the individual stats behind each skill"):
-            stat_rows = []; shown = set()
-            for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
-            for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
-                raw_col = RAW_COL_MAP.get(z_col); z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
-                pct = zscore_to_percentile(z) if pd.notna(z) else None
-                raw_fmt = f"{raw:.2f}" if pd.notna(raw) else "—"
-                stat_rows.append({"Stat": stat_labels.get(z_col, z_col), "Value": raw_fmt, "Percentile": f"{int(pct)}th" if pct is not None else "—"})
+        # ── Underlying stats — primary view (what fans care about) ──
+        stat_rows = []; shown = set()
+        for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
+        for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+            raw_col = RAW_COL_MAP.get(z_col); z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
+            pct = zscore_to_percentile(z) if pd.notna(z) else None
+            raw_fmt = f"{raw:.2f}" if pd.notna(raw) else "—"
+            stat_rows.append({"Stat": stat_labels.get(z_col, z_col), "Value": raw_fmt, "Percentile": f"{int(pct)}th" if pct is not None else "—"})
+        if stat_rows:
             st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
+        # ── Slider preset breakdown — collapsible ──
+        with st.expander("⚙️  How your slider preset weights this player"):
+            bundle_rows = []
+            for bk, bundle in active_bundles.items():
+                bw = bundle_weights.get(bk, 0)
+                if bw == 0: continue
+                contribution = sum(view_row.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(view_row.get(z)) and total_weight > 0)
+                bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
+            if bundle_rows: st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
+            else: st.caption("No bundles weighted — drag some sliders.")
     else:
         rows = []
         for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
@@ -613,54 +617,35 @@ with c2:
                               benchmark=radar_bench, benchmark_raw=radar_bench_raw)
     if fig: st.plotly_chart(fig, use_container_width=True)
 
-    # ── Compare radar to another wide receiver ─────
-    # Same year selection drives both polygons. Comparison player is
-    # shown as a SECOND radar stacked directly below the original.
-    _radar_cmp_active = st.checkbox(
-        "🔍 Compare radar to another wide receiver",
-        key=f"wr_radar_cmp_{player.get('player_id', selected)}",
-        help="Stack a second player's radar polygon below this one, using the same year selection.",
-    )
-    if _radar_cmp_active:
-        _wr_pool = sorted(set(
-            str(n) for n in all_wrs_full["player_display_name"].dropna().unique()
-            if str(n).strip()
-        ))
-        _default_cmp_wr = next(
-            (p for p in _wr_pool if p != selected),
-            (_wr_pool[0] if _wr_pool else None),
+    # ── Side-by-side player comparison ─────────────────────
+    def _wr_score_of(row):
+        if row is None or total_weight <= 0:
+            return float("nan")
+        return sum(
+            row.get(z, 0) * (w / total_weight)
+            for z, w in effective_weights.items()
+            if pd.notna(row.get(z))
         )
-        if _default_cmp_wr:
-            _cmp_name_wr = st.selectbox(
-                "Comparison wide receiver",
-                options=_wr_pool,
-                index=_wr_pool.index(_default_cmp_wr),
-                key=f"wr_radar_cmp_select_{player.get('player_id', selected)}",
-            )
-            if _cmp_name_wr:
-                _cmp_career = all_wrs_full[all_wrs_full["player_display_name"] == _cmp_name_wr]
-                if len(_cmp_career) > 0:
-                    if year_choice == "All-career mean":
-                        _cmp_radar_row = _cmp_career.select_dtypes(include="number").mean()
-                        _cmp_year_label = f"All-career · {len(_cmp_career)} seasons"
-                    else:
-                        _cmp_yr = _cmp_career[_cmp_career["season_year"] == year_choice]
-                        if len(_cmp_yr) == 1:
-                            _cmp_radar_row = _cmp_yr.iloc[0]
-                        elif len(_cmp_yr) > 1:
-                            _cmp_radar_row = _cmp_yr.select_dtypes(include="number").mean()
-                        else:
-                            _cmp_radar_row = _cmp_career.iloc[0]
-                        _cmp_year_label = f"Season {int(year_choice)}" if not _cmp_yr.empty else "(closest available)"
-                    st.markdown(f"**Comparison: {_cmp_name_wr}** — {_cmp_year_label}")
-                    _cmp_fig = build_radar_figure(
-                        _cmp_radar_row, stat_labels, stat_methodology,
-                        benchmark=radar_bench, benchmark_raw=radar_bench_raw,
-                    )
-                    if _cmp_fig:
-                        st.plotly_chart(_cmp_fig, use_container_width=True)
-                else:
-                    st.caption(f"_No NFL data for {_cmp_name_wr}._")
+
+    from lib_shared import render_player_comparison, team_theme as _theme
+    _wr_team_abbr = _yr.get("team_str") or (player.get("recent_team") or "") if isinstance(_yr, dict) else (player.get("recent_team") or "")
+    render_player_comparison(
+        player_row=view_row,
+        player_name=selected,
+        league_df=all_wrs_full,
+        name_col="player_display_name",
+        year_choice=year_choice,
+        primary_score=_view_score,
+        compute_comparison_score=_wr_score_of,
+        radar_builder=build_radar_figure,
+        benchmark=radar_bench,
+        benchmark_raw=radar_bench_raw,
+        stat_labels=stat_labels,
+        stat_methodology=stat_methodology,
+        key_prefix=f"wr_cmp_{player.get('player_id', selected)}",
+        position_label="wide receiver",
+        theme=_theme(_wr_team_abbr),
+    )
 
 # ── Coverage matchup profile (exposed, full-width) ───────────
 from lib_splits import render_coverage_matchup_section as _render_coverage_matchup_section
