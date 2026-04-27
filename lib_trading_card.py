@@ -540,6 +540,12 @@ def render_card_download_button(*,
     justify-content: center;
     min-width: 0;
 }}
+.lr-card-wing-right {{
+    /* Nudge the jersey number a touch left of dead-center so it
+       sits closer to the card without crowding it. */
+    justify-content: flex-start;
+    padding-left: 4%;
+}}
 .lr-card-center {{
     flex: 0 0 auto;
 }}
@@ -569,7 +575,7 @@ def render_card_download_button(*,
         <img src="data:image/png;base64,{b64}" class="lr-card-img" alt="{player_name} trading card"/>
         <div class="lr-card-caption">{player_name} — {season_str}</div>
     </div>
-    <div class="lr-card-wing">{right_wing}</div>
+    <div class="lr-card-wing lr-card-wing-right">{right_wing}</div>
 </div>
 """,
         unsafe_allow_html=True,
