@@ -210,49 +210,135 @@ _OL_INVOLVED_STATS = {
 
 @st.cache_data(show_spinner=False)
 def _ol_unit_observation(team: str, season: int) -> str:
-    """One-sentence unit-level take on the OL — rank shift in
-    team_seasons sack rate / pressure rate / penalty rate, since the
-    player-level grades aren't reliable enough to name names."""
-    ts_path = _DATA / "team_seasons.parquet"
-    if not ts_path.exists():
+    """Unit-wide story for the offensive line — pass protection,
+    run-blocking, and discipline as a unit. Ranks computed across
+    all 32 NFL OL units in the same season."""
+    ol_path = _DATA / "league_ol_all_seasons.parquet"
+    if not ol_path.exists():
         return ""
     try:
-        ts = pd.read_parquet(ts_path)
+        ol = pl.read_parquet(ol_path).to_pandas()
     except Exception:
         return ""
 
-    # Penalty rate (closest team-level proxy for OL discipline)
-    cur = ts[(ts["team"] == team) & (ts["season"] == season)]
-    prev = ts[(ts["team"] == team) & (ts["season"] == season - 1)]
-    if cur.empty:
+    team_col = "recent_team" if "recent_team" in ol.columns else "team"
+    season_col = "season_year" if "season_year" in ol.columns else "season"
+
+    # Team-season aggregate. team_sack_rate / team_pressure_rate are
+    # shared across linemen so first() works. Run-blocking is mean of
+    # pos_run_epa across the unit. Penalty rate also unit-mean.
+    def _agg(season_arg):
+        df_s = ol[ol[season_col] == season_arg]
+        if df_s.empty:
+            return None
+        agg = (
+            df_s.groupby(team_col)
+            .agg(
+                team_sack_rate=("team_sack_rate", "first"),
+                team_pressure_rate=("team_pressure_rate", "first"),
+                avg_run_epa=("pos_run_epa", "mean"),
+                avg_run_success=("pos_run_success", "mean"),
+                avg_penalty_rate=("penalty_rate", "mean"),
+            )
+            .reset_index()
+            .rename(columns={team_col: "team"})
+        )
+        return agg
+
+    cur_all = _agg(season)
+    prev_all = _agg(season - 1)
+    if cur_all is None:
         return ""
-    cur_row = cur.iloc[0]
 
-    parts = []
-    if not prev.empty:
-        prev_row = prev.iloc[0]
-        cur_pen = cur_row.get("penalty_yards_per_game")
-        prev_pen = prev_row.get("penalty_yards_per_game")
-        if pd.notna(cur_pen) and pd.notna(prev_pen):
-            d = float(cur_pen) - float(prev_pen)
-            if abs(d) >= 3:
-                dir_word = "more" if d > 0 else "fewer"
-                parts.append(
-                    f"the unit averaged {abs(d):.0f} {dir_word} penalty "
-                    f"yards per game vs. last year"
-                )
+    cur_row_q = cur_all[cur_all["team"] == team]
+    if cur_row_q.empty:
+        return ""
+    cur_row = cur_row_q.iloc[0]
 
-    # OL is the only group we don't drill into — note this explicitly.
-    note = (
-        "**OL note:** Free play-by-play data only gives us gap-attributed "
-        "EPA for the offensive line, not actual block grades — so individual "
-        "linemen aren't called out above"
+    prev_row = None
+    if prev_all is not None:
+        prev_row_q = prev_all[prev_all["team"] == team]
+        if not prev_row_q.empty:
+            prev_row = prev_row_q.iloc[0]
+
+    def _rank(df, col, value, ascending):
+        s = df[col].dropna()
+        if s.empty:
+            return None, 0
+        ranked = s.sort_values(ascending=ascending).reset_index(drop=True)
+        # Position of the value in the sort
+        pos = (ranked.values == value).nonzero()[0]
+        if len(pos) == 0:
+            return None, len(ranked)
+        return int(pos[0]) + 1, len(ranked)
+
+    sack_rank, total = _rank(cur_all, "team_sack_rate",
+                                cur_row["team_sack_rate"], ascending=True)
+    press_rank, _ = _rank(cur_all, "team_pressure_rate",
+                            cur_row["team_pressure_rate"], ascending=True)
+    run_rank, _ = _rank(cur_all, "avg_run_epa",
+                          cur_row["avg_run_epa"], ascending=False)
+    pen_rank, _ = _rank(cur_all, "avg_penalty_rate",
+                          cur_row["avg_penalty_rate"], ascending=True)
+
+    def _ord(n):
+        if n is None: return "—"
+        suf = "th"
+        if n % 100 not in (11, 12, 13):
+            suf = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+        return f"{n}{suf}"
+
+    def _yoy(cur_v, prev_v, fmt="{:.1%}"):
+        if prev_row is None or pd.isna(prev_v):
+            return ""
+        d = float(cur_v) - float(prev_v)
+        if abs(d) < 0.001:
+            return ""
+        sign = "▲" if d > 0 else "▼"
+        return f" ({sign} from {fmt.format(prev_v)})"
+
+    pieces = []
+
+    # Pass protection
+    pp_yoy_sack = _yoy(
+        cur_row["team_sack_rate"],
+        prev_row["team_sack_rate"] if prev_row is not None else None,
     )
-    if parts:
-        note += f" ({'; '.join(parts)})."
-    else:
-        note += "."
-    return note
+    pp_yoy_press = _yoy(
+        cur_row["team_pressure_rate"],
+        prev_row["team_pressure_rate"] if prev_row is not None else None,
+    )
+    pieces.append(
+        f"**Pass protection:** {cur_row['team_sack_rate']*100:.1f}% sack rate"
+        f" allowed ({_ord(sack_rank)} of {total}){pp_yoy_sack}, "
+        f"{cur_row['team_pressure_rate']*100:.1f}% pressure rate "
+        f"({_ord(press_rank)}){pp_yoy_press}."
+    )
+
+    # Run blocking
+    run_yoy = _yoy(
+        cur_row["avg_run_epa"],
+        prev_row["avg_run_epa"] if prev_row is not None else None,
+        fmt="{:+.3f}",
+    )
+    pieces.append(
+        f"**Run blocking:** {cur_row['avg_run_epa']:+.3f} EPA per "
+        f"gap-attributed run, {cur_row['avg_run_success']*100:.1f}% success "
+        f"rate ({_ord(run_rank)} of {total}){run_yoy}."
+    )
+
+    # Discipline
+    pen_yoy = _yoy(
+        cur_row["avg_penalty_rate"],
+        prev_row["avg_penalty_rate"] if prev_row is not None else None,
+        fmt="{:.2f}/g",
+    )
+    pieces.append(
+        f"**Discipline:** {cur_row['avg_penalty_rate']:.2f} flags per game "
+        f"per starter ({_ord(pen_rank)} fewest of {total}){pen_yoy}."
+    )
+
+    return "**OL unit:**  \n" + "  \n".join(pieces)
 
 
 def get_drilldown_narrative(team: str, season: int,
