@@ -110,6 +110,80 @@ def upvote_algorithm(algo_id: str, current: int) -> bool:
 
 
 # ============================================================
+# Community trading-card gallery
+# ============================================================
+def save_card(*,
+                player_id: str,
+                player_name: str,
+                position_group: str,
+                team_abbr: str | None,
+                season: int | None,
+                season_label: str,
+                bundle_weights: dict,
+                score: float | None,
+                author: str,
+                caption: str,
+                algorithm_id: str | None = None) -> dict | None:
+    """Persist a (player, season, preset) trading card to the gallery.
+
+    `cards` table — one row per shared card. Caller is responsible for
+    rendering / regenerating the PNG itself; we only store the metadata
+    needed to reproduce it.
+    """
+    sb = get_supabase()
+    row = {
+        "player_id": player_id,
+        "player_name": player_name,
+        "position_group": position_group,
+        "team_abbr": team_abbr,
+        "season": season,
+        "season_label": season_label,
+        "bundle_weights": bundle_weights,
+        "score": float(score) if (score is not None and pd.notna(score)) else None,
+        "author": author or "Anonymous",
+        "caption": caption,
+        "algorithm_id": algorithm_id,
+    }
+    try:
+        resp = sb.table("cards").insert(row).execute()
+        return resp.data[0] if resp.data else None
+    except Exception as e:
+        st.error(f"Save failed: {e}")
+        return None
+
+
+def list_cards(*,
+                position_group: str | None = None,
+                team_abbr: str | None = None,
+                order_by: str = "created_at",
+                limit: int = 60) -> list[dict]:
+    """Browse the gallery — optional position / team filters, with a
+    sort axis (created_at | upvotes | score)."""
+    sb = get_supabase()
+    try:
+        q = sb.table("cards").select("*")
+        if position_group:
+            q = q.eq("position_group", position_group)
+        if team_abbr:
+            q = q.eq("team_abbr", team_abbr)
+        resp = q.order(order_by, desc=True).limit(limit).execute()
+        return resp.data or []
+    except Exception:
+        return []
+
+
+def upvote_card(card_id: str, current: int) -> bool:
+    sb = get_supabase()
+    try:
+        sb.table("cards").update(
+            {"upvotes": current + 1}
+        ).eq("id", card_id).execute()
+        return True
+    except Exception:
+        return False
+
+
+# ============================================================
 # Scoring
 # ============================================================
 def compute_effective_weights(

@@ -419,6 +419,9 @@ _render_card(
     preset_name=(st.session_state.ol_loaded_algo.get("name")
                   if st.session_state.get("ol_loaded_algo") else None),
     key_prefix=f"ol_{player.get('player_id') or selected}",
+    position_group="ol",
+    bundle_weights=bundle_weights,
+    season=(None if _yr["is_career_view"] else selected_season),
 )
 
 # ── Combine workout chart vs. all-time OL pool ────────────────

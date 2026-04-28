@@ -422,7 +422,10 @@ def render_card_download_button(*,
                                   team_abbr: str,
                                   theme: dict,
                                   preset_name: str | None = None,
-                                  key_prefix: str = "card") -> None:
+                                  key_prefix: str = "card",
+                                  position_group: str | None = None,
+                                  bundle_weights: dict | None = None,
+                                  season: int | None = None) -> None:
     """Streamlit-side wrapper — builds the PNG and renders the download
     button. Headshot lookup is cached. Imports streamlit lazily so
     lib_trading_card stays importable from non-streamlit contexts."""
@@ -576,16 +579,69 @@ def render_card_download_button(*,
 
     _spacer_l, _btn_col, _spacer_r = st.columns([1, 2, 1])
     with _btn_col:
-        st.download_button(
-            label="🃏  Download trading card",
-            data=png_bytes,
-            file_name=filename,
-            mime="image/png",
-            key=f"{key_prefix}_card_dl",
-            help="4:5 trading-card export — sized for Twitter / "
-                 "Reddit / Instagram. Built from your slider preset.",
-            use_container_width=True,
-        )
+        _dl_col, _save_col = st.columns(2)
+        with _dl_col:
+            st.download_button(
+                label="🃏  Download",
+                data=png_bytes,
+                file_name=filename,
+                mime="image/png",
+                key=f"{key_prefix}_card_dl",
+                help="4:5 trading-card export — sized for Twitter / "
+                     "Reddit / Instagram. Built from your slider preset.",
+                use_container_width=True,
+            )
+        with _save_col:
+            # Only show save-to-gallery if caller wired the metadata
+            can_save = (position_group is not None
+                        and bundle_weights is not None)
+            if st.button("📌  Save to gallery",
+                          key=f"{key_prefix}_card_save",
+                          disabled=not can_save,
+                          help=("Share this card publicly. Other fans "
+                                "can browse, upvote, and load your preset."
+                                if can_save else
+                                "Gallery save not wired on this page yet."),
+                          use_container_width=True):
+                st.session_state[f"{key_prefix}_card_save_form"] = True
+
+        if can_save and st.session_state.get(f"{key_prefix}_card_save_form"):
+            with st.form(key=f"{key_prefix}_card_save_form_inner"):
+                st.markdown("**Share this card to the community gallery**")
+                _author = st.text_input(
+                    "Your name (optional)",
+                    value=st.session_state.get("community_author", ""),
+                    key=f"{key_prefix}_card_save_author",
+                    placeholder="Anonymous",
+                )
+                _caption = st.text_input(
+                    "Caption (optional)",
+                    key=f"{key_prefix}_card_save_caption",
+                    placeholder="e.g. \"reliability + downfield = clutch Stafford\"",
+                    max_chars=140,
+                )
+                _submitted = st.form_submit_button("Save to gallery",
+                                                     use_container_width=True)
+                if _submitted:
+                    from lib_shared import save_card
+                    saved = save_card(
+                        player_id=str(player_id),
+                        player_name=player_name,
+                        position_group=position_group,
+                        team_abbr=team_abbr,
+                        season=season,
+                        season_label=season_str,
+                        bundle_weights=bundle_weights,
+                        score=score,
+                        author=_author.strip() or "Anonymous",
+                        caption=_caption.strip(),
+                    )
+                    if saved:
+                        if _author.strip():
+                            st.session_state["community_author"] = _author.strip()
+                        st.success("Saved! Find it in the Gallery page.")
+                        st.session_state[f"{key_prefix}_card_save_form"] = False
+                        st.rerun()
 
 
 def build_player_card_png(*,
