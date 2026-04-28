@@ -49,6 +49,20 @@ _TEAM_COLORS: dict[str, tuple[str, str]] = {
 _DEFAULT_COLORS = ("#1F2A44", "#0B1730")
 
 
+def _route_to_team(team: str, on_pick_session_key: str) -> None:
+    """Click handler for grid tiles — set session_state for both the
+    legacy school filter (so College mode still works as a fallback)
+    AND the CollegeTeam page selectbox, then navigate."""
+    st.session_state[on_pick_session_key] = team
+    st.session_state["college_team_pick"] = team
+    st.query_params.update({"team": team})
+    try:
+        st.switch_page("pages/CollegeTeam.py")
+    except Exception:
+        # Fallback if the page hasn't been added yet
+        st.rerun()
+
+
 def _readable_text(hex_color: str) -> str:
     h = hex_color.lstrip("#")
     if len(h) != 6:
@@ -135,8 +149,7 @@ def render_college_grid(*,
                     if st.button(f"Open {team}",
                                   key=f"cfb_grid_az_{team.replace(' ', '_')}",
                                   use_container_width=True):
-                        st.session_state[on_pick_session_key] = team
-                        st.rerun()
+                        _route_to_team(team, on_pick_session_key)
         # Still offer show-all below
         _render_show_all_section(all_schools, on_pick_session_key)
         return
@@ -158,8 +171,7 @@ def render_college_grid(*,
                 if st.button(f"Open {team}",
                               key=f"cfb_grid_{team.replace(' ', '_')}",
                               use_container_width=True):
-                    st.session_state[on_pick_session_key] = team
-                    st.rerun()
+                    _route_to_team(team, on_pick_session_key)
         # Empty slots in shorter rows (e.g. Independents has 4 not 5)
         for empty_col in cols[len(team_list):]:
             with empty_col:
@@ -206,8 +218,7 @@ def _render_show_all_section(all_schools: list[str] | None,
                     if st.button(team,
                                   key=f"cfb_grid_other_{team.replace(' ', '_')}",
                                   use_container_width=True):
-                        st.session_state[on_pick_session_key] = team
-                        st.rerun()
+                        _route_to_team(team, on_pick_session_key)
         _, mid, _ = st.columns([1, 2, 1])
         with mid:
             if st.button("⬆️  Collapse",
