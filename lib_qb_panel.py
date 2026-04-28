@@ -442,3 +442,104 @@ def render_throw_map(player_id: str, player_name: str, *,
             f"**Worst zone:** {worst_z} ({worst_v:+.2f} EPA/att). "
             f"Green = better than league, red = worse. Δ shown bottom of each cell."
         )
+
+
+# ── Situational splits ────────────────────────────────────────────
+_SITUATIONS = [
+    ("3rd down", "is_third_down", "Money downs.",
+     "Plays where the down is 3rd."),
+    ("Red zone", "is_red_zone", "Inside the 20.",
+     "Plays starting from the opponent's 20-yard line or closer."),
+    ("4th quarter", "is_fourth_quarter", "Clutch time.",
+     "Plays in the 4th quarter."),
+    ("2-min drill", "is_two_minute", "End-of-half pressure.",
+     "Plays inside 2 minutes of either half."),
+]
+
+
+@st.cache_data
+def _league_situational_avg(season: int | None) -> dict:
+    db = load_qb_dropbacks()
+    if season is not None:
+        db = db[db["season"] == season]
+    out = {}
+    for label, flag, _, _ in _SITUATIONS:
+        sub = db[db[flag]]
+        out[label] = {
+            "epa": float(sub["epa"].mean()) if len(sub) else 0.0,
+            "success": float(sub["success"].mean()) if len(sub) else 0.0,
+            "comp_pct": float(sub["complete_pass"].mean()) if len(sub) else 0.0,
+        }
+    return out
+
+
+def render_situational_split(player_id: str, player_name: str, *,
+                                season: int | None = None,
+                                theme: dict | None = None) -> None:
+    """Bucket 6 — Situational performance.
+
+    Four side-by-side panels: 3rd down · red zone · 4th quarter ·
+    2-minute drill. Each shows player's EPA per dropback in that
+    situation vs. league average, with sample size and delta.
+    """
+    plays = _filter_player(player_id, season)
+    if plays.empty or len(plays) < 50:
+        st.caption(f"_Not enough dropbacks ({len(plays)}) to compute "
+                    f"situational splits._")
+        return
+
+    league = _league_situational_avg(season)
+
+    cols = st.columns(4)
+    for i, (label, flag, tagline, helptext) in enumerate(_SITUATIONS):
+        sub = plays[plays[flag]]
+        n = len(sub)
+        with cols[i]:
+            st.markdown(f"**{label}**  \n_{tagline}_")
+            if n < 10:
+                st.metric("EPA / dropback", "—",
+                           help=f"Only {n} plays — not enough.")
+                st.caption(f"_{n} plays_")
+                continue
+            qb_epa = float(sub["epa"].mean())
+            lg_epa = league[label]["epa"]
+            delta = qb_epa - lg_epa
+            st.metric(
+                "EPA / dropback",
+                f"{qb_epa:+.2f}",
+                delta=f"{delta:+.2f} vs league",
+                help=helptext,
+            )
+            success_pct = float(sub["success"].mean()) * 100
+            st.caption(
+                f"{n} plays · {success_pct:.0f}% successful · "
+                f"league avg: {lg_epa:+.2f}"
+            )
+
+    # Auto-narrative: which situation does he own / fold in?
+    deltas = []
+    for label, flag, _, _ in _SITUATIONS:
+        sub = plays[plays[flag]]
+        if len(sub) >= 30:
+            d = float(sub["epa"].mean()) - league[label]["epa"]
+            deltas.append((d, label))
+    if len(deltas) >= 2:
+        deltas.sort()
+        worst_d, worst_l = deltas[0]
+        best_d, best_l = deltas[-1]
+        if best_d > 0.05 and worst_d < -0.05:
+            st.info(
+                f"**Situational signature:** Best in **{best_l}** "
+                f"({best_d:+.2f} EPA above league). Worst in **{worst_l}** "
+                f"({worst_d:+.2f} below)."
+            )
+        elif best_d > 0.05:
+            st.success(
+                f"**Best situation:** {best_l} ({best_d:+.2f} EPA above "
+                f"league average)."
+            )
+        elif worst_d < -0.05:
+            st.warning(
+                f"**Worst situation:** {worst_l} ({worst_d:+.2f} EPA "
+                f"below league average)."
+            )

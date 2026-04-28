@@ -587,6 +587,7 @@ from lib_qb_panel import (
     render_pressure_split as _render_pressure_split,
     render_competition_split as _render_competition_split,
     render_throw_map as _render_throw_map,
+    render_situational_split as _render_situational_split,
 )
 _qb_panel_pid = player.get("player_id")
 if _qb_panel_pid:
@@ -600,6 +601,13 @@ if _qb_panel_pid:
         )
     with st.expander("🎯  Throw map — where on the field does he hit?", expanded=True):
         _render_throw_map(
+            player_id=_qb_panel_pid,
+            player_name=selected,
+            season=_qb_panel_season,
+            theme=_theme(_team_abbr),
+        )
+    with st.expander("⏱️  Situational — 3rd down, red zone, 4th quarter, 2-min drill", expanded=False):
+        _render_situational_split(
             player_id=_qb_panel_pid,
             player_name=selected,
             season=_qb_panel_season,
