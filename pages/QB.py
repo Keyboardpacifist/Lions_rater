@@ -632,6 +632,12 @@ if _qb_panel_pid:
         comparison_season=_comp_season,
     )
 
+    _comp_kwargs = dict(
+        comparison_player_id=_comp_pid,
+        comparison_player_name=_comp_name,
+        comparison_season=_comp_season,
+    )
+
     # ── Supplementary buckets (collapsible to keep the page short) ──
     with st.expander("📋  Pre-snap — formation, tempo, down splits", expanded=False):
         _render_presnap_split(
@@ -639,6 +645,7 @@ if _qb_panel_pid:
             player_name=selected,
             season=_qb_panel_season,
             theme=_theme(_team_abbr),
+            **_comp_kwargs,
         )
     with st.expander("🧠  Processing — time to throw, aggressiveness, depth", expanded=False):
         _render_processing_split(
@@ -646,6 +653,7 @@ if _qb_panel_pid:
             player_name=selected,
             season=_qb_panel_season,
             theme=_theme(_team_abbr),
+            **_comp_kwargs,
         )
     with st.expander("🥊  Under pressure — clean pocket vs. pressured", expanded=False):
         _render_pressure_split(
@@ -653,6 +661,7 @@ if _qb_panel_pid:
             player_name=selected,
             season=_qb_panel_season,
             theme=_theme(_team_abbr),
+            **_comp_kwargs,
         )
     with st.expander("⏱️  Situational — 3rd down, red zone, 4th quarter, 2-min drill", expanded=False):
         _render_situational_split(
@@ -660,6 +669,7 @@ if _qb_panel_pid:
             player_name=selected,
             season=_qb_panel_season,
             theme=_theme(_team_abbr),
+            **_comp_kwargs,
         )
     with st.expander("🏆  Elite vs. weak competition — does he rise to elite D or feast on bad ones?", expanded=False):
         _render_competition_split(
@@ -667,6 +677,7 @@ if _qb_panel_pid:
             player_name=selected,
             season=_qb_panel_season,
             theme=_theme(_team_abbr),
+            **_comp_kwargs,
         )
 
 # ── Combine workout chart vs. all-time QB pool ────────────────
