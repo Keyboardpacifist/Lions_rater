@@ -940,26 +940,22 @@ def render_player_comparison(*,
     if not distinct_players:
         return
 
-    # Per-player season list. Most-recent season first; "All-career"
-    # entry appended last for each player.
+    # One entry per player (career-aggregate) — the picker stays scannable.
+    # Per-season comparison is handled by setting the page's own season
+    # filter; comparing a 2024 view to a 2024 view of another QB is the
+    # same thing as picking "Mahomes" here.
     if year_col in league_df.columns:
         for p in distinct_players:
             p_rows = league_df[name_series == p]
             if p_rows.empty:
                 continue
-            seasons = sorted(p_rows[year_col].dropna().unique().tolist(),
-                              reverse=True)
-            for s in seasons:
-                try:
-                    s_int = int(s)
-                except (ValueError, TypeError):
-                    continue
-                # Skip the (player, season) the user is already viewing —
-                # comparing a player to themselves at the same season is a no-op.
-                if p == player_name and s == year_choice:
-                    continue
-                options_pairs.append((f"{p} — {s_int}", s_int, p))
-            options_pairs.append((f"{p} — All career", "All-career mean", p))
+            n_seasons = p_rows[year_col].dropna().nunique()
+            label = (f"{p} — career ({n_seasons} season{'s' if n_seasons != 1 else ''})"
+                     if n_seasons > 1 else f"{p} — {int(p_rows[year_col].dropna().iloc[0])}")
+            if p == player_name:
+                # Don't offer the same player the user is already viewing.
+                continue
+            options_pairs.append((label, "All-career mean", p))
     else:
         for p in distinct_players:
             if p == player_name:
