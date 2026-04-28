@@ -26,6 +26,12 @@ def load_team_pass_def_quality() -> pd.DataFrame:
 
 
 @st.cache_data
+def load_qb_ngs() -> pd.DataFrame:
+    path = _DATA / "qb_ngs_seasons.parquet"
+    return pd.read_parquet(path) if path.exists() else pd.DataFrame()
+
+
+@st.cache_data
 def _league_pressure_avg(season: int | None) -> dict:
     db = load_qb_dropbacks()
     if season is not None:
@@ -543,3 +549,192 @@ def render_situational_split(player_id: str, player_name: str, *,
                 f"**Worst situation:** {worst_l} ({worst_d:+.2f} EPA "
                 f"below league average)."
             )
+
+
+def render_presnap_split(player_id: str, player_name: str, *,
+                            season: int | None = None,
+                            theme: dict | None = None) -> None:
+    """Bucket 1 — Pre-snap.
+
+    From the dropback feed: shotgun usage, no-huddle rate, average
+    play clock at snap (proxy for tempo / hard count behavior),
+    play distribution by down. Compared to league.
+    """
+    plays = _filter_player(player_id, season)
+    if plays.empty or len(plays) < 50:
+        st.caption(f"_Not enough dropbacks ({len(plays)}) for pre-snap stats._")
+        return
+
+    # League comparators
+    db = load_qb_dropbacks()
+    if season is not None:
+        db = db[db["season"] == season]
+
+    qb_shotgun = float(plays["shotgun"].mean())
+    qb_no_huddle = float(plays["no_huddle"].mean())
+    qb_play_clock = float(plays["play_clock"].dropna().astype(float).mean())
+    lg_shotgun = float(db["shotgun"].mean())
+    lg_no_huddle = float(db["no_huddle"].mean())
+    lg_play_clock = float(db["play_clock"].dropna().astype(float).mean())
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric(
+        "Shotgun rate",
+        f"{qb_shotgun*100:.1f}%",
+        delta=f"{(qb_shotgun-lg_shotgun)*100:+.1f}% vs league",
+        help="% of dropbacks from shotgun. Higher = pass-first / spread offense.",
+    )
+    c2.metric(
+        "No-huddle rate",
+        f"{qb_no_huddle*100:.1f}%",
+        delta=f"{(qb_no_huddle-lg_no_huddle)*100:+.1f}% vs league",
+        help="% of plays run without a huddle — tempo signal.",
+    )
+    c3.metric(
+        "Avg play clock at snap",
+        f"{qb_play_clock:.1f}s",
+        delta=f"{qb_play_clock-lg_play_clock:+.1f}s vs league",
+        delta_color="off",
+        help="Time on the play clock when ball is snapped. Lower = "
+             "snapping fast (uptempo). Higher = holding to last second "
+             "(might indicate audibles / hard counts).",
+    )
+
+    # Down-distribution table
+    dd = (
+        plays.groupby("down")
+        .agg(
+            n=("epa", "size"),
+            epa=("epa", "mean"),
+            comp=("complete_pass", "mean"),
+        )
+        .reset_index()
+    )
+    dd = dd[dd["down"].isin([1, 2, 3, 4])]
+    dd["Down"] = dd["down"].astype(int).astype(str) + (
+        dd["down"].map({1: "st", 2: "nd", 3: "rd", 4: "th"})
+    )
+    dd["EPA/play"] = dd["epa"].apply(lambda v: f"{v:+.2f}")
+    dd["Comp %"] = dd["comp"].apply(lambda v: f"{v*100:.0f}%")
+    dd = dd.rename(columns={"n": "Plays"})
+    st.dataframe(dd[["Down", "Plays", "EPA/play", "Comp %"]],
+                  use_container_width=True, hide_index=True)
+
+
+def render_processing_split(player_id: str, player_name: str, *,
+                                season: int | None = None,
+                                theme: dict | None = None) -> None:
+    """Bucket 2 — Processing.
+
+    From NGS: time-to-throw, aggressiveness (% into tight windows),
+    intended vs. completed air yards (the gap = receiver YAC + drops),
+    and air yards to sticks (passing the marker on average).
+    """
+    ngs = load_qb_ngs()
+    if ngs.empty:
+        st.caption("_NGS data not loaded — run `tools/build_qb_ngs.py`._")
+        return
+
+    rows = ngs[ngs["player_gsis_id"] == player_id]
+    if season is not None:
+        rows = rows[rows["season"] == season]
+    if rows.empty:
+        st.caption("_No NGS data for this player/season._")
+        return
+
+    # Avg across selected seasons (if career view, weight by attempts)
+    if "attempts" in rows.columns and rows["attempts"].sum() > 0:
+        w = rows["attempts"]
+    else:
+        w = pd.Series(1, index=rows.index)
+
+    def _wmean(col):
+        if col not in rows.columns or rows[col].dropna().empty:
+            return None
+        valid = rows[col].notna()
+        if valid.sum() == 0:
+            return None
+        return float((rows.loc[valid, col] * w[valid]).sum() / w[valid].sum())
+
+    qb_ttt = _wmean("avg_time_to_throw")
+    qb_aggr = _wmean("aggressiveness")
+    qb_intended = _wmean("avg_intended_air_yards")
+    qb_completed = _wmean("avg_completed_air_yards")
+    qb_to_sticks = _wmean("avg_air_yards_to_sticks")
+
+    # League comparators (same season filter)
+    lg = ngs.copy()
+    if season is not None:
+        lg = lg[lg["season"] == season]
+    if "attempts" in lg.columns:
+        lg = lg[lg["attempts"] >= 100]  # qualifier
+
+    def _lg_mean(col):
+        if col not in lg.columns or lg[col].dropna().empty:
+            return None
+        return float(lg[col].mean())
+
+    lg_ttt = _lg_mean("avg_time_to_throw")
+    lg_aggr = _lg_mean("aggressiveness")
+    lg_intended = _lg_mean("avg_intended_air_yards")
+    lg_to_sticks = _lg_mean("avg_air_yards_to_sticks")
+
+    def _fmt(v, fmt):
+        if v is None or pd.isna(v):
+            return "—"
+        return fmt.format(v)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(
+        "Time to throw",
+        _fmt(qb_ttt, "{:.2f}s"),
+        delta=(_fmt(qb_ttt - lg_ttt, "{:+.2f}s vs league")
+                if qb_ttt is not None and lg_ttt is not None else None),
+        delta_color="off",
+        help="Avg seconds from snap to throw. Lower = quicker processor; "
+             "higher = holds the ball longer (more chances + more sacks).",
+    )
+    c2.metric(
+        "Aggressiveness",
+        _fmt(qb_aggr, "{:.1f}%"),
+        delta=(_fmt(qb_aggr - lg_aggr, "{:+.1f}% vs league")
+                if qb_aggr is not None and lg_aggr is not None else None),
+        help="% of attempts into tight coverage (defender within 1 yard "
+             "of receiver at catch). Higher = more risk-taking.",
+    )
+    c3.metric(
+        "Intended air yards",
+        _fmt(qb_intended, "{:.1f} yd"),
+        delta=(_fmt(qb_intended - lg_intended, "{:+.1f} vs league")
+                if qb_intended is not None and lg_intended is not None else None),
+        help="Avg depth of his targets (how far the ball travels in the "
+             "air, on average). Higher = downfield thrower.",
+    )
+    c4.metric(
+        "Air yards to sticks",
+        _fmt(qb_to_sticks, "{:+.2f}"),
+        delta=(_fmt(qb_to_sticks - lg_to_sticks, "{:+.2f} vs league")
+                if qb_to_sticks is not None and lg_to_sticks is not None else None),
+        delta_color="off",
+        help="On average, how far past (or short of) the first-down "
+             "marker his targets are. Positive = throws past the sticks.",
+    )
+
+    # Narrative: time-to-throw + aggressiveness combo tells a profile
+    if qb_ttt is not None and qb_aggr is not None and lg_ttt is not None and lg_aggr is not None:
+        slow = qb_ttt - lg_ttt > 0.10
+        fast = qb_ttt - lg_ttt < -0.10
+        aggressive = qb_aggr - lg_aggr > 1.5
+        conservative = qb_aggr - lg_aggr < -1.5
+        if fast and conservative:
+            st.info("**Quick, conservative processor** — gets the ball out fast "
+                     "and avoids tight windows. Game-manager profile.")
+        elif slow and aggressive:
+            st.warning("**Holds the ball, takes risks** — high time-to-throw "
+                        "and high aggressiveness. Boom-bust hero-ball.")
+        elif fast and aggressive:
+            st.success("**Quick AND aggressive** — rare combo. Reads fast and "
+                        "still attacks tight windows.")
+        elif slow and conservative:
+            st.info("**Patient and conservative** — holds the ball but doesn't "
+                     "attack risky throws. Often paired with strong scrambling.")
