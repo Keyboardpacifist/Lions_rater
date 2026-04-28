@@ -303,3 +303,142 @@ def render_competition_split(player_id: str, player_name: str, *,
         by_q_display[["Defense", "Plays", "EPA/play", "Comp %", "INT rate", "Sack rate"]],
         use_container_width=True, hide_index=True,
     )
+
+
+# ── Throw-map zone definitions ────────────────────────────────────
+_DEPTH_BUCKETS = [
+    ("Deep", 20, 99),         # 20+ air yards
+    ("Intermediate", 10, 20), # 10-19
+    ("Short", -99, 10),       # <10 (negative for screens / behind LOS)
+]
+_LOCATIONS = ["left", "middle", "right"]
+_LOC_LABELS = {"left": "Left", "middle": "Middle", "right": "Right"}
+
+
+@st.cache_data
+def _league_throw_map(season: int | None) -> pd.DataFrame:
+    """Per-zone league averages — used for the Δ vs. league cell text."""
+    db = load_qb_dropbacks()
+    db = db[(db["pass_attempt"] == 1) & db["air_yards"].notna()
+            & db["pass_location"].notna()]
+    if season is not None:
+        db = db[db["season"] == season]
+    rows = []
+    for depth_label, lo, hi in _DEPTH_BUCKETS:
+        for loc in _LOCATIONS:
+            zone = db[(db["air_yards"] >= lo) & (db["air_yards"] < hi)
+                      & (db["pass_location"] == loc)]
+            if len(zone) >= 50:
+                rows.append({
+                    "depth": depth_label, "location": loc,
+                    "league_epa": float(zone["epa"].mean()),
+                    "league_comp_pct": float(zone["complete_pass"].mean()),
+                })
+    return pd.DataFrame(rows)
+
+
+def render_throw_map(player_id: str, player_name: str, *,
+                       season: int | None = None,
+                       theme: dict | None = None) -> None:
+    """Bucket 3 — Throw map.
+
+    3×3 grid (Short/Intermediate/Deep × Left/Middle/Right). Color
+    encodes EPA/attempt; cell annotations show attempts, completion
+    %, and Δ EPA vs. the league average for that zone.
+    """
+    plays = _filter_player(player_id, season)
+    plays = plays[(plays["pass_attempt"] == 1) & plays["air_yards"].notna()
+                  & plays["pass_location"].notna()]
+    if plays.empty or len(plays) < 30:
+        st.caption(f"_Not enough throws ({len(plays)}) to build a throw map._")
+        return
+
+    league = _league_throw_map(season)
+
+    # Build 3×3 matrices
+    epa_matrix, ann_matrix = [], []
+    for depth_label, lo, hi in _DEPTH_BUCKETS:
+        epa_row, ann_row = [], []
+        for loc in _LOCATIONS:
+            zone = plays[(plays["air_yards"] >= lo)
+                         & (plays["air_yards"] < hi)
+                         & (plays["pass_location"] == loc)]
+            n = len(zone)
+            if n < 5:
+                epa_row.append(None)
+                ann_row.append(f"<b>—</b><br>{n} att")
+                continue
+            epa = float(zone["epa"].mean())
+            comp_pct = float(zone["complete_pass"].mean())
+            # Δ vs. league
+            lg = league[(league["depth"] == depth_label)
+                        & (league["location"] == loc)]
+            if not lg.empty:
+                delta = epa - float(lg["league_epa"].iloc[0])
+                delta_str = f"{'▲' if delta > 0 else '▼'} {abs(delta):.2f} vs lg"
+            else:
+                delta_str = ""
+            epa_row.append(epa)
+            ann_row.append(
+                f"<b>{epa:+.2f} EPA</b><br>"
+                f"{comp_pct*100:.0f}% on {n} att<br>"
+                f"<span style='font-size:11px;color:#666'>{delta_str}</span>"
+            )
+        epa_matrix.append(epa_row)
+        ann_matrix.append(ann_row)
+
+    # Diverging red→white→green. Anchor scale around 0 EPA.
+    flat = [v for row in epa_matrix for v in row if v is not None]
+    if not flat:
+        st.caption("_Not enough throws per zone to render._")
+        return
+    abs_max = max(abs(min(flat)), abs(max(flat)))
+    z_scale = abs_max if abs_max > 0 else 0.5
+
+    fig = go.Figure(data=go.Heatmap(
+        z=epa_matrix,
+        x=[_LOC_LABELS[l] for l in _LOCATIONS],
+        y=[d[0] for d in _DEPTH_BUCKETS],
+        zmin=-z_scale, zmax=z_scale,
+        colorscale=[[0, "#c0392b"], [0.5, "#f7f7f7"], [1, "#27ae60"]],
+        colorbar=dict(title="EPA<br>per att", thickness=14),
+        hoverinfo="skip",
+        showscale=True,
+    ))
+    # Cell annotations (HTML-styled)
+    for i, depth in enumerate([d[0] for d in _DEPTH_BUCKETS]):
+        for j, loc in enumerate(_LOCATIONS):
+            fig.add_annotation(
+                x=_LOC_LABELS[loc], y=depth,
+                text=ann_matrix[i][j],
+                showarrow=False,
+                font=dict(size=12, color="#222"),
+                align="center",
+            )
+    fig.update_layout(
+        height=420,
+        margin=dict(l=80, r=20, t=30, b=40),
+        xaxis=dict(side="top", title="Pass location",
+                    title_font=dict(size=11, color="#666")),
+        yaxis=dict(title="Air-yard depth",
+                    title_font=dict(size=11, color="#666")),
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Pick the best & worst zones for a quick narrative line
+    flat_zones = []
+    for i, depth in enumerate([d[0] for d in _DEPTH_BUCKETS]):
+        for j, loc in enumerate(_LOCATIONS):
+            v = epa_matrix[i][j]
+            if v is not None:
+                flat_zones.append((v, f"{depth.lower()} {loc}"))
+    if len(flat_zones) >= 2:
+        flat_zones.sort()
+        worst_v, worst_z = flat_zones[0]
+        best_v, best_z = flat_zones[-1]
+        st.caption(
+            f"**Best zone:** {best_z} ({best_v:+.2f} EPA/att). "
+            f"**Worst zone:** {worst_z} ({worst_v:+.2f} EPA/att). "
+            f"Green = better than league, red = worse. Δ shown bottom of each cell."
+        )
