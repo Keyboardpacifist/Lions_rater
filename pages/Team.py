@@ -20,6 +20,8 @@ from lib_team_contention import (
     render_contention_badge,
     compute_gap_analysis,
     render_gap_analysis_html,
+    compute_trajectory,
+    render_trajectory_html,
 )
 
 st.set_page_config(
@@ -100,6 +102,8 @@ contention_html = render_contention_badge(
 )
 gaps = compute_gap_analysis(team_df, team, int(season), n_gaps=3)
 gap_html = render_gap_analysis_html(contention["state"], gaps)
+trajectory = compute_trajectory(team_df, team, int(season))
+trajectory_html = render_trajectory_html(trajectory)
 
 _logo_html = (
     f'<img src="{logo}" style="height:110px;width:110px;object-fit:contain;'
@@ -119,6 +123,7 @@ hero_html = (
     '</div>'
     '</div>'
     f'{gap_html}'
+    f'{trajectory_html}'
     '</div>'
 )
 st.markdown(hero_html, unsafe_allow_html=True)

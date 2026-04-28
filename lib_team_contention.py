@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-import streamlit as st
+import streamlit as st  # noqa: F401  (kept for cache decorator)
 
 _DATA = Path(__file__).resolve().parent / "data"
 
@@ -256,6 +256,144 @@ def compute_gap_analysis(team_seasons, team: str, season: int,
         })
     gaps.sort(key=lambda g: g["rank_pct"], reverse=True)
     return gaps[:n_gaps]
+
+
+# Stats considered for year-over-year trajectory comparison.
+# (label, column, ascending=True if lower-is-better)
+_TRAJECTORY_STATS = [
+    ("Offensive efficiency",  "off_epa_per_play",         False),
+    ("Passing offense",       "off_pass_epa_per_play",    False),
+    ("Rushing offense",       "off_rush_epa_per_play",    False),
+    ("Red zone TD rate",      "off_red_zone_td_rate",     False),
+    ("3rd down conversion",   "off_third_down_conv_rate", False),
+    ("Ball security",         "off_giveaway_rate",        True),
+    ("Defensive efficiency",  "def_epa_per_play",         True),
+    ("Pass defense",          "def_pass_epa_allowed",     True),
+    ("Run defense",           "def_rush_epa_allowed",     True),
+    ("Takeaway rate",         "def_takeaway_rate",        False),
+    ("Pressure rate",         "def_pressure_rate",        False),
+    ("4Q offense",            "fourth_q_off_epa",         False),
+    ("4Q defense",            "fourth_q_def_epa",         True),
+    ("Points/game",           "points_per_game",          False),
+    ("Points allowed/game",   "points_allowed_per_game",  True),
+    ("Discipline",            "penalty_yards_per_game",   True),
+]
+
+
+def _rank_for(team_seasons, team: str, season: int,
+                stat: str, ascending: bool):
+    """Returns rank (1 = best) within season."""
+    pool = team_seasons[team_seasons["season"] == season].copy()
+    pool = pool.dropna(subset=[stat])
+    if pool.empty:
+        return None, 0
+    pool = pool.sort_values(stat, ascending=ascending).reset_index(drop=True)
+    match = pool.index[pool["team"] == team].tolist()
+    if not match:
+        return None, len(pool)
+    return match[0] + 1, len(pool)
+
+
+def compute_trajectory(team_seasons, team: str, season: int,
+                          n_each_side: int = 4) -> dict:
+    """For each stat, compute the team's league-rank shift from the
+    prior season to the current. Surface biggest rank-gains and
+    biggest rank-drops. Rank-based deltas normalize across stats with
+    different units (Points/game scale vs EPA scale).
+    """
+    cur = team_seasons[(team_seasons["team"] == team)
+                        & (team_seasons["season"] == season)]
+    prev = team_seasons[(team_seasons["team"] == team)
+                          & (team_seasons["season"] == season - 1)]
+    if cur.empty or prev.empty:
+        return {"improved": [], "slipped": [],
+                "prior_season": season - 1}
+
+    deltas = []
+    for label, col, ascending in _TRAJECTORY_STATS:
+        if col not in team_seasons.columns:
+            continue
+        cur_rank, total_cur = _rank_for(team_seasons, team, season, col, ascending)
+        prev_rank, total_prev = _rank_for(team_seasons, team, season - 1, col, ascending)
+        if cur_rank is None or prev_rank is None:
+            continue
+        # Improvement = lower rank number (better). Spots gained = prev - cur.
+        spots_gained = prev_rank - cur_rank
+        deltas.append({
+            "label": label,
+            "prior_rank": prev_rank,
+            "current_rank": cur_rank,
+            "total": total_cur,
+            "spots_gained": spots_gained,
+        })
+    deltas.sort(key=lambda d: d["spots_gained"], reverse=True)
+    improved = [d for d in deltas if d["spots_gained"] > 0][:n_each_side]
+    slipped = [d for d in deltas if d["spots_gained"] < 0]
+    slipped.sort(key=lambda d: d["spots_gained"])  # most negative first
+    slipped = slipped[:n_each_side]
+    return {
+        "improved": improved,
+        "slipped": slipped,
+        "prior_season": season - 1,
+    }
+
+
+def render_trajectory_html(traj: dict) -> str:
+    """Render an "improved | slipped" two-column block. Each row shows
+    the team's prior-season rank → current rank and spots gained/lost."""
+    if not traj or (not traj["improved"] and not traj["slipped"]):
+        return ""
+
+    def _ord(n):
+        suf = "th"
+        if n % 100 not in (11, 12, 13):
+            suf = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+        return f"{n}{suf}"
+
+    def _row(d, color, sign):
+        spots = abs(d["spots_gained"])
+        return (
+            f'<div style="display:flex;justify-content:space-between;'
+            f'align-items:center;padding:8px 12px;'
+            f'background:rgba(255,255,255,0.05);border-left:3px solid {color};'
+            f'border-radius:0 6px 6px 0;margin-bottom:6px;font-size:13px;">'
+            f'<div><b>{d["label"]}</b><br>'
+            f'<span style="opacity:0.7;font-size:11px;">'
+            f'{_ord(d["prior_rank"])} → {_ord(d["current_rank"])} of {d["total"]}'
+            f'</span></div>'
+            f'<div style="color:{color};font-weight:800;font-size:15px;'
+            f'white-space:nowrap;">{sign} {spots} spots</div>'
+            f'</div>'
+        )
+
+    improved_html = "".join(_row(d, "#34A853", "▲") for d in traj["improved"])
+    slipped_html  = "".join(_row(d, "#E67E22", "▼") for d in traj["slipped"])
+    prior = traj["prior_season"]
+
+    fallback_msg = ('<div style="opacity:0.55;font-size:13px;">'
+                     '— no meaningful change —</div>')
+    improved_block = improved_html or fallback_msg
+    slipped_block = slipped_html or fallback_msg
+    return (
+        '<div style="margin-top:18px;padding:16px 18px;'
+        'background:rgba(0,0,0,0.18);border-radius:12px;color:white;">'
+        '<div style="font-size:12px;font-weight:800;letter-spacing:1.5px;'
+        'opacity:0.85;margin-bottom:10px;">'
+        f'📈  YEAR OVER YEAR — vs {prior}</div>'
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">'
+        '<div>'
+        '<div style="font-size:11px;font-weight:700;letter-spacing:1px;'
+        'color:#34A853;margin-bottom:6px;">▲ IMPROVED</div>'
+        f'{improved_block}'
+        '</div>'
+        '<div>'
+        '<div style="font-size:11px;font-weight:700;letter-spacing:1px;'
+        'color:#E67E22;margin-bottom:6px;">▼ SLIPPED</div>'
+        f'{slipped_block}'
+        '</div>'
+        '</div>'
+        '</div>'
+    )
 
 
 _GAP_TITLES = {
