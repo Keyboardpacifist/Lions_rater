@@ -594,6 +594,18 @@ from lib_qb_panel import (
 _qb_panel_pid = player.get("player_id")
 if _qb_panel_pid:
     _qb_panel_season = None if _yr["is_career_view"] else selected_season
+
+    # ── HERO panel: contextual throw map (always visible, filterable) ──
+    st.markdown("### 🎯 Throw map — where does he hit?")
+    _render_throw_map(
+        player_id=_qb_panel_pid,
+        player_name=selected,
+        season=_qb_panel_season,
+        theme=_theme(_team_abbr),
+        key_prefix=f"qb_{_qb_panel_pid}",
+    )
+
+    # ── Supplementary buckets (collapsible to keep the page short) ──
     with st.expander("📋  Pre-snap — formation, tempo, down splits", expanded=False):
         _render_presnap_split(
             player_id=_qb_panel_pid,
@@ -608,15 +620,8 @@ if _qb_panel_pid:
             season=_qb_panel_season,
             theme=_theme(_team_abbr),
         )
-    with st.expander("🥊  Under pressure — clean pocket vs. pressured", expanded=True):
+    with st.expander("🥊  Under pressure — clean pocket vs. pressured", expanded=False):
         _render_pressure_split(
-            player_id=_qb_panel_pid,
-            player_name=selected,
-            season=_qb_panel_season,
-            theme=_theme(_team_abbr),
-        )
-    with st.expander("🎯  Throw map — where on the field does he hit?", expanded=True):
-        _render_throw_map(
             player_id=_qb_panel_pid,
             player_name=selected,
             season=_qb_panel_season,

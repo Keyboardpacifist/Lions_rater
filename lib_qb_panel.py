@@ -343,21 +343,145 @@ def _league_throw_map(season: int | None) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+_COVERAGE_OPTIONS = [
+    ("COVER_0", "Cover 0 (all-out blitz)"),
+    ("COVER_1", "Cover 1 (man w/ deep safety)"),
+    ("COVER_2", "Cover 2 (2 deep zone)"),
+    ("2_MAN", "Cover 2 Man"),
+    ("COVER_3", "Cover 3 (3 deep zone)"),
+    ("COVER_4", "Cover 4 (quarters)"),
+    ("COVER_6", "Cover 6 (split field)"),
+    ("COVER_9", "Cover 9 / palms"),
+    ("COMBO", "Combo coverage"),
+]
+_COVERAGE_LABELS = dict(_COVERAGE_OPTIONS)
+_PERSONNEL_OPTIONS = ["11", "12", "21", "Heavy", "Empty"]
+
+
 def render_throw_map(player_id: str, player_name: str, *,
                        season: int | None = None,
-                       theme: dict | None = None) -> None:
-    """Bucket 3 — Throw map.
+                       theme: dict | None = None,
+                       key_prefix: str = "qb") -> None:
+    """Bucket 3 — Contextual throw map (page hero).
 
     3×3 grid (Short/Intermediate/Deep × Left/Middle/Right). Color
     encodes EPA/attempt; cell annotations show attempts, completion
     %, and Δ EPA vs. the league average for that zone.
+
+    Filters above the chart let you re-render the map for any
+    scenario combination: coverage type, pressure, pass-rush count,
+    offensive personnel.
     """
-    plays = _filter_player(player_id, season)
-    plays = plays[(plays["pass_attempt"] == 1) & plays["air_yards"].notna()
-                  & plays["pass_location"].notna()]
-    if plays.empty or len(plays) < 30:
-        st.caption(f"_Not enough throws ({len(plays)}) to build a throw map._")
+    plays_all = _filter_player(player_id, season)
+    plays_all = plays_all[(plays_all["pass_attempt"] == 1)
+                          & plays_all["air_yards"].notna()
+                          & plays_all["pass_location"].notna()]
+    if plays_all.empty or len(plays_all) < 30:
+        st.caption(f"_Not enough throws ({len(plays_all)}) to build a throw map._")
         return
+
+    # ── Filter chips ──────────────────────────────────────────────
+    st.markdown(
+        "**Throws by scenario** — _toggle filters; chart re-renders._"
+    )
+    f1, f2 = st.columns([3, 2])
+    with f1:
+        # Only show coverages this QB has actually faced (≥ 5 plays)
+        avail = (
+            plays_all["defense_coverage_type"]
+            .dropna()
+            .value_counts()
+        )
+        cov_avail = [c for c in avail.index
+                     if avail[c] >= 5 and c in _COVERAGE_LABELS]
+        cov_options = [c for c in [k for k, _ in _COVERAGE_OPTIONS]
+                        if c in cov_avail]
+        cov_pretty = [_COVERAGE_LABELS[c] for c in cov_options]
+        cov_selected_pretty = st.multiselect(
+            "Coverage type",
+            options=cov_pretty,
+            default=[],
+            placeholder="All coverages",
+            key=f"{key_prefix}_throw_cov",
+        )
+        cov_pretty_to_code = {v: k for k, v in _COVERAGE_LABELS.items()}
+        cov_selected = [cov_pretty_to_code[p] for p in cov_selected_pretty]
+    with f2:
+        manzone = st.radio(
+            "Coverage style",
+            options=["All", "Man", "Zone"],
+            horizontal=True,
+            key=f"{key_prefix}_throw_manzone",
+        )
+
+    f3, f4, f5 = st.columns(3)
+    with f3:
+        pressure = st.radio(
+            "Pressure",
+            options=["All", "Pressured", "Clean"],
+            horizontal=True,
+            key=f"{key_prefix}_throw_press",
+        )
+    with f4:
+        rushers = st.radio(
+            "Pass rushers",
+            options=["All", "3", "4", "5+"],
+            horizontal=True,
+            key=f"{key_prefix}_throw_rush",
+        )
+    with f5:
+        # Personnel — only show ones with sample
+        pers_avail_counts = (
+            plays_all["personnel_group"].dropna().value_counts()
+        )
+        pers_avail = [p for p in _PERSONNEL_OPTIONS
+                      if pers_avail_counts.get(p, 0) >= 10]
+        personnel = st.multiselect(
+            "Offensive personnel",
+            options=pers_avail,
+            default=[],
+            placeholder="All",
+            key=f"{key_prefix}_throw_pers",
+        )
+
+    # ── Apply filters ──────────────────────────────────────────────
+    plays = plays_all
+    if cov_selected:
+        plays = plays[plays["defense_coverage_type"].isin(cov_selected)]
+    if manzone == "Man":
+        plays = plays[plays["defense_man_zone_type"] == "MAN_COVERAGE"]
+    elif manzone == "Zone":
+        plays = plays[plays["defense_man_zone_type"] == "ZONE_COVERAGE"]
+    if pressure == "Pressured":
+        plays = plays[plays["is_pressured"]]
+    elif pressure == "Clean":
+        plays = plays[~plays["is_pressured"]]
+    if rushers == "3":
+        plays = plays[plays["number_of_pass_rushers"] == 3]
+    elif rushers == "4":
+        plays = plays[plays["number_of_pass_rushers"] == 4]
+    elif rushers == "5+":
+        plays = plays[plays["number_of_pass_rushers"] >= 5]
+    if personnel:
+        plays = plays[plays["personnel_group"].isin(personnel)]
+
+    if len(plays) < 10:
+        st.warning(
+            f"Only {len(plays)} throws match this scenario — too few "
+            f"to render. Loosen the filters."
+        )
+        return
+
+    # Headline metrics for the filtered slice
+    qb_epa = float(plays["epa"].mean())
+    qb_comp = float(plays["complete_pass"].mean())
+    qb_int_rate = float(plays["interception"].mean()) * 100
+    sack_rate_clean = "N/A" if pressure == "Clean" else f"{float(plays['sack'].mean())*100:.1f}%"
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Throws in scenario", f"{len(plays):,}")
+    m2.metric("EPA / attempt", f"{qb_epa:+.3f}")
+    m3.metric("Completion %", f"{qb_comp*100:.1f}%")
+    m4.metric("INT rate", f"{qb_int_rate:.2f}%")
 
     league = _league_throw_map(season)
 
