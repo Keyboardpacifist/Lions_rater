@@ -400,6 +400,9 @@ _render_card(
     preset_name=(st.session_state.punter_loaded_algo.get("name")
                   if st.session_state.get("punter_loaded_algo") else None),
     key_prefix=f"punter_{player.get('player_id') or selected}",
+    position_group="punter",
+    bundle_weights=bundle_weights,
+    season=(None if _yr["is_career_view"] else selected_season),
 )
 
 # ── Combine workout chart vs. all-time P pool ─────────────────
