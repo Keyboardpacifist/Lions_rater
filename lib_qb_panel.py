@@ -87,26 +87,40 @@ def _filter_player(player_id: str, season: int | None) -> pd.DataFrame:
 
 def render_pressure_split(player_id: str, player_name: str, *,
                             season: int | None = None,
-                            theme: dict | None = None) -> None:
+                            theme: dict | None = None,
+                            comparison_player_id: str | None = None,
+                            comparison_player_name: str | None = None,
+                            comparison_season: int | None = None) -> None:
     """Bucket 7 — Under pressure.
 
-    Two-bar EPA comparison (clean vs. pressured) with league-avg
-    benchmarks, plus a detail row of completion/sack rates.
+    Two-bar EPA (clean vs. pressured) with league-avg benchmarks. If
+    a comparison QB is supplied, adds a third bar set in muted colors.
     """
     plays = _filter_player(player_id, season)
     if plays.empty or len(plays) < 30:
         st.caption(f"_Not enough dropbacks ({len(plays)}) to compute pressure splits._")
         return
 
+    def _clean_pressed_epa(p: pd.DataFrame) -> tuple[float, float]:
+        c = p[~p["is_pressured"]]
+        pp = p[p["is_pressured"]]
+        return (
+            float(c["epa"].mean()) if len(c) else 0.0,
+            float(pp["epa"].mean()) if len(pp) else 0.0,
+        )
+
+    qb_clean, qb_pressed = _clean_pressed_epa(plays)
     pressured = plays[plays["is_pressured"]]
     clean = plays[~plays["is_pressured"]]
-
-    qb_clean = float(clean["epa"].mean()) if len(clean) else 0.0
-    qb_pressed = float(pressured["epa"].mean()) if len(pressured) else 0.0
     league = _league_pressure_avg(season)
 
     primary = (theme or {}).get("primary", "#1F77B4")
     pressed_color = (theme or {}).get("secondary", "#D62728")
+
+    is_comp = comparison_player_id is not None
+    if is_comp:
+        comp_plays = _filter_player(comparison_player_id, comparison_season)
+        b_clean, b_pressed = _clean_pressed_epa(comp_plays)
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
@@ -116,9 +130,18 @@ def render_pressure_split(player_id: str, player_name: str, *,
         marker_color=[primary, pressed_color],
         text=[f"{qb_clean:+.2f}", f"{qb_pressed:+.2f}"],
         textposition="outside",
-        hovertemplate="<b>%{x}</b><br>%{y:+.3f} EPA/dropback<br>"
-                      "<extra></extra>",
+        hovertemplate="<b>%{x}</b><br>%{y:+.3f} EPA/dropback<extra></extra>",
     ))
+    if is_comp:
+        fig.add_trace(go.Bar(
+            name=comparison_player_name,
+            x=["Clean pocket", "Pressured"],
+            y=[b_clean, b_pressed],
+            marker_color=["#7d7d8a", "#bd7d7d"],
+            text=[f"{b_clean:+.2f}", f"{b_pressed:+.2f}"],
+            textposition="outside",
+            hovertemplate="<b>%{x}</b><br>%{y:+.3f} EPA/dropback<extra></extra>",
+        ))
     fig.add_trace(go.Scatter(
         x=["Clean pocket", "Pressured"],
         y=[league["clean_epa"], league["pressured_epa"]],
@@ -130,9 +153,10 @@ def render_pressure_split(player_id: str, player_name: str, *,
     ))
     fig.update_layout(
         yaxis_title="EPA per dropback",
-        height=360,
+        height=380,
         margin=dict(l=40, r=20, t=30, b=40),
         showlegend=True,
+        barmode="group" if is_comp else "relative",
         legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99,
                     bgcolor="rgba(255,255,255,0.7)"),
         plot_bgcolor="rgba(0,0,0,0)",
@@ -177,38 +201,19 @@ def render_pressure_split(player_id: str, player_name: str, *,
         )
 
 
-def render_competition_split(player_id: str, player_name: str, *,
-                                season: int | None = None,
-                                theme: dict | None = None) -> None:
-    """Bucket 8 — Elite vs. weak competition.
-
-    Splits the QB's plays by which quartile of pass D they faced
-    (1=elite, 4=bad), shows aggregate EPA & completion % per quartile,
-    and renders a per-game scatter (opp D quality vs. QB EPA) that
-    reveals whether he rises or fades against good defenses.
-    """
-    plays = _filter_player(player_id, season)
-    if plays.empty or len(plays) < 50:
-        st.caption(f"_Not enough dropbacks ({len(plays)}) to compute "
-                    f"competition splits._")
-        return
-
+def _enrich_with_def_quality(plays: pd.DataFrame) -> pd.DataFrame:
     def_quality = load_team_pass_def_quality()
-    # Merge: opponent's pass D quality for each play
-    plays = plays.merge(
+    return plays.merge(
         def_quality[["team", "season", "pass_epa_allowed_per_play",
                      "epa_rank", "quality_quartile"]],
         left_on=["defteam", "season"],
         right_on=["team", "season"],
         how="left",
-    )
-    plays = plays.dropna(subset=["quality_quartile"])
-    if plays.empty:
-        st.caption("_No matched defenses for these plays._")
-        return
+    ).dropna(subset=["quality_quartile"])
 
-    # Aggregate by quartile
-    by_q = (
+
+def _summarize_by_quartile(plays: pd.DataFrame) -> pd.DataFrame:
+    return (
         plays.groupby("quality_quartile")
         .agg(
             n_plays=("epa", "size"),
@@ -219,17 +224,53 @@ def render_competition_split(player_id: str, player_name: str, *,
         )
         .reset_index()
     )
+
+
+def render_competition_split(player_id: str, player_name: str, *,
+                                season: int | None = None,
+                                theme: dict | None = None,
+                                comparison_player_id: str | None = None,
+                                comparison_player_name: str | None = None,
+                                comparison_season: int | None = None) -> None:
+    """Bucket 8 — Elite vs. weak competition.
+
+    Splits the QB's plays by which quartile of pass D they faced
+    (1=elite, 4=bad). When a comparison QB is supplied, both QBs'
+    bars render grouped, and per-game scatter overlays both series.
+    """
+    plays = _filter_player(player_id, season)
+    if plays.empty or len(plays) < 50:
+        st.caption(f"_Not enough dropbacks ({len(plays)}) to compute "
+                    f"competition splits._")
+        return
+
+    plays = _enrich_with_def_quality(plays)
+    if plays.empty:
+        st.caption("_No matched defenses for these plays._")
+        return
+
+    by_q = _summarize_by_quartile(plays)
     quartile_labels = {1: "Elite (top 25%)", 2: "Above avg", 3: "Below avg",
                         4: "Bad (bottom 25%)"}
     by_q["label"] = by_q["quality_quartile"].map(quartile_labels)
 
-    # ── Bar chart: EPA per dropback by quartile ──
+    is_comp = comparison_player_id is not None
+    if is_comp:
+        comp_plays = _enrich_with_def_quality(
+            _filter_player(comparison_player_id, comparison_season)
+        )
+        comp_by_q = (_summarize_by_quartile(comp_plays)
+                     if not comp_plays.empty else pd.DataFrame())
+        if not comp_by_q.empty:
+            comp_by_q["label"] = comp_by_q["quality_quartile"].map(quartile_labels)
+
     primary = (theme or {}).get("primary", "#1F77B4")
     secondary = (theme or {}).get("secondary", "#D62728")
-    bar_colors = [secondary, "#aa6e7e", "#7e9eaa", primary]  # 1→elite (red), 4→bad (primary)
+    bar_colors = [secondary, "#aa6e7e", "#7e9eaa", primary]
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
+        name=player_name,
         x=by_q["label"],
         y=by_q["epa"],
         marker_color=[bar_colors[int(q) - 1] for q in by_q["quality_quartile"]],
@@ -239,36 +280,51 @@ def render_competition_split(player_id: str, player_name: str, *,
         hovertemplate="<b>%{x}</b><br>EPA/play: %{y:+.3f}<br>"
                       "Plays: %{customdata[0]}<br>"
                       "Comp %: %{customdata[1]:.1%}<extra></extra>",
-        showlegend=False,
     ))
+    if is_comp and not comp_by_q.empty:
+        fig.add_trace(go.Bar(
+            name=comparison_player_name,
+            x=comp_by_q["label"],
+            y=comp_by_q["epa"],
+            marker_color="#888",
+            marker_pattern_shape="/",
+            text=[f"{e:+.2f}" for e in comp_by_q["epa"]],
+            textposition="outside",
+            customdata=comp_by_q[["n_plays", "comp_pct"]].values,
+            hovertemplate="<b>%{x}</b><br>EPA/play: %{y:+.3f}<br>"
+                          "Plays: %{customdata[0]}<br>"
+                          "Comp %: %{customdata[1]:.1%}<extra></extra>",
+        ))
     fig.add_hline(y=0, line_color="#ccc", line_width=1)
     fig.update_layout(
         yaxis_title="EPA per dropback",
         xaxis_title="Opposing pass defense quality",
         height=340,
+        barmode="group" if is_comp else "relative",
         margin=dict(l=40, r=20, t=20, b=40),
         plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=is_comp,
     )
     st.plotly_chart(fig, use_container_width=True)
 
     # ── Per-game scatter: opp D quality on x, QB EPA on y ──
-    per_game = (
-        plays.groupby(["game_id", "defteam", "season",
+    def _per_game(p: pd.DataFrame) -> pd.DataFrame:
+        return (
+            p.groupby(["game_id", "defteam", "season",
                         "pass_epa_allowed_per_play"])
-        .agg(qb_epa=("epa", "mean"), n_plays=("epa", "size"))
-        .reset_index()
-    )
-    per_game = per_game[per_game["n_plays"] >= 10]
+            .agg(qb_epa=("epa", "mean"), n_plays=("epa", "size"))
+            .reset_index()
+            .query("n_plays >= 10")
+        )
+    per_game = _per_game(plays)
+    comp_per_game = (_per_game(comp_plays)
+                     if is_comp and not comp_plays.empty else None)
 
     if len(per_game) >= 5:
-        # Trendline coefficients
         import numpy as np
         x = per_game["pass_epa_allowed_per_play"].astype(float)
         y = per_game["qb_epa"].astype(float)
         slope, intercept = np.polyfit(x, y, 1)
-        # If slope > 0: as opp D gets worse (higher EPA allowed), QB EPA
-        # rises → he beats up bad defenses. If slope < 0: he rises against
-        # good D (the rare elite-clutch profile).
         x_range = np.linspace(x.min(), x.max(), 20)
         y_fit = slope * x_range + intercept
 
@@ -276,29 +332,49 @@ def render_competition_split(player_id: str, player_name: str, *,
         scat.add_trace(go.Scatter(
             x=x, y=y,
             mode="markers",
-            marker=dict(size=8, color=primary, opacity=0.7,
+            marker=dict(size=8, color=primary, opacity=0.75,
                         line=dict(width=1, color="white")),
             text=per_game["defteam"] + " " + per_game["season"].astype(str),
-            hovertemplate="<b>vs. %{text}</b><br>"
+            hovertemplate=f"<b>{player_name} vs. %{{text}}</b><br>"
                           "Opp pass D allowed: %{x:+.3f} EPA/play<br>"
                           "QB EPA: %{y:+.3f}<extra></extra>",
-            name="Game",
+            name=player_name,
         ))
         scat.add_trace(go.Scatter(
-            x=x_range, y=y_fit,
-            mode="lines",
-            line=dict(color="#888", width=2, dash="dot"),
-            name="Trendline",
-            hoverinfo="skip",
+            x=x_range, y=y_fit, mode="lines",
+            line=dict(color=primary, width=2, dash="dot"),
+            name=f"{player_name} trend", hoverinfo="skip",
         ))
+        if comp_per_game is not None and len(comp_per_game) >= 5:
+            xc = comp_per_game["pass_epa_allowed_per_play"].astype(float)
+            yc = comp_per_game["qb_epa"].astype(float)
+            slope_c, intercept_c = np.polyfit(xc, yc, 1)
+            xc_range = np.linspace(xc.min(), xc.max(), 20)
+            yc_fit = slope_c * xc_range + intercept_c
+            scat.add_trace(go.Scatter(
+                x=xc, y=yc, mode="markers",
+                marker=dict(size=8, color="#888", opacity=0.65,
+                            symbol="diamond",
+                            line=dict(width=1, color="white")),
+                text=comp_per_game["defteam"] + " " + comp_per_game["season"].astype(str),
+                hovertemplate=f"<b>{comparison_player_name} vs. %{{text}}</b><br>"
+                              "Opp pass D allowed: %{x:+.3f}<br>"
+                              "QB EPA: %{y:+.3f}<extra></extra>",
+                name=comparison_player_name,
+            ))
+            scat.add_trace(go.Scatter(
+                x=xc_range, y=yc_fit, mode="lines",
+                line=dict(color="#888", width=2, dash="dot"),
+                name=f"{comparison_player_name} trend", hoverinfo="skip",
+            ))
         scat.add_hline(y=0, line_color="#ccc", line_width=1)
         scat.add_vline(x=0, line_color="#ccc", line_width=1)
         scat.update_layout(
             xaxis_title="Opponent pass EPA allowed/play  (← elite D    bad D →)",
             yaxis_title="QB EPA in this game",
-            height=380,
+            height=400,
             margin=dict(l=40, r=20, t=30, b=50),
-            showlegend=False,
+            showlegend=is_comp,
             plot_bgcolor="rgba(0,0,0,0)",
         )
         st.plotly_chart(scat, use_container_width=True)
@@ -727,12 +803,15 @@ def _league_situational_avg(season: int | None) -> dict:
 
 def render_situational_split(player_id: str, player_name: str, *,
                                 season: int | None = None,
-                                theme: dict | None = None) -> None:
+                                theme: dict | None = None,
+                                comparison_player_id: str | None = None,
+                                comparison_player_name: str | None = None,
+                                comparison_season: int | None = None) -> None:
     """Bucket 6 — Situational performance.
 
     Four side-by-side panels: 3rd down · red zone · 4th quarter ·
-    2-minute drill. Each shows player's EPA per dropback in that
-    situation vs. league average, with sample size and delta.
+    2-minute drill. EPA per dropback in that situation vs. league
+    (or vs. comparison QB when supplied — delta swaps target).
     """
     plays = _filter_player(player_id, season)
     if plays.empty or len(plays) < 50:
@@ -741,6 +820,9 @@ def render_situational_split(player_id: str, player_name: str, *,
         return
 
     league = _league_situational_avg(season)
+    is_comp = comparison_player_id is not None
+    if is_comp:
+        comp_plays = _filter_player(comparison_player_id, comparison_season)
 
     cols = st.columns(4)
     for i, (label, flag, tagline, helptext) in enumerate(_SITUATIONS):
@@ -755,18 +837,29 @@ def render_situational_split(player_id: str, player_name: str, *,
                 continue
             qb_epa = float(sub["epa"].mean())
             lg_epa = league[label]["epa"]
-            delta = qb_epa - lg_epa
-            st.metric(
-                "EPA / dropback",
-                f"{qb_epa:+.2f}",
-                delta=f"{delta:+.2f} vs league",
-                help=helptext,
-            )
-            success_pct = float(sub["success"].mean()) * 100
-            st.caption(
-                f"{n} plays · {success_pct:.0f}% successful · "
-                f"league avg: {lg_epa:+.2f}"
-            )
+
+            if is_comp:
+                comp_sub = comp_plays[comp_plays[flag]]
+                if len(comp_sub) >= 10:
+                    b_epa = float(comp_sub["epa"].mean())
+                    delta_label = f"{(qb_epa-b_epa):+.2f} vs comp"
+                    sub_caption = (f"{n} plays · {comparison_player_name}: "
+                                    f"{b_epa:+.2f} on {len(comp_sub)} plays")
+                else:
+                    delta_label = f"{(qb_epa-lg_epa):+.2f} vs league"
+                    sub_caption = f"{n} plays · {comparison_player_name}: not enough plays"
+                st.metric("EPA / dropback", f"{qb_epa:+.2f}",
+                           delta=delta_label, help=helptext)
+                st.caption(sub_caption)
+            else:
+                st.metric("EPA / dropback", f"{qb_epa:+.2f}",
+                           delta=f"{(qb_epa-lg_epa):+.2f} vs league",
+                           help=helptext)
+                success_pct = float(sub["success"].mean()) * 100
+                st.caption(
+                    f"{n} plays · {success_pct:.0f}% successful · "
+                    f"league avg: {lg_epa:+.2f}"
+                )
 
     # Auto-narrative: which situation does he own / fold in?
     deltas = []
@@ -799,19 +892,21 @@ def render_situational_split(player_id: str, player_name: str, *,
 
 def render_presnap_split(player_id: str, player_name: str, *,
                             season: int | None = None,
-                            theme: dict | None = None) -> None:
+                            theme: dict | None = None,
+                            comparison_player_id: str | None = None,
+                            comparison_player_name: str | None = None,
+                            comparison_season: int | None = None) -> None:
     """Bucket 1 — Pre-snap.
 
-    From the dropback feed: shotgun usage, no-huddle rate, average
-    play clock at snap (proxy for tempo / hard count behavior),
-    play distribution by down. Compared to league.
+    Shotgun usage, no-huddle rate, avg play clock at snap, plus a
+    down distribution table. Delta target swaps to comparison QB
+    when supplied.
     """
     plays = _filter_player(player_id, season)
     if plays.empty or len(plays) < 50:
         st.caption(f"_Not enough dropbacks ({len(plays)}) for pre-snap stats._")
         return
 
-    # League comparators
     db = load_qb_dropbacks()
     if season is not None:
         db = db[db["season"] == season]
@@ -819,31 +914,35 @@ def render_presnap_split(player_id: str, player_name: str, *,
     qb_shotgun = float(plays["shotgun"].mean())
     qb_no_huddle = float(plays["no_huddle"].mean())
     qb_play_clock = float(plays["play_clock"].dropna().astype(float).mean())
-    lg_shotgun = float(db["shotgun"].mean())
-    lg_no_huddle = float(db["no_huddle"].mean())
-    lg_play_clock = float(db["play_clock"].dropna().astype(float).mean())
+    is_comp = comparison_player_id is not None
+    if is_comp:
+        comp = _filter_player(comparison_player_id, comparison_season)
+        ref_shot = float(comp["shotgun"].mean())
+        ref_huddle = float(comp["no_huddle"].mean())
+        ref_clock = float(comp["play_clock"].dropna().astype(float).mean())
+        ref_label = f"vs {comparison_player_name}"
+    else:
+        ref_shot = float(db["shotgun"].mean())
+        ref_huddle = float(db["no_huddle"].mean())
+        ref_clock = float(db["play_clock"].dropna().astype(float).mean())
+        ref_label = "vs league"
 
     c1, c2, c3 = st.columns(3)
     c1.metric(
-        "Shotgun rate",
-        f"{qb_shotgun*100:.1f}%",
-        delta=f"{(qb_shotgun-lg_shotgun)*100:+.1f}% vs league",
+        "Shotgun rate", f"{qb_shotgun*100:.1f}%",
+        delta=f"{(qb_shotgun-ref_shot)*100:+.1f}% {ref_label}",
         help="% of dropbacks from shotgun. Higher = pass-first / spread offense.",
     )
     c2.metric(
-        "No-huddle rate",
-        f"{qb_no_huddle*100:.1f}%",
-        delta=f"{(qb_no_huddle-lg_no_huddle)*100:+.1f}% vs league",
+        "No-huddle rate", f"{qb_no_huddle*100:.1f}%",
+        delta=f"{(qb_no_huddle-ref_huddle)*100:+.1f}% {ref_label}",
         help="% of plays run without a huddle — tempo signal.",
     )
     c3.metric(
-        "Avg play clock at snap",
-        f"{qb_play_clock:.1f}s",
-        delta=f"{qb_play_clock-lg_play_clock:+.1f}s vs league",
+        "Avg play clock at snap", f"{qb_play_clock:.1f}s",
+        delta=f"{qb_play_clock-ref_clock:+.1f}s {ref_label}",
         delta_color="off",
-        help="Time on the play clock when ball is snapped. Lower = "
-             "snapping fast (uptempo). Higher = holding to last second "
-             "(might indicate audibles / hard counts).",
+        help="Time on the play clock when ball is snapped.",
     )
 
     # Down-distribution table
@@ -869,61 +968,83 @@ def render_presnap_split(player_id: str, player_name: str, *,
 
 def render_processing_split(player_id: str, player_name: str, *,
                                 season: int | None = None,
-                                theme: dict | None = None) -> None:
-    """Bucket 2 — Processing.
+                                theme: dict | None = None,
+                                comparison_player_id: str | None = None,
+                                comparison_player_name: str | None = None,
+                                comparison_season: int | None = None) -> None:
+    """Bucket 2 — Processing (NGS-driven).
 
-    From NGS: time-to-throw, aggressiveness (% into tight windows),
-    intended vs. completed air yards (the gap = receiver YAC + drops),
-    and air yards to sticks (passing the marker on average).
+    Time-to-throw, aggressiveness, intended air yards, air yards
+    to sticks. Delta swaps to comparison QB when supplied.
     """
     ngs = load_qb_ngs()
     if ngs.empty:
         st.caption("_NGS data not loaded — run `tools/build_qb_ngs.py`._")
         return
 
-    rows = ngs[ngs["player_gsis_id"] == player_id]
-    if season is not None:
-        rows = rows[rows["season"] == season]
-    if rows.empty:
+    def _ngs_wmean(player_id_arg: str,
+                    season_arg: int | None) -> dict:
+        rows = ngs[ngs["player_gsis_id"] == player_id_arg]
+        if season_arg is not None:
+            rows = rows[rows["season"] == season_arg]
+        if rows.empty:
+            return {}
+        if "attempts" in rows.columns and rows["attempts"].sum() > 0:
+            w = rows["attempts"]
+        else:
+            w = pd.Series(1, index=rows.index)
+        out = {}
+        for col in ("avg_time_to_throw", "aggressiveness",
+                     "avg_intended_air_yards", "avg_completed_air_yards",
+                     "avg_air_yards_to_sticks"):
+            if col not in rows.columns or rows[col].dropna().empty:
+                out[col] = None
+                continue
+            valid = rows[col].notna()
+            if valid.sum() == 0:
+                out[col] = None
+                continue
+            out[col] = float(
+                (rows.loc[valid, col] * w[valid]).sum() / w[valid].sum()
+            )
+        return out
+
+    a = _ngs_wmean(player_id, season)
+    if not a:
         st.caption("_No NGS data for this player/season._")
         return
+    qb_ttt = a.get("avg_time_to_throw")
+    qb_aggr = a.get("aggressiveness")
+    qb_intended = a.get("avg_intended_air_yards")
+    qb_to_sticks = a.get("avg_air_yards_to_sticks")
 
-    # Avg across selected seasons (if career view, weight by attempts)
-    if "attempts" in rows.columns and rows["attempts"].sum() > 0:
-        w = rows["attempts"]
+    is_comp = comparison_player_id is not None
+    if is_comp:
+        b = _ngs_wmean(comparison_player_id, comparison_season)
+        ref_ttt = b.get("avg_time_to_throw")
+        ref_aggr = b.get("aggressiveness")
+        ref_intended = b.get("avg_intended_air_yards")
+        ref_to_sticks = b.get("avg_air_yards_to_sticks")
+        ref_label = f"vs {comparison_player_name}"
     else:
-        w = pd.Series(1, index=rows.index)
-
-    def _wmean(col):
-        if col not in rows.columns or rows[col].dropna().empty:
-            return None
-        valid = rows[col].notna()
-        if valid.sum() == 0:
-            return None
-        return float((rows.loc[valid, col] * w[valid]).sum() / w[valid].sum())
-
-    qb_ttt = _wmean("avg_time_to_throw")
-    qb_aggr = _wmean("aggressiveness")
-    qb_intended = _wmean("avg_intended_air_yards")
-    qb_completed = _wmean("avg_completed_air_yards")
-    qb_to_sticks = _wmean("avg_air_yards_to_sticks")
-
-    # League comparators (same season filter)
-    lg = ngs.copy()
-    if season is not None:
-        lg = lg[lg["season"] == season]
-    if "attempts" in lg.columns:
-        lg = lg[lg["attempts"] >= 100]  # qualifier
-
-    def _lg_mean(col):
-        if col not in lg.columns or lg[col].dropna().empty:
-            return None
-        return float(lg[col].mean())
-
-    lg_ttt = _lg_mean("avg_time_to_throw")
-    lg_aggr = _lg_mean("aggressiveness")
-    lg_intended = _lg_mean("avg_intended_air_yards")
-    lg_to_sticks = _lg_mean("avg_air_yards_to_sticks")
+        lg = ngs.copy()
+        if season is not None:
+            lg = lg[lg["season"] == season]
+        if "attempts" in lg.columns:
+            lg = lg[lg["attempts"] >= 100]
+        def _lg_mean(col):
+            if col not in lg.columns or lg[col].dropna().empty:
+                return None
+            return float(lg[col].mean())
+        ref_ttt = _lg_mean("avg_time_to_throw")
+        ref_aggr = _lg_mean("aggressiveness")
+        ref_intended = _lg_mean("avg_intended_air_yards")
+        ref_to_sticks = _lg_mean("avg_air_yards_to_sticks")
+        ref_label = "vs league"
+    # Re-bind league comparison vars for the narrative section below
+    lg_ttt, lg_aggr, lg_intended, lg_to_sticks = (
+        ref_ttt, ref_aggr, ref_intended, ref_to_sticks
+    )
 
     def _fmt(v, fmt):
         if v is None or pd.isna(v):
@@ -934,7 +1055,7 @@ def render_processing_split(player_id: str, player_name: str, *,
     c1.metric(
         "Time to throw",
         _fmt(qb_ttt, "{:.2f}s"),
-        delta=(_fmt(qb_ttt - lg_ttt, "{:+.2f}s vs league")
+        delta=(_fmt(qb_ttt - lg_ttt, "{:+.2f}s") + f" {ref_label}"
                 if qb_ttt is not None and lg_ttt is not None else None),
         delta_color="off",
         help="Avg seconds from snap to throw. Lower = quicker processor; "
@@ -943,7 +1064,7 @@ def render_processing_split(player_id: str, player_name: str, *,
     c2.metric(
         "Aggressiveness",
         _fmt(qb_aggr, "{:.1f}%"),
-        delta=(_fmt(qb_aggr - lg_aggr, "{:+.1f}% vs league")
+        delta=(_fmt(qb_aggr - lg_aggr, "{:+.1f}%") + f" {ref_label}"
                 if qb_aggr is not None and lg_aggr is not None else None),
         help="% of attempts into tight coverage (defender within 1 yard "
              "of receiver at catch). Higher = more risk-taking.",
@@ -951,7 +1072,7 @@ def render_processing_split(player_id: str, player_name: str, *,
     c3.metric(
         "Intended air yards",
         _fmt(qb_intended, "{:.1f} yd"),
-        delta=(_fmt(qb_intended - lg_intended, "{:+.1f} vs league")
+        delta=(_fmt(qb_intended - lg_intended, "{:+.1f}") + f" {ref_label}"
                 if qb_intended is not None and lg_intended is not None else None),
         help="Avg depth of his targets (how far the ball travels in the "
              "air, on average). Higher = downfield thrower.",
@@ -959,7 +1080,7 @@ def render_processing_split(player_id: str, player_name: str, *,
     c4.metric(
         "Air yards to sticks",
         _fmt(qb_to_sticks, "{:+.2f}"),
-        delta=(_fmt(qb_to_sticks - lg_to_sticks, "{:+.2f} vs league")
+        delta=(_fmt(qb_to_sticks - lg_to_sticks, "{:+.2f}") + f" {ref_label}"
                 if qb_to_sticks is not None and lg_to_sticks is not None else None),
         delta_color="off",
         help="On average, how far past (or short of) the first-down "
