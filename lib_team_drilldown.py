@@ -209,6 +209,83 @@ _OL_INVOLVED_STATS = {
 
 
 @st.cache_data(show_spinner=False)
+def _ol_run_by_side(team: str, season: int) -> dict | None:
+    """Per-side run-EPA breakdown — LEFT / CENTER / RIGHT — for the
+    given (team, season) AND prior season. This is the OL signal that
+    actually exposes injury/deterioration patterns that team-aggregate
+    rushing metrics hide (e.g. 2025 Lions: right side held, center +
+    left cratered)."""
+    try:
+        from lib_splits import _load_rusher_plays, _classify_gap
+        rp = _load_rusher_plays()
+    except Exception:
+        return None
+    if rp is None or rp.empty:
+        return None
+
+    sub = rp[(rp["team"] == team)
+              & (rp["season"].isin([season, season - 1]))].copy()
+    if sub.empty:
+        return None
+    sub["gap_code"] = sub.apply(_classify_gap, axis=1)
+    sub = sub.dropna(subset=["gap_code"])
+    sub["side"] = sub["gap_code"].apply(
+        lambda g: "LEFT" if g.endswith("-L")
+                  else "RIGHT" if g.endswith("-R")
+                  else "CENTER" if g == "A"
+                  else None
+    )
+    sub = sub.dropna(subset=["side"])
+    if sub.empty:
+        return None
+
+    agg = (
+        sub.groupby(["season", "side"])
+        .agg(plays=("epa", "size"), epa=("epa", "mean"),
+             success=("fo_success", "mean"))
+        .reset_index()
+    )
+    out = {"current": {}, "prior": {}}
+    for _, r in agg.iterrows():
+        bucket = "current" if int(r["season"]) == season else "prior"
+        out[bucket][r["side"]] = {
+            "plays": int(r["plays"]),
+            "epa": float(r["epa"]),
+            "success": float(r["success"])
+                if pd.notna(r["success"]) else None,
+        }
+    return out
+
+
+def _format_side_yoy(side: str, cur: dict, prev: dict | None) -> str:
+    cur_epa = cur["epa"]
+    sign_cur = "+" if cur_epa >= 0 else ""
+    if prev is None or "epa" not in prev:
+        return (f"**{side.title()}**: {sign_cur}{cur_epa:.2f} EPA/att "
+                f"on {cur['plays']} carries")
+    prev_epa = prev["epa"]
+    delta = cur_epa - prev_epa
+    sign_prev = "+" if prev_epa >= 0 else ""
+    if abs(delta) < 0.04:
+        arrow = "→"
+        descriptor = "held"
+    elif delta < -0.10:
+        arrow = "▼▼"
+        descriptor = "cratered"
+    elif delta < 0:
+        arrow = "▼"
+        descriptor = "slipped"
+    elif delta > 0.10:
+        arrow = "▲▲"
+        descriptor = "surged"
+    else:
+        arrow = "▲"
+        descriptor = "improved"
+    return (f"**{side.title()}**: {sign_cur}{cur_epa:.2f} EPA/att "
+            f"(was {sign_prev}{prev_epa:.2f}) — {arrow} _{descriptor}_")
+
+
+@st.cache_data(show_spinner=False)
 def _ol_unit_observation(team: str, season: int) -> str:
     """Unit-wide story for the offensive line — pass protection,
     run-blocking, and discipline as a unit. Ranks computed across
@@ -315,17 +392,37 @@ def _ol_unit_observation(team: str, season: int) -> str:
         f"({_ord(press_rank)}){pp_yoy_press}."
     )
 
-    # Run blocking
-    run_yoy = _yoy(
-        cur_row["avg_run_epa"],
-        prev_row["avg_run_epa"] if prev_row is not None else None,
-        fmt="{:+.3f}",
-    )
-    pieces.append(
-        f"**Run blocking:** {cur_row['avg_run_epa']:+.3f} EPA per "
-        f"gap-attributed run, {cur_row['avg_run_success']*100:.1f}% success "
-        f"rate ({_ord(run_rank)} of {total}){run_yoy}."
-    )
+    # Run blocking — per-side YoY (the metric that actually exposes
+    # OL deterioration patterns vs aggregate gap-EPA which hides them)
+    run_split = _ol_run_by_side(team, season)
+    if run_split and run_split.get("current"):
+        side_lines = []
+        for side in ("LEFT", "CENTER", "RIGHT"):
+            cur = run_split["current"].get(side)
+            prev = run_split.get("prior", {}).get(side)
+            if cur is None:
+                continue
+            side_lines.append(_format_side_yoy(side, cur, prev))
+        if side_lines:
+            pieces.append("**Run blocking by side:**  \n" + "  \n".join(side_lines))
+        else:
+            pieces.append(
+                f"**Run blocking:** {cur_row['avg_run_epa']:+.3f} EPA per "
+                f"gap-attributed run, {cur_row['avg_run_success']*100:.1f}% "
+                f"success rate ({_ord(run_rank)} of {total})."
+            )
+    else:
+        # Fallback when rusher-plays data isn't available locally
+        run_yoy = _yoy(
+            cur_row["avg_run_epa"],
+            prev_row["avg_run_epa"] if prev_row is not None else None,
+            fmt="{:+.3f}",
+        )
+        pieces.append(
+            f"**Run blocking:** {cur_row['avg_run_epa']:+.3f} EPA per "
+            f"gap-attributed run, {cur_row['avg_run_success']*100:.1f}% success "
+            f"rate ({_ord(run_rank)} of {total}){run_yoy}."
+        )
 
     # Discipline
     pen_yoy = _yoy(
