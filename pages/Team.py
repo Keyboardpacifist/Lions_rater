@@ -28,8 +28,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # ── Pick team / season ──────────────────────────────────────────
 qp = st.query_params
-default_team = qp.get("abbr", "DET")
-default_season = qp.get("season")
+qp_team = qp.get("abbr")
+qp_season = qp.get("season")
 
 team_df = load_team_seasons()
 if team_df.empty:
@@ -39,27 +39,40 @@ if team_df.empty:
 teams_avail = sorted(team_df["team"].unique().tolist())
 seasons_avail = sorted(team_df["season"].unique().tolist(), reverse=True)
 
+# Streamlit selectboxes prefer session_state over index=, so when the
+# user clicks a different team on the landing grid, we have to PUSH the
+# new value into session_state BEFORE the selectbox renders. Otherwise
+# the previously-picked team sticks even though the URL changed.
+if qp_team and qp_team in teams_avail:
+    st.session_state["team_pick"] = qp_team
+elif "team_pick" not in st.session_state:
+    st.session_state["team_pick"] = "DET"
+
+if qp_season:
+    try:
+        s_int = int(qp_season)
+        if s_int in seasons_avail:
+            st.session_state["season_pick"] = s_int
+    except (ValueError, TypeError):
+        pass
+if "season_pick" not in st.session_state:
+    st.session_state["season_pick"] = seasons_avail[0]
+
 c1, c2 = st.columns([2, 1])
 with c1:
     team = st.selectbox(
         "Team",
         options=teams_avail,
-        index=(teams_avail.index(default_team)
-                if default_team in teams_avail else 0),
         key="team_pick",
     )
 with c2:
     season = st.selectbox(
         "Season",
         options=seasons_avail,
-        index=(0 if default_season is None
-                else seasons_avail.index(int(default_season))
-                if (default_season and int(default_season) in seasons_avail)
-                else 0),
         key="season_pick",
     )
 
-# Update URL so the page is shareable
+# Keep the URL in sync with the active selection so it's shareable
 st.query_params.update({"abbr": team, "season": str(season)})
 
 theme = team_theme(team)
