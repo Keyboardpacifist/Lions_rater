@@ -81,6 +81,11 @@ def _render_team_button(team: str, default_season: int, key_suffix: str) -> None
         use_container_width=True,
         help=f"View the {team} team profile",
     ):
+        # Set session_state directly — st.switch_page can clear
+        # query params, so we can't rely on them for cross-page
+        # state transfer. Session state survives the navigation.
+        st.session_state["team_pick"] = team
+        st.session_state["season_pick"] = default_season
         st.query_params.update({
             "abbr": team,
             "season": str(default_season),
