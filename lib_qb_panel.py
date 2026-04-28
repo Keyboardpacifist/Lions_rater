@@ -32,6 +32,38 @@ def load_qb_ngs() -> pd.DataFrame:
 
 
 @st.cache_data
+def get_qb_peers(season: int | None = None,
+                   min_attempts: int = 100,
+                   exclude_player_id: str | None = None) -> list[dict]:
+    """Build the comparison picker's option list — every QB with
+    a meaningful sample. For career view (season=None) we offer
+    season-specific entries so users can compare e.g. "2024 Mahomes"
+    vs. "2018 Mahomes" or another QB in any year.
+    """
+    db = load_qb_dropbacks()
+    db = db[db["pass_attempt"] == 1]
+    if season is not None:
+        db = db[db["season"] == season]
+    counts = (
+        db.groupby(["passer_player_id", "passer_player_name", "season"])
+        .size()
+        .reset_index(name="att")
+    )
+    counts = counts[counts["att"] >= min_attempts]
+    if exclude_player_id and season is not None:
+        counts = counts[counts["passer_player_id"] != exclude_player_id]
+    counts = counts.sort_values(["season", "att"], ascending=[False, False])
+    return [
+        {
+            "label": f"{r.passer_player_name} — {int(r.season)} ({int(r.att)} att)",
+            "player_id": r.passer_player_id,
+            "season": int(r.season),
+        }
+        for r in counts.itertuples()
+    ]
+
+
+@st.cache_data
 def _league_pressure_avg(season: int | None) -> dict:
     db = load_qb_dropbacks()
     if season is not None:
@@ -358,24 +390,127 @@ _COVERAGE_LABELS = dict(_COVERAGE_OPTIONS)
 _PERSONNEL_OPTIONS = ["11", "12", "21", "Heavy", "Empty"]
 
 
+def _player_attempts(player_id: str, season: int | None) -> pd.DataFrame:
+    plays = _filter_player(player_id, season)
+    return plays[(plays["pass_attempt"] == 1)
+                 & plays["air_yards"].notna()
+                 & plays["pass_location"].notna()]
+
+
+def _apply_throw_filters(plays: pd.DataFrame, *,
+                            coverages: list[str],
+                            manzone: str,
+                            pressure: str,
+                            rushers: str,
+                            personnel: list[str]) -> pd.DataFrame:
+    if coverages:
+        plays = plays[plays["defense_coverage_type"].isin(coverages)]
+    if manzone == "Man":
+        plays = plays[plays["defense_man_zone_type"] == "MAN_COVERAGE"]
+    elif manzone == "Zone":
+        plays = plays[plays["defense_man_zone_type"] == "ZONE_COVERAGE"]
+    if pressure == "Pressured":
+        plays = plays[plays["is_pressured"]]
+    elif pressure == "Clean":
+        plays = plays[~plays["is_pressured"]]
+    if rushers == "3":
+        plays = plays[plays["number_of_pass_rushers"] == 3]
+    elif rushers == "4":
+        plays = plays[plays["number_of_pass_rushers"] == 4]
+    elif rushers == "5+":
+        plays = plays[plays["number_of_pass_rushers"] >= 5]
+    if personnel:
+        plays = plays[plays["personnel_group"].isin(personnel)]
+    return plays
+
+
+def _build_throw_grid(plays: pd.DataFrame,
+                        league: pd.DataFrame) -> tuple[list[list], list[list]]:
+    """Returns (epa_matrix, annotation_matrix) for a 3×3 grid."""
+    epa_matrix, ann_matrix = [], []
+    for depth_label, lo, hi in _DEPTH_BUCKETS:
+        epa_row, ann_row = [], []
+        for loc in _LOCATIONS:
+            zone = plays[(plays["air_yards"] >= lo)
+                         & (plays["air_yards"] < hi)
+                         & (plays["pass_location"] == loc)]
+            n = len(zone)
+            if n < 5:
+                epa_row.append(None)
+                ann_row.append(f"<b>—</b><br>{n} att")
+                continue
+            epa = float(zone["epa"].mean())
+            comp_pct = float(zone["complete_pass"].mean())
+            lg = league[(league["depth"] == depth_label)
+                        & (league["location"] == loc)]
+            if not lg.empty:
+                delta = epa - float(lg["league_epa"].iloc[0])
+                delta_str = f"{'▲' if delta > 0 else '▼'} {abs(delta):.2f} vs lg"
+            else:
+                delta_str = ""
+            epa_row.append(epa)
+            ann_row.append(
+                f"<b>{epa:+.2f} EPA</b><br>"
+                f"{comp_pct*100:.0f}% on {n} att<br>"
+                f"<span style='font-size:11px;color:#666'>{delta_str}</span>"
+            )
+        epa_matrix.append(epa_row)
+        ann_matrix.append(ann_row)
+    return epa_matrix, ann_matrix
+
+
+def _render_throw_grid(epa_matrix: list[list], ann_matrix: list[list],
+                         *, title: str, z_scale: float, height: int = 420,
+                         show_colorbar: bool = True) -> go.Figure:
+    fig = go.Figure(data=go.Heatmap(
+        z=epa_matrix,
+        x=[_LOC_LABELS[l] for l in _LOCATIONS],
+        y=[d[0] for d in _DEPTH_BUCKETS],
+        zmin=-z_scale, zmax=z_scale,
+        colorscale=[[0, "#c0392b"], [0.5, "#f7f7f7"], [1, "#27ae60"]],
+        colorbar=(dict(title="EPA<br>per att", thickness=14)
+                  if show_colorbar else None),
+        showscale=show_colorbar,
+        hoverinfo="skip",
+    ))
+    for i, depth in enumerate([d[0] for d in _DEPTH_BUCKETS]):
+        for j, loc in enumerate(_LOCATIONS):
+            fig.add_annotation(
+                x=_LOC_LABELS[loc], y=depth,
+                text=ann_matrix[i][j],
+                showarrow=False,
+                font=dict(size=12, color="#222"),
+                align="center",
+            )
+    fig.update_layout(
+        title=dict(text=title, x=0.5, xanchor="center",
+                    font=dict(size=14)),
+        height=height,
+        margin=dict(l=60, r=20, t=50, b=40),
+        xaxis=dict(side="top", title="Pass location",
+                    title_font=dict(size=11, color="#666")),
+        yaxis=dict(title="Air-yard depth",
+                    title_font=dict(size=11, color="#666")),
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig
+
+
 def render_throw_map(player_id: str, player_name: str, *,
                        season: int | None = None,
                        theme: dict | None = None,
-                       key_prefix: str = "qb") -> None:
+                       key_prefix: str = "qb",
+                       comparison_player_id: str | None = None,
+                       comparison_player_name: str | None = None,
+                       comparison_season: int | None = None) -> None:
     """Bucket 3 — Contextual throw map (page hero).
 
-    3×3 grid (Short/Intermediate/Deep × Left/Middle/Right). Color
-    encodes EPA/attempt; cell annotations show attempts, completion
-    %, and Δ EPA vs. the league average for that zone.
-
-    Filters above the chart let you re-render the map for any
-    scenario combination: coverage type, pressure, pass-rush count,
-    offensive personnel.
+    3×3 grid (Short/Intermediate/Deep × Left/Middle/Right). Filters
+    above re-render for any scenario combination. When
+    `comparison_player_id` is supplied, two grids render side-by-side
+    on a shared color scale.
     """
-    plays_all = _filter_player(player_id, season)
-    plays_all = plays_all[(plays_all["pass_attempt"] == 1)
-                          & plays_all["air_yards"].notna()
-                          & plays_all["pass_location"].notna()]
+    plays_all = _player_attempts(player_id, season)
     if plays_all.empty or len(plays_all) < 30:
         st.caption(f"_Not enough throws ({len(plays_all)}) to build a throw map._")
         return
@@ -445,26 +580,10 @@ def render_throw_map(player_id: str, player_name: str, *,
         )
 
     # ── Apply filters ──────────────────────────────────────────────
-    plays = plays_all
-    if cov_selected:
-        plays = plays[plays["defense_coverage_type"].isin(cov_selected)]
-    if manzone == "Man":
-        plays = plays[plays["defense_man_zone_type"] == "MAN_COVERAGE"]
-    elif manzone == "Zone":
-        plays = plays[plays["defense_man_zone_type"] == "ZONE_COVERAGE"]
-    if pressure == "Pressured":
-        plays = plays[plays["is_pressured"]]
-    elif pressure == "Clean":
-        plays = plays[~plays["is_pressured"]]
-    if rushers == "3":
-        plays = plays[plays["number_of_pass_rushers"] == 3]
-    elif rushers == "4":
-        plays = plays[plays["number_of_pass_rushers"] == 4]
-    elif rushers == "5+":
-        plays = plays[plays["number_of_pass_rushers"] >= 5]
-    if personnel:
-        plays = plays[plays["personnel_group"].isin(personnel)]
-
+    filter_kwargs = dict(coverages=cov_selected, manzone=manzone,
+                          pressure=pressure, rushers=rushers,
+                          personnel=personnel)
+    plays = _apply_throw_filters(plays_all, **filter_kwargs)
     if len(plays) < 10:
         st.warning(
             f"Only {len(plays)} throws match this scenario — too few "
@@ -472,95 +591,98 @@ def render_throw_map(player_id: str, player_name: str, *,
         )
         return
 
-    # Headline metrics for the filtered slice
-    qb_epa = float(plays["epa"].mean())
-    qb_comp = float(plays["complete_pass"].mean())
-    qb_int_rate = float(plays["interception"].mean()) * 100
-    sack_rate_clean = "N/A" if pressure == "Clean" else f"{float(plays['sack'].mean())*100:.1f}%"
+    # Headline metrics for the filtered slice — A vs. B if comparing
+    is_comp = comparison_player_id is not None
+    if is_comp:
+        comp_plays_all = _player_attempts(comparison_player_id, comparison_season)
+        comp_plays = _apply_throw_filters(comp_plays_all, **filter_kwargs)
+    else:
+        comp_plays = pd.DataFrame()
+
+    def _safe_metric(s_plays: pd.DataFrame) -> dict:
+        if s_plays.empty:
+            return {"n": 0, "epa": None, "comp": None, "int": None}
+        return {
+            "n": len(s_plays),
+            "epa": float(s_plays["epa"].mean()),
+            "comp": float(s_plays["complete_pass"].mean()),
+            "int": float(s_plays["interception"].mean()) * 100,
+        }
+    m_a = _safe_metric(plays)
+    m_b = _safe_metric(comp_plays) if is_comp else None
+
+    def _fmt_metric(label, primary_val, comp_val=None):
+        if comp_val is None or comp_val.get("epa") is None:
+            return label, primary_val, None
+        return label, primary_val, comp_val
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Throws in scenario", f"{len(plays):,}")
-    m2.metric("EPA / attempt", f"{qb_epa:+.3f}")
-    m3.metric("Completion %", f"{qb_comp*100:.1f}%")
-    m4.metric("INT rate", f"{qb_int_rate:.2f}%")
+    if is_comp:
+        m1.metric("Throws in scenario",
+                   f"{m_a['n']:,} · {m_b['n']:,}",
+                   help=f"{player_name} · {comparison_player_name}")
+        delta_epa = (m_a['epa'] - m_b['epa']) if (m_a['epa'] is not None and m_b['epa'] is not None) else None
+        m2.metric("EPA / attempt",
+                   f"{m_a['epa']:+.3f}" if m_a['epa'] is not None else "—",
+                   delta=(f"{delta_epa:+.3f} vs comp" if delta_epa is not None else None))
+        m3.metric("Comp %",
+                   f"{m_a['comp']*100:.1f}% · {m_b['comp']*100:.1f}%"
+                       if (m_a['comp'] is not None and m_b['comp'] is not None)
+                       else "—")
+        m4.metric("INT rate",
+                   f"{m_a['int']:.2f}% · {m_b['int']:.2f}%"
+                       if (m_a['int'] is not None and m_b['int'] is not None)
+                       else "—")
+    else:
+        m1.metric("Throws in scenario", f"{m_a['n']:,}")
+        m2.metric("EPA / attempt", f"{m_a['epa']:+.3f}")
+        m3.metric("Completion %", f"{m_a['comp']*100:.1f}%")
+        m4.metric("INT rate", f"{m_a['int']:.2f}%")
 
     league = _league_throw_map(season)
 
-    # Build 3×3 matrices
-    epa_matrix, ann_matrix = [], []
-    for depth_label, lo, hi in _DEPTH_BUCKETS:
-        epa_row, ann_row = [], []
-        for loc in _LOCATIONS:
-            zone = plays[(plays["air_yards"] >= lo)
-                         & (plays["air_yards"] < hi)
-                         & (plays["pass_location"] == loc)]
-            n = len(zone)
-            if n < 5:
-                epa_row.append(None)
-                ann_row.append(f"<b>—</b><br>{n} att")
-                continue
-            epa = float(zone["epa"].mean())
-            comp_pct = float(zone["complete_pass"].mean())
-            # Δ vs. league
-            lg = league[(league["depth"] == depth_label)
-                        & (league["location"] == loc)]
-            if not lg.empty:
-                delta = epa - float(lg["league_epa"].iloc[0])
-                delta_str = f"{'▲' if delta > 0 else '▼'} {abs(delta):.2f} vs lg"
-            else:
-                delta_str = ""
-            epa_row.append(epa)
-            ann_row.append(
-                f"<b>{epa:+.2f} EPA</b><br>"
-                f"{comp_pct*100:.0f}% on {n} att<br>"
-                f"<span style='font-size:11px;color:#666'>{delta_str}</span>"
-            )
-        epa_matrix.append(epa_row)
-        ann_matrix.append(ann_row)
+    # Build the primary grid + (optional) comparison grid; share a
+    # color scale so cells are directly comparable between the two.
+    epa_a, ann_a = _build_throw_grid(plays, league)
+    epa_b, ann_b = (_build_throw_grid(comp_plays,
+                                        _league_throw_map(comparison_season))
+                    if is_comp else (None, None))
 
-    # Diverging red→white→green. Anchor scale around 0 EPA.
-    flat = [v for row in epa_matrix for v in row if v is not None]
+    flat = [v for row in epa_a for v in row if v is not None]
+    if is_comp and epa_b is not None:
+        flat += [v for row in epa_b for v in row if v is not None]
     if not flat:
         st.caption("_Not enough throws per zone to render._")
         return
     abs_max = max(abs(min(flat)), abs(max(flat)))
     z_scale = abs_max if abs_max > 0 else 0.5
 
-    fig = go.Figure(data=go.Heatmap(
-        z=epa_matrix,
-        x=[_LOC_LABELS[l] for l in _LOCATIONS],
-        y=[d[0] for d in _DEPTH_BUCKETS],
-        zmin=-z_scale, zmax=z_scale,
-        colorscale=[[0, "#c0392b"], [0.5, "#f7f7f7"], [1, "#27ae60"]],
-        colorbar=dict(title="EPA<br>per att", thickness=14),
-        hoverinfo="skip",
-        showscale=True,
-    ))
-    # Cell annotations (HTML-styled)
-    for i, depth in enumerate([d[0] for d in _DEPTH_BUCKETS]):
-        for j, loc in enumerate(_LOCATIONS):
-            fig.add_annotation(
-                x=_LOC_LABELS[loc], y=depth,
-                text=ann_matrix[i][j],
-                showarrow=False,
-                font=dict(size=12, color="#222"),
-                align="center",
-            )
-    fig.update_layout(
-        height=420,
-        margin=dict(l=80, r=20, t=30, b=40),
-        xaxis=dict(side="top", title="Pass location",
-                    title_font=dict(size=11, color="#666")),
-        yaxis=dict(title="Air-yard depth",
-                    title_font=dict(size=11, color="#666")),
-        plot_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    if is_comp:
+        cA, cB = st.columns(2)
+        with cA:
+            fig_a = _render_throw_grid(epa_a, ann_a,
+                                         title=f"{player_name} ({season or 'career'})",
+                                         z_scale=z_scale,
+                                         show_colorbar=False)
+            st.plotly_chart(fig_a, use_container_width=True)
+        with cB:
+            fig_b = _render_throw_grid(epa_b, ann_b,
+                                         title=f"{comparison_player_name} "
+                                               f"({comparison_season or 'career'})",
+                                         z_scale=z_scale,
+                                         show_colorbar=True)
+            st.plotly_chart(fig_b, use_container_width=True)
+    else:
+        fig = _render_throw_grid(epa_a, ann_a,
+                                   title="",
+                                   z_scale=z_scale,
+                                   show_colorbar=True)
+        st.plotly_chart(fig, use_container_width=True)
 
-    # Pick the best & worst zones for a quick narrative line
+    # Best / worst zone caption (primary QB only — comparison is visual)
     flat_zones = []
     for i, depth in enumerate([d[0] for d in _DEPTH_BUCKETS]):
         for j, loc in enumerate(_LOCATIONS):
-            v = epa_matrix[i][j]
+            v = epa_a[i][j]
             if v is not None:
                 flat_zones.append((v, f"{depth.lower()} {loc}"))
     if len(flat_zones) >= 2:
