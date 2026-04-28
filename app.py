@@ -845,6 +845,18 @@ else:
     if "college_school_v2" not in st.session_state:
         st.session_state.college_school_v2 = ALL_SCHOOLS_LABEL
 
+    # ── Stylized CFB grid front-door ──
+    # Only render when no school is filtered yet — once the user picks
+    # a team, the grid hides and the existing leaderboards take over.
+    if st.session_state.college_school_v2 == ALL_SCHOOLS_LABEL:
+        from lib_college_grid import render_college_grid
+        render_college_grid(
+            all_schools=get_school_list(),
+            on_pick_session_key="college_school_v2",
+            title="🎓  Pick your school",
+        )
+        st.markdown("---")
+
     ALL_POSITIONS_LABEL_COLLEGE = "🏈 All positions"
     COLLEGE_POSITIONS_FOR_TOP = [ALL_POSITIONS_LABEL_COLLEGE, "QB", "WR", "TE", "RB", "OL", "DE", "DT", "LB", "CB", "S"]
 
