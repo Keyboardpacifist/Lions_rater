@@ -62,6 +62,12 @@ if mode == "NFL":
         internal_abbr,
     )
 
+    # ── Stylized team grid — the new front door ──
+    from lib_team_grid import render_team_grid
+    render_team_grid(default_season=2025,
+                       title="🏈  Pick your team")
+    st.markdown("---")
+
     # Deferred page-switch from the player-search callback — fires
     # BEFORE any landing-page widgets render so the navigation looks
     # instant. Callbacks can't call st.switch_page directly.
