@@ -137,3 +137,169 @@ def render_pressure_split(player_id: str, player_name: str, *,
             f"**Average under pressure.** EPA drop of {qb_drop:.2f}/dropback "
             f"is roughly league-typical ({lg_drop:.2f})."
         )
+
+
+def render_competition_split(player_id: str, player_name: str, *,
+                                season: int | None = None,
+                                theme: dict | None = None) -> None:
+    """Bucket 8 — Elite vs. weak competition.
+
+    Splits the QB's plays by which quartile of pass D they faced
+    (1=elite, 4=bad), shows aggregate EPA & completion % per quartile,
+    and renders a per-game scatter (opp D quality vs. QB EPA) that
+    reveals whether he rises or fades against good defenses.
+    """
+    plays = _filter_player(player_id, season)
+    if plays.empty or len(plays) < 50:
+        st.caption(f"_Not enough dropbacks ({len(plays)}) to compute "
+                    f"competition splits._")
+        return
+
+    def_quality = load_team_pass_def_quality()
+    # Merge: opponent's pass D quality for each play
+    plays = plays.merge(
+        def_quality[["team", "season", "pass_epa_allowed_per_play",
+                     "epa_rank", "quality_quartile"]],
+        left_on=["defteam", "season"],
+        right_on=["team", "season"],
+        how="left",
+    )
+    plays = plays.dropna(subset=["quality_quartile"])
+    if plays.empty:
+        st.caption("_No matched defenses for these plays._")
+        return
+
+    # Aggregate by quartile
+    by_q = (
+        plays.groupby("quality_quartile")
+        .agg(
+            n_plays=("epa", "size"),
+            epa=("epa", "mean"),
+            comp_pct=("complete_pass", "mean"),
+            int_rate=("interception", "mean"),
+            sack_rate=("sack", "mean"),
+        )
+        .reset_index()
+    )
+    quartile_labels = {1: "Elite (top 25%)", 2: "Above avg", 3: "Below avg",
+                        4: "Bad (bottom 25%)"}
+    by_q["label"] = by_q["quality_quartile"].map(quartile_labels)
+
+    # ── Bar chart: EPA per dropback by quartile ──
+    primary = (theme or {}).get("primary", "#1F77B4")
+    secondary = (theme or {}).get("secondary", "#D62728")
+    bar_colors = [secondary, "#aa6e7e", "#7e9eaa", primary]  # 1→elite (red), 4→bad (primary)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=by_q["label"],
+        y=by_q["epa"],
+        marker_color=[bar_colors[int(q) - 1] for q in by_q["quality_quartile"]],
+        text=[f"{e:+.2f}" for e in by_q["epa"]],
+        textposition="outside",
+        customdata=by_q[["n_plays", "comp_pct"]].values,
+        hovertemplate="<b>%{x}</b><br>EPA/play: %{y:+.3f}<br>"
+                      "Plays: %{customdata[0]}<br>"
+                      "Comp %: %{customdata[1]:.1%}<extra></extra>",
+        showlegend=False,
+    ))
+    fig.add_hline(y=0, line_color="#ccc", line_width=1)
+    fig.update_layout(
+        yaxis_title="EPA per dropback",
+        xaxis_title="Opposing pass defense quality",
+        height=340,
+        margin=dict(l=40, r=20, t=20, b=40),
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ── Per-game scatter: opp D quality on x, QB EPA on y ──
+    per_game = (
+        plays.groupby(["game_id", "defteam", "season",
+                        "pass_epa_allowed_per_play"])
+        .agg(qb_epa=("epa", "mean"), n_plays=("epa", "size"))
+        .reset_index()
+    )
+    per_game = per_game[per_game["n_plays"] >= 10]
+
+    if len(per_game) >= 5:
+        # Trendline coefficients
+        import numpy as np
+        x = per_game["pass_epa_allowed_per_play"].astype(float)
+        y = per_game["qb_epa"].astype(float)
+        slope, intercept = np.polyfit(x, y, 1)
+        # If slope > 0: as opp D gets worse (higher EPA allowed), QB EPA
+        # rises → he beats up bad defenses. If slope < 0: he rises against
+        # good D (the rare elite-clutch profile).
+        x_range = np.linspace(x.min(), x.max(), 20)
+        y_fit = slope * x_range + intercept
+
+        scat = go.Figure()
+        scat.add_trace(go.Scatter(
+            x=x, y=y,
+            mode="markers",
+            marker=dict(size=8, color=primary, opacity=0.7,
+                        line=dict(width=1, color="white")),
+            text=per_game["defteam"] + " " + per_game["season"].astype(str),
+            hovertemplate="<b>vs. %{text}</b><br>"
+                          "Opp pass D allowed: %{x:+.3f} EPA/play<br>"
+                          "QB EPA: %{y:+.3f}<extra></extra>",
+            name="Game",
+        ))
+        scat.add_trace(go.Scatter(
+            x=x_range, y=y_fit,
+            mode="lines",
+            line=dict(color="#888", width=2, dash="dot"),
+            name="Trendline",
+            hoverinfo="skip",
+        ))
+        scat.add_hline(y=0, line_color="#ccc", line_width=1)
+        scat.add_vline(x=0, line_color="#ccc", line_width=1)
+        scat.update_layout(
+            xaxis_title="Opponent pass EPA allowed/play  (← elite D    bad D →)",
+            yaxis_title="QB EPA in this game",
+            height=380,
+            margin=dict(l=40, r=20, t=30, b=50),
+            showlegend=False,
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(scat, use_container_width=True)
+
+        # Narrative line about slope
+        if slope > 1.5:
+            st.warning(
+                f"**Stat-padder profile.** Slope of {slope:.2f} — "
+                f"clearly feasts on bad defenses, struggles vs. elite. "
+                f"The kind of QB whose box-score average outruns his "
+                f"playoff readiness."
+            )
+        elif slope > 0.5:
+            st.info(
+                f"**Plays to opponent quality.** Slope of {slope:.2f} — "
+                f"performs better vs. weaker defenses, as most QBs do, "
+                f"but not extreme."
+            )
+        elif slope > -0.5:
+            st.success(
+                f"**Steady against any defense.** Slope of {slope:.2f} "
+                f"(near zero) — plays at his level regardless of opponent. "
+                f"The mark of a real dog."
+            )
+        else:
+            st.success(
+                f"**Rises against elite D.** Slope of {slope:.2f} — "
+                f"counterintuitively *better* vs. top defenses. Rare "
+                f"clutch profile."
+            )
+
+    # ── Detail row ──
+    by_q_display = by_q.copy()
+    by_q_display["EPA/play"] = by_q_display["epa"].apply(lambda v: f"{v:+.3f}")
+    by_q_display["Comp %"] = by_q_display["comp_pct"].apply(lambda v: f"{v*100:.1f}%")
+    by_q_display["INT rate"] = by_q_display["int_rate"].apply(lambda v: f"{v*100:.2f}%")
+    by_q_display["Sack rate"] = by_q_display["sack_rate"].apply(lambda v: f"{v*100:.1f}%")
+    by_q_display = by_q_display.rename(columns={"label": "Defense", "n_plays": "Plays"})
+    st.dataframe(
+        by_q_display[["Defense", "Plays", "EPA/play", "Comp %", "INT rate", "Sack rate"]],
+        use_container_width=True, hide_index=True,
+    )

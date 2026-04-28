@@ -583,12 +583,22 @@ _render_card(
 )
 
 # ── QB panel — situational/pressure splits from per-dropback feed ──
-from lib_qb_panel import render_pressure_split as _render_pressure_split
+from lib_qb_panel import (
+    render_pressure_split as _render_pressure_split,
+    render_competition_split as _render_competition_split,
+)
 _qb_panel_pid = player.get("player_id")
 if _qb_panel_pid:
     _qb_panel_season = None if _yr["is_career_view"] else selected_season
     with st.expander("🥊  Under pressure — clean pocket vs. pressured", expanded=True):
         _render_pressure_split(
+            player_id=_qb_panel_pid,
+            player_name=selected,
+            season=_qb_panel_season,
+            theme=_theme(_team_abbr),
+        )
+    with st.expander("🏆  Elite vs. weak competition — does he rise to elite D or feast on bad ones?", expanded=False):
+        _render_competition_split(
             player_id=_qb_panel_pid,
             player_name=selected,
             season=_qb_panel_season,
