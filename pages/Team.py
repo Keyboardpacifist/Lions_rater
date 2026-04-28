@@ -19,10 +19,10 @@ from lib_team_contention import (
     classify_team,
     render_contention_badge,
     compute_gap_analysis,
-    render_gap_analysis_html,
     compute_trajectory,
-    render_trajectory_html,
+    _GAP_TITLES,
 )
+from lib_team_drilldown import get_drilldown_narrative
 
 st.set_page_config(
     page_title="Team Profile",
@@ -101,9 +101,7 @@ contention_html = render_contention_badge(
     contention["state"], contention["rationale"]
 )
 gaps = compute_gap_analysis(team_df, team, int(season), n_gaps=3)
-gap_html = render_gap_analysis_html(contention["state"], gaps)
 trajectory = compute_trajectory(team_df, team, int(season))
-trajectory_html = render_trajectory_html(trajectory)
 
 _logo_html = (
     f'<img src="{logo}" style="height:110px;width:110px;object-fit:contain;'
@@ -122,11 +120,74 @@ hero_html = (
     f'<div style="margin-top:14px;">{contention_html}</div>'
     '</div>'
     '</div>'
-    f'{gap_html}'
-    f'{trajectory_html}'
     '</div>'
 )
 st.markdown(hero_html, unsafe_allow_html=True)
+
+
+# ── Gap analysis — expandable rows with drill-down narratives ──
+def _ord(n):
+    suf = "th"
+    if n % 100 not in (11, 12, 13):
+        suf = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suf}"
+
+
+if gaps:
+    gap_title = _GAP_TITLES.get(contention["state"], "Biggest gaps")
+    st.markdown(f"#### 🎯 {gap_title}")
+    st.caption(
+        "Click any item for a player-level breakdown of where the issue lives."
+    )
+    for g in gaps:
+        header = (
+            f"**{g['label'].title()}** — {g['rank']} of {g['total']} · "
+            f"_{g['phrase']}_"
+        )
+        with st.expander(header, expanded=False):
+            narrative = get_drilldown_narrative(
+                team, int(season), g["label"], direction="gap"
+            )
+            st.markdown(narrative)
+
+
+# ── Year-over-year trajectory ──
+if trajectory["improved"] or trajectory["slipped"]:
+    prior = trajectory["prior_season"]
+    st.markdown(f"#### 📈 Year over year — vs {prior}")
+    st.caption(
+        "Rank shifts in each phase. Click any item for a player-level "
+        "explanation of what drove the change."
+    )
+    tc1, tc2 = st.columns(2)
+    with tc1:
+        st.markdown("**▲ Improved**")
+        if not trajectory["improved"]:
+            st.caption("_— no meaningful gains —_")
+        for d in trajectory["improved"]:
+            header = (
+                f"**{d['label']}** — {_ord(d['prior_rank'])} → "
+                f"{_ord(d['current_rank'])} (▲ {d['spots_gained']} spots)"
+            )
+            with st.expander(header, expanded=False):
+                st.markdown(get_drilldown_narrative(
+                    team, int(season), d["label"],
+                    direction="improvement",
+                ))
+    with tc2:
+        st.markdown("**▼ Slipped**")
+        if not trajectory["slipped"]:
+            st.caption("_— no meaningful drops —_")
+        for d in trajectory["slipped"]:
+            header = (
+                f"**{d['label']}** — {_ord(d['prior_rank'])} → "
+                f"{_ord(d['current_rank'])} (▼ {abs(d['spots_gained'])} spots)"
+            )
+            with st.expander(header, expanded=False):
+                st.markdown(get_drilldown_narrative(
+                    team, int(season), d["label"],
+                    direction="slipped",
+                ))
 
 # ── Phase-by-phase panels with league ranks ──────────────────
 def _rank_in_season(team_df, season, stat, ascending=False):
