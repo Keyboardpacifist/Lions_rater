@@ -33,32 +33,22 @@ inject_css()
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = REPO_ROOT / "data"
 
-# ── Position → data file + page slug for click-through ────────────
+# ── Position → page file path for click-through ──────────────────
+# Page paths must match the actual filenames in pages/ — including
+# the legacy quirks (number prefixes, double dot in Safety..py).
 _POSITION_CONFIG = {
-    "qb":     {"label": "QB",     "data": "league_qb_all_seasons.parquet",
-                "page": "QB"},
-    "rb":     {"label": "RB",     "data": "master_lions_rbs_with_z.parquet",
-                "page": "Running_backs"},
-    "wr":     {"label": "WR",     "data": "master_lions_with_z.parquet",
-                "page": "WR"},
-    "te":     {"label": "TE",     "data": "league_te_all_seasons.parquet",
-                "page": "TE"},
-    "ol":     {"label": "OL",     "data": "league_ol_all_seasons.parquet",
-                "page": "Offensive_Line"},
-    "de":     {"label": "EDGE",   "data": "league_de_all_seasons.parquet",
-                "page": "DE"},
-    "dt":     {"label": "DT",     "data": "league_dt_all_seasons.parquet",
-                "page": "DT"},
-    "lb":     {"label": "LB",     "data": "league_lb_all_seasons.parquet",
-                "page": "LB"},
-    "cb":     {"label": "CB",     "data": "league_cb_all_seasons.parquet",
-                "page": "CB"},
-    "safety": {"label": "Safety", "data": "league_s_all_seasons.parquet",
-                "page": "Safety."},
-    "kicker": {"label": "K",      "data": "league_k_all_seasons.parquet",
-                "page": "Kicker"},
-    "punter": {"label": "P",      "data": "league_p_all_seasons.parquet",
-                "page": "Punter"},
+    "qb":     {"label": "QB",     "page": "pages/QB.py"},
+    "rb":     {"label": "RB",     "page": "pages/2_Running_backs.py"},
+    "wr":     {"label": "WR",     "page": "pages/WR.py"},
+    "te":     {"label": "TE",     "page": "pages/TE.py"},
+    "ol":     {"label": "OL",     "page": "pages/3_Offensive_Line.py"},
+    "de":     {"label": "EDGE",   "page": "pages/DE.py"},
+    "dt":     {"label": "DT",     "page": "pages/DT.py"},
+    "lb":     {"label": "LB",     "page": "pages/LB.py"},
+    "cb":     {"label": "CB",     "page": "pages/CB.py"},
+    "safety": {"label": "Safety", "page": "pages/Safety..py"},
+    "kicker": {"label": "K",      "page": "pages/Kicker.py"},
+    "punter": {"label": "P",      "page": "pages/Punter.py"},
 }
 
 # Common NFL teams — keep aligned with team_selector.NFL_TEAMS
@@ -164,7 +154,7 @@ def _render_card_thumb(card: dict) -> None:
                 "author": author,
             }
             st.session_state[f"{pos}_loaded_algo"] = algo_payload
-            st.switch_page(f"pages/{cfg['page']}.py")
+            st.switch_page(cfg["page"])
     with c2:
         if st.button(f"▲ Upvote ({upvotes})",
                       key=f"up_{card.get('id')}",

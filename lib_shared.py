@@ -131,17 +131,40 @@ def save_card(*,
     needed to reproduce it.
     """
     sb = get_supabase()
+
+    # Coerce everything to plain JSON-safe Python types — numpy ints /
+    # floats from slider state will silently break the supabase-py
+    # serializer otherwise.
+    def _py(v):
+        if v is None:
+            return None
+        if isinstance(v, (bool, str)):
+            return v
+        try:
+            import numpy as np
+            if isinstance(v, np.integer):
+                return int(v)
+            if isinstance(v, np.floating):
+                return None if pd.isna(v) else float(v)
+        except Exception:
+            pass
+        if isinstance(v, float) and pd.isna(v):
+            return None
+        if isinstance(v, (int, float)):
+            return v
+        return v
+
     row = {
-        "player_id": player_id,
-        "player_name": player_name,
-        "position_group": position_group,
-        "team_abbr": team_abbr,
-        "season": season,
-        "season_label": season_label,
-        "bundle_weights": bundle_weights,
-        "score": float(score) if (score is not None and pd.notna(score)) else None,
-        "author": author or "Anonymous",
-        "caption": caption,
+        "player_id": str(player_id),
+        "player_name": str(player_name),
+        "position_group": str(position_group),
+        "team_abbr": str(team_abbr) if team_abbr else None,
+        "season": _py(season) if season is not None else None,
+        "season_label": str(season_label) if season_label else None,
+        "bundle_weights": {str(k): _py(v) for k, v in (bundle_weights or {}).items()},
+        "score": _py(score),
+        "author": (author or "Anonymous").strip()[:80] or "Anonymous",
+        "caption": (caption or "").strip()[:140] or None,
         "algorithm_id": algorithm_id,
     }
     try:
