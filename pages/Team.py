@@ -101,36 +101,27 @@ contention_html = render_contention_badge(
 gaps = compute_gap_analysis(team_df, team, int(season), n_gaps=3)
 gap_html = render_gap_analysis_html(contention["state"], gaps)
 
-st.markdown(
-    f"""
-<div style="
-    background: linear-gradient(135deg, {primary} 0%, {secondary} 100%);
-    border-radius: 18px;
-    padding: 28px 32px;
-    margin-bottom: 16px;
-    box-shadow: 0 6px 18px rgba(0,0,0,0.18);
-    color: white;
-">
-    <div style="display: flex; align-items: center; gap: 24px;">
-        {f'<img src="{logo}" style="height: 110px; width: 110px; object-fit: contain; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.35));"/>' if logo else ''}
-        <div style="flex: 1;">
-            <div style="font-size: 38px; font-weight: 900; letter-spacing: -0.5px; line-height: 1;">
-                {team_name}
-            </div>
-            <div style="font-size: 14px; opacity: 0.8; margin-top: 6px;
-                         font-weight: 500; letter-spacing: 1px;">
-                {season} SEASON
-            </div>
-            <div style="margin-top: 14px;">
-                {contention_html}
-            </div>
-        </div>
-    </div>
-    {gap_html}
-</div>
-""",
-    unsafe_allow_html=True,
+_logo_html = (
+    f'<img src="{logo}" style="height:110px;width:110px;object-fit:contain;'
+    'filter:drop-shadow(0 4px 10px rgba(0,0,0,0.35));"/>'
+    if logo else ''
 )
+hero_html = (
+    f'<div style="background:linear-gradient(135deg,{primary} 0%,{secondary} 100%);'
+    'border-radius:18px;padding:28px 32px;margin-bottom:16px;'
+    'box-shadow:0 6px 18px rgba(0,0,0,0.18);color:white;">'
+    '<div style="display:flex;align-items:center;gap:24px;">'
+    f'{_logo_html}'
+    '<div style="flex:1;">'
+    f'<div style="font-size:38px;font-weight:900;letter-spacing:-0.5px;line-height:1;">{team_name}</div>'
+    f'<div style="font-size:14px;opacity:0.8;margin-top:6px;font-weight:500;letter-spacing:1px;">{season} SEASON</div>'
+    f'<div style="margin-top:14px;">{contention_html}</div>'
+    '</div>'
+    '</div>'
+    f'{gap_html}'
+    '</div>'
+)
+st.markdown(hero_html, unsafe_allow_html=True)
 
 # ── Phase-by-phase panels with league ranks ──────────────────
 def _rank_in_season(team_df, season, stat, ascending=False):

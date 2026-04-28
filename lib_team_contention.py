@@ -166,31 +166,21 @@ def classify_team(team: str, season: int) -> dict:
 
 
 def render_contention_badge(state: str, rationale: str) -> str:
-    """Return styled HTML for the contention badge — drop into the
-    team-page hero with unsafe_allow_html=True."""
+    """Return styled HTML for the contention badge. Single-line / no
+    leading whitespace per line — Streamlit's markdown parser treats
+    4+ space indentation as code blocks and breaks HTML structure."""
     style = STATE_STYLES.get(state, STATE_STYLES["Rebuild"])
-    return f"""
-<div style="
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    background: {style['bg']};
-    color: {style['fg']};
-    padding: 8px 16px;
-    border-radius: 999px;
-    font-size: 14px;
-    font-weight: 800;
-    letter-spacing: 0.5px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-">
-    <span style="font-size: 18px;">{style['icon']}</span>
-    <span>{state.upper()}</span>
-</div>
-<div style="margin-top: 8px; font-size: 13px; opacity: 0.85;
-             font-style: italic; max-width: 600px;">
-    {rationale}
-</div>
-"""
+    return (
+        f'<div style="display:inline-flex;align-items:center;gap:8px;'
+        f'background:{style["bg"]};color:{style["fg"]};padding:8px 16px;'
+        f'border-radius:999px;font-size:14px;font-weight:800;'
+        f'letter-spacing:0.5px;box-shadow:0 2px 6px rgba(0,0,0,0.2);">'
+        f'<span style="font-size:18px;">{style["icon"]}</span>'
+        f'<span>{state.upper()}</span>'
+        f'</div>'
+        f'<div style="margin-top:8px;font-size:13px;opacity:0.85;'
+        f'font-style:italic;max-width:600px;">{rationale}</div>'
+    )
 
 
 # ── Gap analysis — "what's keeping them from the next stage" ──
@@ -278,39 +268,34 @@ _GAP_TITLES = {
 
 
 def render_gap_analysis_html(state: str, gaps: list[dict]) -> str:
-    """Format the gap-analysis block as styled HTML."""
+    """Format the gap-analysis block as styled HTML. Single-line per
+    HTML element — Streamlit's markdown treats 4+ space indentation
+    as code blocks."""
     if not gaps:
         return ""
     title = _GAP_TITLES.get(state, "Biggest gaps")
-    items_html = ""
+    items = []
     for g in gaps:
-        items_html += f"""
-<div style="display: flex; gap: 12px; align-items: center;
-             padding: 10px 14px; background: rgba(255,255,255,0.05);
-             border-left: 3px solid #E67E22;
-             border-radius: 0 8px 8px 0; margin-bottom: 8px;">
-    <div style="font-size: 11px; font-weight: 800; letter-spacing: 1.5px;
-                 background: rgba(230, 126, 34, 0.85); color: white;
-                 padding: 4px 8px; border-radius: 6px; min-width: 70px;
-                 text-align: center;">
-        {g['rank']} of {g['total']}
-    </div>
-    <div style="font-size: 14px; line-height: 1.4;">
-        <span style="font-weight: 700; text-transform: capitalize;">
-            {g['label']}
-        </span>
-        <span style="opacity: 0.85;"> — {g['phrase']}.</span>
-    </div>
-</div>
-"""
-    return f"""
-<div style="margin-top: 18px; padding: 16px 18px;
-             background: rgba(0,0,0,0.18); border-radius: 12px;
-             color: white;">
-    <div style="font-size: 12px; font-weight: 800; letter-spacing: 1.5px;
-                 opacity: 0.85; margin-bottom: 10px;">
-        🎯  {title.upper()}
-    </div>
-    {items_html}
-</div>
-"""
+        items.append(
+            '<div style="display:flex;gap:12px;align-items:center;'
+            'padding:10px 14px;background:rgba(255,255,255,0.05);'
+            'border-left:3px solid #E67E22;border-radius:0 8px 8px 0;'
+            'margin-bottom:8px;">'
+            '<div style="font-size:11px;font-weight:800;'
+            'letter-spacing:1.5px;background:rgba(230,126,34,0.85);'
+            'color:white;padding:4px 8px;border-radius:6px;min-width:70px;'
+            f'text-align:center;">{g["rank"]} of {g["total"]}</div>'
+            '<div style="font-size:14px;line-height:1.4;">'
+            f'<span style="font-weight:700;text-transform:capitalize;">{g["label"]}</span>'
+            f'<span style="opacity:0.85;"> — {g["phrase"]}.</span>'
+            '</div>'
+            '</div>'
+        )
+    return (
+        '<div style="margin-top:18px;padding:16px 18px;'
+        'background:rgba(0,0,0,0.18);border-radius:12px;color:white;">'
+        '<div style="font-size:12px;font-weight:800;letter-spacing:1.5px;'
+        f'opacity:0.85;margin-bottom:10px;">🎯  {title.upper()}</div>'
+        + "".join(items)
+        + '</div>'
+    )
