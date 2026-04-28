@@ -197,37 +197,120 @@ else:
                 })
                 st.rerun()
 
-# ── Roster / position click-through ────────────────────────────
+# ── Roster — top players per position ──────────────────────────
 st.markdown("---")
-st.markdown("### 🦌  Drill into the roster")
+st.markdown("### 🦌  Roster — top performers")
 st.caption(
-    "Click a position to see this team's players ranked at that position. "
-    "From there, build presets and trading cards for individual players."
+    "Top 3 players per position by all-stats z-score, this team-season. "
+    "Click any player to drill into their full rater page."
 )
 
-POSITIONS = [
-    ("QB",      "QB"),
-    ("WR/TE",   "WR"),  # WR page is the entry; TE has its own page too
-    ("RB",      "2_Running_backs"),
-    ("OL",      "3_Offensive_Line"),
-    ("DE",      "DE"),
-    ("DT",      "DT"),
-    ("LB",      "LB"),
-    ("CB",      "CB"),
-    ("S",       "Safety."),
-    ("K",       "Kicker"),
-    ("P",       "Punter"),
+import polars as pl
+
+# Each entry: position label, parquet, optional row filter, page to open
+_ROSTER_SOURCES = [
+    ("QB",  "league_qb_all_seasons.parquet",  None,                "pages/QB.py"),
+    ("WR",  "league_wr_all_seasons.parquet",  ("position", "WR"),  "pages/WR.py"),
+    ("TE",  "league_te_all_seasons.parquet",  ("position", "TE"),  "pages/TE.py"),
+    ("RB",  "league_rb_all_seasons.parquet",  None,                "pages/2_Running_backs.py"),
+    ("OL",  "league_ol_all_seasons.parquet",  None,                "pages/3_Offensive_Line.py"),
+    ("EDGE","league_de_all_seasons.parquet",  None,                "pages/DE.py"),
+    ("DT",  "league_dt_all_seasons.parquet",  None,                "pages/DT.py"),
+    ("LB",  "league_lb_all_seasons.parquet",  None,                "pages/LB.py"),
+    ("CB",  "league_cb_all_seasons.parquet",  None,                "pages/CB.py"),
+    ("S",   "league_s_all_seasons.parquet",   None,                "pages/Safety..py"),
+    ("K",   "league_k_all_seasons.parquet",   None,                "pages/Kicker.py"),
+    ("P",   "league_p_all_seasons.parquet",   None,                "pages/Punter.py"),
 ]
 
-cols = st.columns(6)
-for i, (label, page_slug) in enumerate(POSITIONS):
-    with cols[i % 6]:
-        if st.button(label,
-                      key=f"goto_{page_slug}",
-                      use_container_width=True,
-                      help=f"Open the {label} rater"):
-            # Stash team selection so the position page picks it up if it
-            # supports cross-page team prefilling
-            st.session_state["team_pick_from_team_page"] = team
-            st.session_state["season_pick_from_team_page"] = int(season)
-            st.switch_page(f"pages/{page_slug}.py")
+
+@st.cache_data(show_spinner=False)
+def _team_roster_top(team: str, season: int) -> dict:
+    """Returns {position: [(name, score, page_slug, player_id), …top 3]}.
+    Score = average of all available z-stat columns for that player-row."""
+    out: dict[str, list] = {}
+    base = REPO_ROOT / "data"
+    for pos_label, fname, row_filter, page_slug in _ROSTER_SOURCES:
+        path = base / fname
+        if not path.exists():
+            continue
+        try:
+            df = pl.read_parquet(path).to_pandas()
+        except Exception:
+            continue
+        team_col = "recent_team" if "recent_team" in df.columns else (
+            "team" if "team" in df.columns else None)
+        season_col = "season_year" if "season_year" in df.columns else (
+            "season" if "season" in df.columns else None)
+        if team_col is None or season_col is None:
+            continue
+        sub = df[(df[team_col] == team) & (df[season_col] == season)]
+        if row_filter:
+            col, val = row_filter
+            if col in sub.columns:
+                sub = sub[sub[col] == val]
+        if sub.empty:
+            continue
+        z_cols = [c for c in sub.columns if c.endswith("_z")]
+        if not z_cols:
+            continue
+        # All-stats average — same idea as the league_score calculation,
+        # just using equal weight across z-cols. Good enough for "top
+        # performers" because we're comparing within the same parquet.
+        sub = sub.copy()
+        sub["_avg_z"] = sub[z_cols].mean(axis=1, skipna=True)
+        # Player display name column varies — fall back to first match
+        for name_col in ("player_display_name", "player_name", "full_name"):
+            if name_col in sub.columns:
+                break
+        else:
+            name_col = None
+        pid_col = "player_id" if "player_id" in sub.columns else None
+        if name_col is None:
+            continue
+        sub = sub.dropna(subset=["_avg_z", name_col])
+        if sub.empty:
+            continue
+        top = sub.sort_values("_avg_z", ascending=False).head(3)
+        rows = []
+        for _, r in top.iterrows():
+            rows.append({
+                "name": str(r[name_col]),
+                "score": float(r["_avg_z"]),
+                "page": page_slug,
+                "pid": str(r[pid_col]) if pid_col and pd.notna(r[pid_col]) else "",
+            })
+        out[pos_label] = rows
+    return out
+
+
+_roster = _team_roster_top(team, int(season))
+if not _roster:
+    st.info("No roster data for this team-season yet.")
+else:
+    # Render in 4-column rows of position cards
+    pos_keys = list(_roster.keys())
+    for i in range(0, len(pos_keys), 4):
+        row_keys = pos_keys[i:i + 4]
+        cols = st.columns(4)
+        for col, pk in zip(cols, row_keys):
+            with col:
+                st.markdown(
+                    f"""
+<div style="font-size: 11px; font-weight: 800; letter-spacing: 1.5px;
+             opacity: 0.55; margin: 4px 0 4px 4px;">
+    {pk.upper()}
+</div>
+""",
+                    unsafe_allow_html=True,
+                )
+                for r in _roster[pk]:
+                    sign = "+" if r["score"] >= 0 else ""
+                    label = f"{r['name']}  ·  {sign}{r['score']:.2f}"
+                    if st.button(
+                        label,
+                        key=f"roster_{pk}_{r['pid'] or r['name']}",
+                        use_container_width=True,
+                        help=f"Open {r['name']}'s {pk} page",
+                    ):
+                        st.switch_page(r["page"])

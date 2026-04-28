@@ -69,13 +69,33 @@ def _team_tile_html(team: str, season: int) -> str:
 """
 
 
+def _all_teams_flat() -> list[str]:
+    return [t for divs in _DIVISIONS.values() for div in divs.values() for t in div]
+
+
+def _render_team_button(team: str, default_season: int, key_suffix: str) -> None:
+    st.markdown(_team_tile_html(team, default_season), unsafe_allow_html=True)
+    if st.button(
+        f"Open {team}",
+        key=f"grid_open_{team}_{key_suffix}",
+        use_container_width=True,
+        help=f"View the {team} team profile",
+    ):
+        st.query_params.update({
+            "abbr": team,
+            "season": str(default_season),
+        })
+        st.switch_page("pages/Team.py")
+
+
 def render_team_grid(*, default_season: int = 2025,
                        title: str = "Pick your team") -> None:
     """Render the AFC | NFC stylized grid. Clicking a team opens
-    pages/Team.py?abbr=X&season=Y."""
+    pages/Team.py?abbr=X&season=Y. A small toggle at the top lets
+    users switch between division grouping and alphabetical."""
     st.markdown(
         f"""
-<div style="text-align: center; margin-bottom: 16px;">
+<div style="text-align: center; margin-bottom: 12px;">
     <div style="font-size: 28px; font-weight: 800; letter-spacing: -0.5px;">
         {title}
     </div>
@@ -88,6 +108,30 @@ def render_team_grid(*, default_season: int = 2025,
         unsafe_allow_html=True,
     )
 
+    # Sort/group toggle — placed above the grid
+    _, sort_col, _ = st.columns([1, 2, 1])
+    with sort_col:
+        sort_mode = st.radio(
+            "Sort",
+            options=["By division", "A → Z"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="nfl_grid_sort_mode",
+        )
+
+    if sort_mode == "A → Z":
+        all_teams = sorted(_all_teams_flat())
+        n_per_row = 8
+        for i in range(0, len(all_teams), n_per_row):
+            row = all_teams[i:i + n_per_row]
+            cols = st.columns(n_per_row)
+            for col, team in zip(cols, row):
+                with col:
+                    _render_team_button(team, default_season,
+                                          key_suffix=f"az_{i}")
+        return
+
+    # Default: by division
     conf_cols = st.columns(2)
     for i, (conf, divs) in enumerate(_DIVISIONS.items()):
         with conf_cols[i]:
@@ -113,18 +157,7 @@ def render_team_grid(*, default_season: int = 2025,
                 cols = st.columns(4)
                 for tcol, team in zip(cols, team_list):
                     with tcol:
-                        st.markdown(_team_tile_html(team, default_season),
-                                     unsafe_allow_html=True)
-                        # Streamlit nav button — has to be a button (links
-                        # in markdown can't trigger st.switch_page).
-                        if st.button(
-                            f"Open {team}",
-                            key=f"grid_open_{team}_{conf}_{div_name}",
-                            use_container_width=True,
-                            help=f"View the {team} team profile",
-                        ):
-                            st.query_params.update({
-                                "abbr": team,
-                                "season": str(default_season),
-                            })
-                            st.switch_page("pages/Team.py")
+                        _render_team_button(
+                            team, default_season,
+                            key_suffix=f"div_{conf}_{div_name}",
+                        )

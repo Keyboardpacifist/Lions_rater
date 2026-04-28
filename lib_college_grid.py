@@ -99,7 +99,7 @@ def render_college_grid(*,
     """
     st.markdown(
         f"""
-<div style="text-align: center; margin-bottom: 16px;">
+<div style="text-align: center; margin-bottom: 12px;">
     <div style="font-size: 28px; font-weight: 800; letter-spacing: -0.5px;">
         {title}
     </div>
@@ -111,6 +111,35 @@ def render_college_grid(*,
 """,
         unsafe_allow_html=True,
     )
+
+    # Sort/group toggle — placed above the grid
+    _, sort_col, _ = st.columns([1, 2, 1])
+    with sort_col:
+        sort_mode = st.radio(
+            "Sort",
+            options=["By conference", "A → Z (featured)"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="cfb_grid_sort_mode",
+        )
+
+    if sort_mode == "A → Z (featured)":
+        all_featured = sorted([t for ts in _FEATURED.values() for t in ts])
+        n_per_row = 6
+        for i in range(0, len(all_featured), n_per_row):
+            row = all_featured[i:i + n_per_row]
+            cols = st.columns(n_per_row)
+            for col, team in zip(cols, row):
+                with col:
+                    st.markdown(_team_tile_html(team), unsafe_allow_html=True)
+                    if st.button(f"Open {team}",
+                                  key=f"cfb_grid_az_{team.replace(' ', '_')}",
+                                  use_container_width=True):
+                        st.session_state[on_pick_session_key] = team
+                        st.rerun()
+        # Still offer show-all below
+        _render_show_all_section(all_schools, on_pick_session_key)
+        return
 
     for conf, team_list in _FEATURED.items():
         st.markdown(
@@ -136,51 +165,53 @@ def render_college_grid(*,
             with empty_col:
                 st.markdown("&nbsp;", unsafe_allow_html=True)
 
-    # ── Show-all expansion ──
-    if all_schools:
-        if "_cfb_grid_show_all" not in st.session_state:
-            st.session_state._cfb_grid_show_all = False
+    _render_show_all_section(all_schools, on_pick_session_key)
 
-        if not st.session_state._cfb_grid_show_all:
-            st.markdown("---")
-            _, mid, _ = st.columns([1, 2, 1])
-            with mid:
-                if st.button(f"📋  Show all {len(all_schools)} schools",
-                              use_container_width=True,
-                              key="cfb_grid_show_all_btn"):
-                    st.session_state._cfb_grid_show_all = True
-                    st.rerun()
-        else:
-            st.markdown("---")
-            st.markdown(
-                """
+
+def _render_show_all_section(all_schools: list[str] | None,
+                                on_pick_session_key: str) -> None:
+    if not all_schools:
+        return
+    if "_cfb_grid_show_all" not in st.session_state:
+        st.session_state._cfb_grid_show_all = False
+
+    if not st.session_state._cfb_grid_show_all:
+        st.markdown("---")
+        _, mid, _ = st.columns([1, 2, 1])
+        with mid:
+            if st.button(f"📋  Show all {len(all_schools)} schools",
+                          use_container_width=True,
+                          key="cfb_grid_show_all_btn"):
+                st.session_state._cfb_grid_show_all = True
+                st.rerun()
+    else:
+        st.markdown("---")
+        st.markdown(
+            """
 <div style="font-size: 12px; font-weight: 800; letter-spacing: 2px;
              opacity: 0.6; margin: 14px 0 8px 4px;">
     ALL SCHOOLS
 </div>
 """,
-                unsafe_allow_html=True,
-            )
-            # Featured set to skip duplicates
-            featured_set = {t for ts in _FEATURED.values() for t in ts}
-            other = [s for s in all_schools if s not in featured_set]
-            # Render in rows of 6 — text-only buttons since we don't have
-            # colors for every school
-            n_per_row = 6
-            for i in range(0, len(other), n_per_row):
-                row = other[i:i + n_per_row]
-                cols = st.columns(n_per_row)
-                for col, team in zip(cols, row):
-                    with col:
-                        if st.button(team,
-                                      key=f"cfb_grid_other_{team.replace(' ', '_')}",
-                                      use_container_width=True):
-                            st.session_state[on_pick_session_key] = team
-                            st.rerun()
-            _, mid, _ = st.columns([1, 2, 1])
-            with mid:
-                if st.button("⬆️  Collapse",
-                              use_container_width=True,
-                              key="cfb_grid_collapse_btn"):
-                    st.session_state._cfb_grid_show_all = False
-                    st.rerun()
+            unsafe_allow_html=True,
+        )
+        featured_set = {t for ts in _FEATURED.values() for t in ts}
+        other = [s for s in all_schools if s not in featured_set]
+        n_per_row = 6
+        for i in range(0, len(other), n_per_row):
+            row = other[i:i + n_per_row]
+            cols = st.columns(n_per_row)
+            for col, team in zip(cols, row):
+                with col:
+                    if st.button(team,
+                                  key=f"cfb_grid_other_{team.replace(' ', '_')}",
+                                  use_container_width=True):
+                        st.session_state[on_pick_session_key] = team
+                        st.rerun()
+        _, mid, _ = st.columns([1, 2, 1])
+        with mid:
+            if st.button("⬆️  Collapse",
+                          use_container_width=True,
+                          key="cfb_grid_collapse_btn"):
+                st.session_state._cfb_grid_show_all = False
+                st.rerun()
