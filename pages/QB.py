@@ -584,6 +584,7 @@ _render_card(
 
 # ── QB panel — situational/pressure splits from per-dropback feed ──
 from lib_qb_panel import (
+    get_qb_peers as _get_qb_peers,
     render_pressure_split as _render_pressure_split,
     render_competition_split as _render_competition_split,
     render_throw_map as _render_throw_map,
@@ -595,6 +596,29 @@ _qb_panel_pid = player.get("player_id")
 if _qb_panel_pid:
     _qb_panel_season = None if _yr["is_career_view"] else selected_season
 
+    # ── Comparison picker (drives every contextual panel below) ──
+    _qb_peer_options = _get_qb_peers(
+        season=_qb_panel_season,
+        exclude_player_id=_qb_panel_pid,
+    )
+    _comp_labels = ["None"] + [opt["label"] for opt in _qb_peer_options]
+    _comp_pick = st.selectbox(
+        "Compare to another QB:",
+        options=_comp_labels,
+        index=0,
+        key=f"qb_compare_{_qb_panel_pid}",
+        help="Pick another QB-season to render every panel below in "
+             "side-by-side comparison mode.",
+    )
+    if _comp_pick != "None":
+        _comp_idx = _comp_labels.index(_comp_pick) - 1
+        _comp = _qb_peer_options[_comp_idx]
+        _comp_pid = _comp["player_id"]
+        _comp_name = _comp["label"].split(" — ")[0]
+        _comp_season = _comp["season"]
+    else:
+        _comp_pid = _comp_name = _comp_season = None
+
     # ── HERO panel: contextual throw map (always visible, filterable) ──
     st.markdown("### 🎯 Throw map — where does he hit?")
     _render_throw_map(
@@ -603,6 +627,9 @@ if _qb_panel_pid:
         season=_qb_panel_season,
         theme=_theme(_team_abbr),
         key_prefix=f"qb_{_qb_panel_pid}",
+        comparison_player_id=_comp_pid,
+        comparison_player_name=_comp_name,
+        comparison_season=_comp_season,
     )
 
     # ── Supplementary buckets (collapsible to keep the page short) ──
