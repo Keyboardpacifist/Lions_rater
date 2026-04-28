@@ -582,6 +582,19 @@ _render_card(
     key_prefix=f"qb_{player.get('player_id') or selected}",
 )
 
+# ── QB panel — situational/pressure splits from per-dropback feed ──
+from lib_qb_panel import render_pressure_split as _render_pressure_split
+_qb_panel_pid = player.get("player_id")
+if _qb_panel_pid:
+    _qb_panel_season = None if _yr["is_career_view"] else selected_season
+    with st.expander("🥊  Under pressure — clean pocket vs. pressured", expanded=True):
+        _render_pressure_split(
+            player_id=_qb_panel_pid,
+            player_name=selected,
+            season=_qb_panel_season,
+            theme=_theme(_team_abbr),
+        )
+
 # ── Combine workout chart vs. all-time QB pool ────────────────
 _WORKOUTS_PATH = Path(__file__).resolve().parent.parent / "data" / "college" / "nfl_all_workouts.parquet"
 render_combine_chart(
