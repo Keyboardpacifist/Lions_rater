@@ -191,3 +191,126 @@ def render_contention_badge(state: str, rationale: str) -> str:
     {rationale}
 </div>
 """
+
+
+# ── Gap analysis — "what's keeping them from the next stage" ──
+# Per stat: (label, column, ascending=True if lower-is-better, fan-friendly
+# remediation phrase). Used to identify the team's biggest weaknesses
+# and frame what they need to fix.
+_GAP_STATS = [
+    ("offensive efficiency",       "off_epa_per_play",         False,
+     "the offense isn't pulling its weight per play"),
+    ("passing offense",            "off_pass_epa_per_play",    False,
+     "the passing game needs more juice"),
+    ("rushing offense",            "off_rush_epa_per_play",    False,
+     "the run game has to be more dangerous"),
+    ("red zone TD rate",           "off_red_zone_td_rate",     False,
+     "settling for field goals where they need touchdowns"),
+    ("3rd down conversion",        "off_third_down_conv_rate", False,
+     "drives die on 3rd down too often"),
+    ("ball security",              "off_giveaway_rate",        True,
+     "giving the ball away too much"),
+    ("defensive efficiency",       "def_epa_per_play",         True,
+     "the defense gives up too much per play"),
+    ("pass defense",               "def_pass_epa_allowed",     True,
+     "the secondary is leaking yards"),
+    ("run defense",                "def_rush_epa_allowed",     True,
+     "the front seven gets pushed around"),
+    ("takeaway production",        "def_takeaway_rate",        False,
+     "the defense doesn't generate enough turnovers"),
+    ("pass rush",                  "def_pressure_rate",        False,
+     "the pass rush isn't getting home"),
+    ("4th-quarter offense",        "fourth_q_off_epa",         False,
+     "they fade in the 4th quarter offensively"),
+    ("4th-quarter defense",        "fourth_q_def_epa",         True,
+     "the defense gives up too much in the 4th quarter"),
+    ("discipline",                 "penalty_yards_per_game",   True,
+     "they shoot themselves in the foot with penalties"),
+]
+
+
+def _rank_in_season(team_seasons, team, season, stat, ascending):
+    """Returns rank (1 = best, N = worst) within season."""
+    pool = team_seasons[team_seasons["season"] == season].copy()
+    pool = pool.dropna(subset=[stat])
+    if pool.empty:
+        return None, 0
+    pool = pool.sort_values(stat, ascending=ascending).reset_index(drop=True)
+    match = pool.index[pool["team"] == team].tolist()
+    if not match:
+        return None, len(pool)
+    return match[0] + 1, len(pool)
+
+
+def compute_gap_analysis(team_seasons, team: str, season: int,
+                            n_gaps: int = 3) -> list[dict]:
+    """Identify the team's `n_gaps` biggest weaknesses by league rank.
+    Returns: list of {label, rank, total, phrase} sorted worst-first."""
+    gaps = []
+    for label, col, ascending, phrase in _GAP_STATS:
+        if col not in team_seasons.columns:
+            continue
+        rank, total = _rank_in_season(team_seasons, team, season,
+                                          col, ascending)
+        if rank is None or total == 0:
+            continue
+        # Only consider ranks below the median (i.e. weaknesses)
+        if rank <= total // 2:
+            continue
+        gaps.append({
+            "label": label,
+            "rank": rank,
+            "total": total,
+            "phrase": phrase,
+            "rank_pct": rank / total,
+        })
+    gaps.sort(key=lambda g: g["rank_pct"], reverse=True)
+    return gaps[:n_gaps]
+
+
+_GAP_TITLES = {
+    "Super Bowl Contender": "What's keeping them from a championship",
+    "Playoff Contender":    "What's keeping them out of true contention",
+    "Ascending":            "What still needs to come together",
+    "Fading":               "What's slipping fastest",
+    "Rebuild":              "Where the climb has to start",
+}
+
+
+def render_gap_analysis_html(state: str, gaps: list[dict]) -> str:
+    """Format the gap-analysis block as styled HTML."""
+    if not gaps:
+        return ""
+    title = _GAP_TITLES.get(state, "Biggest gaps")
+    items_html = ""
+    for g in gaps:
+        items_html += f"""
+<div style="display: flex; gap: 12px; align-items: center;
+             padding: 10px 14px; background: rgba(255,255,255,0.05);
+             border-left: 3px solid #E67E22;
+             border-radius: 0 8px 8px 0; margin-bottom: 8px;">
+    <div style="font-size: 11px; font-weight: 800; letter-spacing: 1.5px;
+                 background: rgba(230, 126, 34, 0.85); color: white;
+                 padding: 4px 8px; border-radius: 6px; min-width: 70px;
+                 text-align: center;">
+        {g['rank']} of {g['total']}
+    </div>
+    <div style="font-size: 14px; line-height: 1.4;">
+        <span style="font-weight: 700; text-transform: capitalize;">
+            {g['label']}
+        </span>
+        <span style="opacity: 0.85;"> — {g['phrase']}.</span>
+    </div>
+</div>
+"""
+    return f"""
+<div style="margin-top: 18px; padding: 16px 18px;
+             background: rgba(0,0,0,0.18); border-radius: 12px;
+             color: white;">
+    <div style="font-size: 12px; font-weight: 800; letter-spacing: 1.5px;
+                 opacity: 0.85; margin-bottom: 10px;">
+        🎯  {title.upper()}
+    </div>
+    {items_html}
+</div>
+"""
