@@ -15,6 +15,7 @@ import streamlit as st
 
 from lib_shared import inject_css, team_theme
 from lib_team_comps import find_team_comps, load_team_seasons
+from lib_team_contention import classify_team, render_contention_badge
 
 st.set_page_config(
     page_title="Team Profile",
@@ -87,7 +88,11 @@ if row.empty:
     st.stop()
 row = row.iloc[0]
 
-# ── Hero header ────────────────────────────────────────────────
+# ── Hero header — logo, name, season, contention badge ────────
+contention = classify_team(team, int(season))
+contention_html = render_contention_badge(
+    contention["state"], contention["rationale"]
+)
 st.markdown(
     f"""
 <div style="
@@ -102,13 +107,16 @@ st.markdown(
     color: white;
 ">
     {f'<img src="{logo}" style="height: 110px; width: 110px; object-fit: contain; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.35));"/>' if logo else ''}
-    <div>
+    <div style="flex: 1;">
         <div style="font-size: 38px; font-weight: 900; letter-spacing: -0.5px; line-height: 1;">
             {team_name}
         </div>
-        <div style="font-size: 16px; opacity: 0.85; margin-top: 8px;
+        <div style="font-size: 14px; opacity: 0.8; margin-top: 6px;
                      font-weight: 500; letter-spacing: 1px;">
-            {season} SEASON · TEAM PROFILE
+            {season} SEASON
+        </div>
+        <div style="margin-top: 14px;">
+            {contention_html}
         </div>
     </div>
 </div>
@@ -116,21 +124,107 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ── At-a-glance stat row ───────────────────────────────────────
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Points/game",
-           f"{row.get('points_per_game', float('nan')):.1f}",
-           help="Regular season scoring average.")
-m2.metric("Points allowed/game",
-           f"{row.get('points_allowed_per_game', float('nan')):.1f}",
-           help="Defensive scoring allowed.")
-m3.metric("Off EPA/play",
-           f"{row.get('off_epa_per_play', float('nan')):+.3f}",
-           help="Expected points added per offensive play.")
-m4.metric("Def EPA allowed/play",
-           f"{row.get('def_epa_per_play', float('nan')):+.3f}",
-           delta_color="inverse",
-           help="Per-play EPA allowed (lower = better).")
+# ── Phase-by-phase panels with league ranks ──────────────────
+def _rank_in_season(team_df, season, stat, ascending=False):
+    """Returns (rank, total) for the given (team, season, stat).
+    `ascending=True` for stats where lower is better."""
+    season_pool = team_df[team_df["season"] == season].copy()
+    season_pool = season_pool.dropna(subset=[stat])
+    if season_pool.empty:
+        return None, 0
+    season_pool = season_pool.sort_values(stat, ascending=ascending)
+    season_pool = season_pool.reset_index(drop=True)
+    total = len(season_pool)
+    match = season_pool.index[season_pool["team"] == team].tolist()
+    if not match:
+        return None, total
+    return match[0] + 1, total
+
+
+def _ord(n):
+    if n is None:
+        return "—"
+    suf = "th"
+    if n % 100 not in (11, 12, 13):
+        suf = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suf}"
+
+
+def _render_stat_row(label, value, fmt, rank_value, total, help_text=""):
+    """One stat row with raw value + league rank pill."""
+    rank_str = f"{_ord(rank_value)} of {total}" if rank_value else "—"
+    st.markdown(
+        f"""
+<div style="display: flex; justify-content: space-between; align-items: center;
+             padding: 8px 12px; border-bottom: 1px solid rgba(0,0,0,0.06);
+             font-size: 14px;">
+    <div title="{help_text}">{label}</div>
+    <div style="display: flex; gap: 12px; align-items: center;">
+        <div style="font-weight: 600; min-width: 70px; text-align: right;">
+            {fmt.format(value) if pd.notna(value) else '—'}
+        </div>
+        <div style="font-size: 11px; opacity: 0.6; min-width: 55px;
+                     text-align: right;">
+            {rank_str}
+        </div>
+    </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+# (label, raw_col, format, ascending) — ascending=True for "lower better"
+_OFFENSE_STATS = [
+    ("Points / game",          "points_per_game",          "{:.1f}",   False),
+    ("Off EPA / play",         "off_epa_per_play",         "{:+.3f}",  False),
+    ("Pass EPA / play",        "off_pass_epa_per_play",    "{:+.3f}",  False),
+    ("Rush EPA / play",        "off_rush_epa_per_play",    "{:+.3f}",  False),
+    ("Success rate",           "off_success_rate",         "{:.1%}",   False),
+    ("Explosive play rate",    "off_explosive_rate",       "{:.1%}",   False),
+    ("Red zone TD rate",       "off_red_zone_td_rate",     "{:.1%}",   False),
+    ("3rd down conversion",    "off_third_down_conv_rate", "{:.1%}",   False),
+    ("Giveaway rate",          "off_giveaway_rate",        "{:.2%}",   True),
+]
+_DEFENSE_STATS = [
+    ("Points allowed / game",  "points_allowed_per_game",  "{:.1f}",   True),
+    ("Def EPA allowed / play", "def_epa_per_play",         "{:+.3f}",  True),
+    ("Pass EPA allowed",       "def_pass_epa_allowed",     "{:+.3f}",  True),
+    ("Rush EPA allowed",       "def_rush_epa_allowed",     "{:+.3f}",  True),
+    ("Success rate allowed",   "def_success_rate_allowed", "{:.1%}",   True),
+    ("Takeaway rate",          "def_takeaway_rate",        "{:.2%}",   False),
+    ("Pressure rate",          "def_pressure_rate",        "{:.1%}",   False),
+    ("Sack rate",              "def_sack_rate",            "{:.1%}",   False),
+]
+_SITUATIONAL_STATS = [
+    ("Point differential / G", "point_differential_per_game", "{:+.1f}", False),
+    ("4Q offense EPA",         "fourth_q_off_epa",            "{:+.3f}", False),
+    ("4Q defense EPA",         "fourth_q_def_epa",            "{:+.3f}", True),
+    ("Penalty yards / game",   "penalty_yards_per_game",      "{:.1f}",  True),
+]
+
+
+def _render_phase_panel(title, stats_cfg, team_df, team, season, row):
+    st.markdown(f"#### {title}")
+    for label, col, fmt, ascending in stats_cfg:
+        if col not in row.index:
+            continue
+        val = row.get(col)
+        rank, total = _rank_in_season(team_df, season, col, ascending=ascending)
+        _render_stat_row(label, val, fmt, rank, total)
+
+
+cc1, cc2 = st.columns(2)
+with cc1:
+    _render_phase_panel("⚔️ Offense", _OFFENSE_STATS,
+                          team_df, team, int(season), row)
+with cc2:
+    _render_phase_panel("🛡️ Defense", _DEFENSE_STATS,
+                          team_df, team, int(season), row)
+
+st.markdown("")
+_render_phase_panel("⏱️ Situational & Discipline", _SITUATIONAL_STATS,
+                      team_df, team, int(season), row)
 
 # ── Comp engine — the headline feature ────────────────────────
 st.markdown("---")
