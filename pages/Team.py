@@ -204,6 +204,10 @@ else:
                 key=f"go_{c['team']}_{c['season']}",
                 use_container_width=True,
             ):
+                # Push to session_state and query_params — same as the
+                # landing-grid button handler, for the same reason.
+                st.session_state["team_pick"] = c["team"]
+                st.session_state["season_pick"] = int(c["season"])
                 st.query_params.update({
                     "abbr": c["team"],
                     "season": str(c["season"]),
