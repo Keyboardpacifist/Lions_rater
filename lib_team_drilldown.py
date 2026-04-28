@@ -18,17 +18,21 @@ _DATA = Path(__file__).resolve().parent / "data"
 
 # Stat-label → list of (parquet_filename, position_label) tuples that
 # the stat decomposes into. Some stats have multiple position groups.
+#
+# Brett's call (2026-04-28): exclude OL from the player-level drill-down
+# narratives. The OL parquet is gap-attributed EPA, not actual block
+# grading — too noisy to attribute team-level rushing changes to specific
+# linemen. OL impact gets a unit-level sentence instead (see
+# _UNIT_OL_STATS).
 _STAT_TO_POSITIONS = {
     # Offense
     "Offensive efficiency":   [("league_qb_all_seasons.parquet", "QB"),
                                   ("league_wr_all_seasons.parquet", "WR"),
-                                  ("league_rb_all_seasons.parquet", "RB"),
-                                  ("league_ol_all_seasons.parquet", "OL")],
+                                  ("league_rb_all_seasons.parquet", "RB")],
     "Passing offense":        [("league_qb_all_seasons.parquet", "QB"),
                                   ("league_wr_all_seasons.parquet", "WR"),
                                   ("league_te_all_seasons.parquet", "TE")],
-    "Rushing offense":        [("league_rb_all_seasons.parquet", "RB"),
-                                  ("league_ol_all_seasons.parquet", "OL")],
+    "Rushing offense":        [("league_rb_all_seasons.parquet", "RB")],
     "Red zone TD rate":       [("league_qb_all_seasons.parquet", "QB"),
                                   ("league_wr_all_seasons.parquet", "WR"),
                                   ("league_te_all_seasons.parquet", "TE")],
@@ -191,6 +195,66 @@ def _format_score(z: float) -> str:
     return f"{sign}{z:.2f}"
 
 
+# Stats where the OL is a meaningful contributor — get a unit-level
+# observation appended to the narrative instead of player-level callouts.
+_OL_INVOLVED_STATS = {
+    "Offensive efficiency",
+    "Rushing offense",
+    "Red zone TD rate",
+    "3rd down conversion",
+    "Ball security",
+    "Points/game",
+    "Passing offense",
+}
+
+
+@st.cache_data(show_spinner=False)
+def _ol_unit_observation(team: str, season: int) -> str:
+    """One-sentence unit-level take on the OL — rank shift in
+    team_seasons sack rate / pressure rate / penalty rate, since the
+    player-level grades aren't reliable enough to name names."""
+    ts_path = _DATA / "team_seasons.parquet"
+    if not ts_path.exists():
+        return ""
+    try:
+        ts = pd.read_parquet(ts_path)
+    except Exception:
+        return ""
+
+    # Penalty rate (closest team-level proxy for OL discipline)
+    cur = ts[(ts["team"] == team) & (ts["season"] == season)]
+    prev = ts[(ts["team"] == team) & (ts["season"] == season - 1)]
+    if cur.empty:
+        return ""
+    cur_row = cur.iloc[0]
+
+    parts = []
+    if not prev.empty:
+        prev_row = prev.iloc[0]
+        cur_pen = cur_row.get("penalty_yards_per_game")
+        prev_pen = prev_row.get("penalty_yards_per_game")
+        if pd.notna(cur_pen) and pd.notna(prev_pen):
+            d = float(cur_pen) - float(prev_pen)
+            if abs(d) >= 3:
+                dir_word = "more" if d > 0 else "fewer"
+                parts.append(
+                    f"the unit averaged {abs(d):.0f} {dir_word} penalty "
+                    f"yards per game vs. last year"
+                )
+
+    # OL is the only group we don't drill into — note this explicitly.
+    note = (
+        "**OL note:** Free play-by-play data only gives us gap-attributed "
+        "EPA for the offensive line, not actual block grades — so individual "
+        "linemen aren't called out above"
+    )
+    if parts:
+        note += f" ({'; '.join(parts)})."
+    else:
+        note += "."
+    return note
+
+
 def get_drilldown_narrative(team: str, season: int,
                                 stat_label: str,
                                 direction: str = "neutral") -> str:
@@ -264,4 +328,11 @@ def get_drilldown_narrative(team: str, season: int,
         parts.insert(0, "📈 **What drove the rise:**")
     elif direction in ("gap", "slipped"):
         parts.insert(0, "🔍 **Where the issue lives:**")
+
+    # Append OL unit-level note for OL-involved stats
+    if normalized in _OL_INVOLVED_STATS:
+        ol_note = _ol_unit_observation(team, season)
+        if ol_note:
+            parts.append(ol_note)
+
     return "\n\n".join(parts)

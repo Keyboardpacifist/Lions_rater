@@ -302,7 +302,7 @@ _render_phase_panel("⏱️ Situational & Discipline", _SITUATIONAL_STATS,
 # ── Comp engine — the headline feature ────────────────────────
 st.markdown("---")
 st.markdown(
-    f"### 🔮  Most comparable {season - 1 if season else 'past'}–era teams"
+    f"### 🔮  Most comparable team-seasons to {team} {season}"
 )
 st.caption(
     "Cosine similarity across 320 (team × season) profiles since 2016. "
