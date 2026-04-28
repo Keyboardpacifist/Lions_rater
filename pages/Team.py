@@ -20,6 +20,8 @@ from lib_team_contention import (
     render_contention_badge,
     compute_gap_analysis,
     compute_trajectory,
+    compute_team_timeline,
+    render_team_timeline_html,
     _GAP_TITLES,
 )
 from lib_team_drilldown import get_drilldown_narrative
@@ -123,6 +125,12 @@ hero_html = (
     '</div>'
 )
 st.markdown(hero_html, unsafe_allow_html=True)
+
+# ── Contention timeline — visual arc across all available seasons ──
+timeline = compute_team_timeline(team)
+timeline_html = render_team_timeline_html(timeline,
+                                              highlight_season=int(season))
+st.markdown(timeline_html, unsafe_allow_html=True)
 
 
 # ── Gap analysis — expandable rows with drill-down narratives ──
