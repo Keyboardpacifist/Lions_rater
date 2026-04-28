@@ -35,29 +35,59 @@ def load_qb_ngs() -> pd.DataFrame:
 def get_qb_peers(season: int | None = None,
                    min_attempts: int = 100,
                    exclude_player_id: str | None = None) -> list[dict]:
-    """Build the comparison picker's option list — every QB with
-    a meaningful sample. For career view (season=None) we offer
-    season-specific entries so users can compare e.g. "2024 Mahomes"
-    vs. "2018 Mahomes" or another QB in any year.
+    """Build the comparison picker's option list.
+
+    - In single-season view (season=int): one row per QB with that
+      season's attempts.
+    - In career view (season=None): one row per QB with career
+      attempts. Comparison runs as career-vs-career.
+
+    Picker stays scannable — a QB shows up once, not once per season.
     """
     db = load_qb_dropbacks()
     db = db[db["pass_attempt"] == 1]
     if season is not None:
         db = db[db["season"] == season]
-    counts = (
-        db.groupby(["passer_player_id", "passer_player_name", "season"])
-        .size()
-        .reset_index(name="att")
-    )
+        # Pick the most recently used display name per player to handle
+        # mid-career name variants (e.g. "R.Griffin" → "R.Griffin III").
+        latest_name = (
+            db.sort_values("season")
+            .groupby("passer_player_id")["passer_player_name"]
+            .last()
+        )
+        counts = (
+            db.groupby("passer_player_id")
+            .size()
+            .reset_index(name="att")
+        )
+        counts["passer_player_name"] = counts["passer_player_id"].map(latest_name)
+        sort_cols = ["att"]
+    else:
+        # Career-aggregate: one row per QB across all seasons
+        latest_name = (
+            db.sort_values("season")
+            .groupby("passer_player_id")["passer_player_name"]
+            .last()
+        )
+        counts = (
+            db.groupby("passer_player_id")
+            .size()
+            .reset_index(name="att")
+        )
+        counts["passer_player_name"] = counts["passer_player_id"].map(latest_name)
+        sort_cols = ["att"]
+
     counts = counts[counts["att"] >= min_attempts]
-    if exclude_player_id and season is not None:
+    if exclude_player_id:
         counts = counts[counts["passer_player_id"] != exclude_player_id]
-    counts = counts.sort_values(["season", "att"], ascending=[False, False])
+    counts = counts.sort_values(sort_cols, ascending=[False])
+
+    season_label = (str(int(season)) if season is not None else "career")
     return [
         {
-            "label": f"{r.passer_player_name} — {int(r.season)} ({int(r.att)} att)",
+            "label": f"{r.passer_player_name} — {season_label} ({int(r.att):,} att)",
             "player_id": r.passer_player_id,
-            "season": int(r.season),
+            "season": season,
         }
         for r in counts.itertuples()
     ]
