@@ -228,6 +228,16 @@ _ROSTER_SOURCES = [
     ("Defense", "college_def_all_seasons.parquet"),
 ]
 
+# Defense rolls up multiple positions into one parquet — map each
+# defender's listed_position to the College mode position key so
+# clicks land on the correct leaderboard.
+_DEF_POS_MAP = {
+    "CB": "CB",  "DB": "S",  "S": "S",
+    "DE": "DE",  "EDGE": "DE",
+    "DT": "DT",  "DL": "DT", "NT": "DT",
+    "LB": "LB",  "ILB": "LB", "OLB": "LB",
+}
+
 
 @st.cache_data(show_spinner=False)
 def _college_roster_top(team: str, season: int) -> dict:
@@ -263,9 +273,16 @@ def _college_roster_top(team: str, season: int) -> dict:
         top = sub.sort_values("_avg_z", ascending=False).head(3)
         rows = []
         for _, r in top.iterrows():
+            if pos_label == "Defense":
+                _listed = (r.get("listed_position")
+                           or r.get("pos_group") or "LB")
+                cm_pos = _DEF_POS_MAP.get(str(_listed).upper(), "LB")
+            else:
+                cm_pos = pos_label
             rows.append({
                 "name": str(r[name_col]),
                 "score": float(r["_avg_z"]),
+                "cm_pos": cm_pos,
             })
         out[pos_label] = rows
     return out
@@ -275,6 +292,7 @@ _roster = _college_roster_top(team, int(season))
 if not _roster:
     st.info("No roster data for this team-season yet.")
 else:
+    st.caption("Click any player to open their full profile in College mode.")
     pos_keys = list(_roster.keys())
     for i in range(0, len(pos_keys), 3):
         row_keys = pos_keys[i:i + 3]
@@ -293,12 +311,25 @@ else:
                 for r in _roster[pk]:
                     sign = "+" if r["score"] >= 0 else ""
                     label = f"{r['name']}  ·  {sign}{r['score']:.2f}"
-                    st.markdown(
-                        f"<div style='padding: 6px 10px; background: rgba(0,0,0,0.03);"
-                        f" border-radius: 6px; margin-bottom: 4px; "
-                        f"font-size: 13px;'>{label}</div>",
-                        unsafe_allow_html=True,
-                    )
+                    btn_key = f"roster_{team}_{season}_{pk}_{r['name']}"
+                    if st.button(label, key=btn_key,
+                                   use_container_width=True):
+                        # Push session state so College mode opens with
+                        # this player's detail expanded — same handler
+                        # that the College search bar uses.
+                        st.session_state["college_school_v2"] = team
+                        st.session_state["college_season_landing"] = int(season)
+                        st.session_state["college_position_top"] = r["cm_pos"]
+                        st.session_state["expand_college_player"] = r["name"]
+                        st.session_state[f"lb_selected_{r['cm_pos']}"] = r["name"]
+                        st.session_state["mode_toggle"] = "College"
+                        # Match the auto-clear ctx the landing page checks
+                        # against — without this, College mode wipes the
+                        # expand marker on first render.
+                        st.session_state["_college_filter_ctx"] = (
+                            team, None, int(season), r["cm_pos"],
+                        )
+                        st.switch_page("app.py")
 
 # ── Click-through to existing College mode leaderboards ───────
 st.markdown("---")
