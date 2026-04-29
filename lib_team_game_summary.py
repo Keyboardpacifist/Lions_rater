@@ -38,14 +38,35 @@ _COVERAGE_TYPES = [
 _COVERAGE_LABELS = dict(_COVERAGE_TYPES)
 
 
+@st.cache_data(show_spinner=False)
+def _load_full_game_pbp() -> pd.DataFrame:
+    """Load the pre-built slim pbp parquet (all seasons).
+    Built once via tools/build_game_pbp.py — loads in ms vs the
+    10-15s nflreadpy live-pull alternative."""
+    path = _DATA / "game_pbp.parquet"
+    if path.exists():
+        try:
+            import polars as pl
+            return pl.read_parquet(path).to_pandas()
+        except Exception:
+            try:
+                return pd.read_parquet(path)
+            except Exception:
+                pass
+    return pd.DataFrame()
+
+
 @st.cache_data(show_spinner="Loading game data…")
 def _load_season_pbp(season: int) -> pd.DataFrame:
-    """Pull season pbp + join participation so each play carries
-    coverage / personnel / formation context. Cached per season."""
+    """Filter the full pre-built pbp parquet to a single season.
+    Falls back to the live nflreadpy pull if the parquet is missing."""
+    full = _load_full_game_pbp()
+    if not full.empty:
+        return full[full["season"] == season].copy()
+    # Fallback path — slow but works in dev environments without the parquet
     try:
         import nflreadpy as nfl
         pbp = nfl.load_pbp([season]).to_pandas()
-        # Join participation — same fields we use in build_qb_dropbacks.py
         try:
             part = nfl.load_participation([season]).to_pandas()
             part_cols = [c for c in (
@@ -60,8 +81,7 @@ def _load_season_pbp(season: int) -> pd.DataFrame:
                     columns={"nflverse_game_id": "game_id"}
                 )
                 pbp = pbp.merge(part_slim, on=["game_id", "play_id"],
-                                  how="left",
-                                  suffixes=("", "_part"))
+                                  how="left", suffixes=("", "_part"))
         except Exception:
             pass
         return pbp
