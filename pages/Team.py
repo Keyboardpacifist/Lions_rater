@@ -59,22 +59,26 @@ if team_df.empty:
 teams_avail = sorted(team_df["team"].unique().tolist())
 seasons_avail = sorted(team_df["season"].unique().tolist(), reverse=True)
 
-# Push query params into session_state BEFORE selectboxes render so URL
-# changes propagate (st.switch_page can clear query params).
-if qp_team and qp_team in teams_avail:
-    st.session_state["team_pick"] = qp_team
-elif "team_pick" not in st.session_state:
-    st.session_state["team_pick"] = "DET"
-
-if qp_season:
-    try:
-        s_int = int(qp_season)
-        if s_int in seasons_avail:
-            st.session_state["season_pick"] = s_int
-    except (ValueError, TypeError):
-        pass
+# Read query params into session_state ONLY on first render. After
+# that, the selectbox is the source of truth — pushing stale qp
+# values back in on every rerun would overwrite the user's pick
+# (st.query_params.update() doesn't sync the URL until *after* the
+# rerun, so on the rerun triggered by the selectbox change, qp
+# still holds the old value).
+if "team_pick" not in st.session_state:
+    st.session_state["team_pick"] = (
+        qp_team if (qp_team and qp_team in teams_avail) else "DET"
+    )
 if "season_pick" not in st.session_state:
-    st.session_state["season_pick"] = seasons_avail[0]
+    _s_int = None
+    if qp_season:
+        try:
+            _s_int = int(qp_season)
+        except (ValueError, TypeError):
+            pass
+    st.session_state["season_pick"] = (
+        _s_int if _s_int in seasons_avail else seasons_avail[0]
+    )
 
 c1, c2 = st.columns([2, 1])
 with c1:
