@@ -179,7 +179,7 @@ def _render_prospect_row(rank_label: str, r: pd.Series,
     if isinstance(comps, list) and comps:
         top_comp_label = r.get("top_comp") or "—"
         with st.expander(
-            f"🎯 Plays like: {top_comp_label}",
+            f"🎯 Statistical composition most like: {top_comp_label}",
             expanded=False,
         ):
             for c in comps:
