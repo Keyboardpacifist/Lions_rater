@@ -828,6 +828,281 @@ def _render_critical_play(idx: int, play: pd.Series, team: str) -> None:
                         )
 
 
+# ── Standard game-summary sections ──────────────────────────────
+
+
+def _render_score_by_quarter(plays: pd.DataFrame, team: str, opp: str,
+                                  is_home: bool) -> None:
+    """Line score table — points scored each quarter."""
+    # Quarter scores derived from total_home_score / total_away_score
+    # at the end of each quarter
+    qtr_scores = {1: (0, 0), 2: (0, 0), 3: (0, 0), 4: (0, 0)}
+    has_ot = (plays["qtr"] >= 5).any()
+    if has_ot:
+        qtr_scores[5] = (0, 0)
+
+    home_col = "total_home_score"
+    away_col = "total_away_score"
+    if home_col not in plays.columns or away_col not in plays.columns:
+        return
+
+    last_h, last_a = 0, 0
+    for q in sorted(qtr_scores.keys()):
+        q_plays = plays[plays["qtr"] == q]
+        if q_plays.empty:
+            qtr_scores[q] = (0, 0)
+            continue
+        end_h = int(q_plays[home_col].dropna().iloc[-1]) if not q_plays[home_col].dropna().empty else last_h
+        end_a = int(q_plays[away_col].dropna().iloc[-1]) if not q_plays[away_col].dropna().empty else last_a
+        # Q score = end-of-Q minus end-of-prev-Q
+        qtr_scores[q] = (end_h - last_h, end_a - last_a)
+        last_h, last_a = end_h, end_a
+
+    headers = ["Q1", "Q2", "Q3", "Q4"]
+    if has_ot:
+        headers.append("OT")
+    headers.append("Final")
+
+    home_team = plays["home_team"].iloc[0]
+    away_team = plays["away_team"].iloc[0]
+    home_row = [qtr_scores[q][0] for q in sorted(qtr_scores.keys())]
+    away_row = [qtr_scores[q][1] for q in sorted(qtr_scores.keys())]
+    home_row.append(sum(home_row))
+    away_row.append(sum(away_row))
+
+    df = pd.DataFrame({
+        "": [away_team, home_team],
+        **{h: [away_row[i], home_row[i]] for i, h in enumerate(headers)},
+    })
+    st.markdown("#### 🏈 Score by quarter")
+    st.dataframe(df, hide_index=True, use_container_width=True)
+
+
+def _render_scoring_plays(plays: pd.DataFrame, team: str) -> None:
+    """List of TDs, FGs, safeties, 2-pt conversions, etc."""
+    scoring = plays[
+        (plays.get("touchdown") == 1)
+        | (plays.get("field_goal_result") == "made")
+        | (plays.get("safety") == 1)
+        | (plays.get("two_point_conv_result") == "success")
+    ].copy()
+    if scoring.empty:
+        return
+
+    rows = []
+    for _, p in scoring.iterrows():
+        qtr = int(p["qtr"]) if pd.notna(p.get("qtr")) else 0
+        qsr = int(p.get("quarter_seconds_remaining", 0)) if pd.notna(p.get("quarter_seconds_remaining")) else 0
+        time_str = f"{qsr // 60}:{qsr % 60:02d}"
+        scoring_team = p.get("td_team") if p.get("touchdown") == 1 else p.get("posteam")
+        score_type = (
+            "TD" if p.get("touchdown") == 1
+            else "FG" if p.get("field_goal_result") == "made"
+            else "Safety" if p.get("safety") == 1
+            else "2pt" if p.get("two_point_conv_result") == "success"
+            else "—"
+        )
+        desc = str(p.get("desc", ""))[:140]
+        rows.append({
+            "Q": f"Q{qtr}", "Time": time_str,
+            "Team": scoring_team, "Type": score_type,
+            "Play": desc,
+        })
+
+    if rows:
+        st.markdown("#### 🎯 Scoring plays")
+        st.dataframe(pd.DataFrame(rows), hide_index=True,
+                      use_container_width=True)
+
+
+def _render_team_game_stats(plays: pd.DataFrame, team: str, opp: str) -> None:
+    """Side-by-side team totals: yards, 1st downs, 3rd down %, red zone,
+    turnovers, sacks, penalties, time of possession, plays."""
+    rows_team = plays[plays["posteam"] == team]
+    rows_opp = plays[plays["posteam"] == opp]
+
+    def _team_totals(df):
+        if df.empty:
+            return {}
+        passing_yards = df.get("passing_yards", pd.Series([0])).sum()
+        rushing_yards = df.get("rushing_yards", pd.Series([0])).sum()
+        total_yards = passing_yards + rushing_yards
+        first_downs = df.get("first_down", pd.Series([0])).sum()
+        # 3rd down
+        third = df[df.get("down") == 3]
+        third_conv = third.get("third_down_converted", pd.Series([0])).sum()
+        third_att = len(third)
+        # Red zone
+        rz = df[df.get("yardline_100") <= 20]
+        rz_drives = rz.groupby("drive").agg(
+            scored_td=("touchdown", "max")
+        ).reset_index() if "drive" in df.columns else pd.DataFrame()
+        rz_td_pct = (rz_drives["scored_td"].mean() * 100
+                      if not rz_drives.empty else 0)
+        # Turnovers
+        ints_thrown = df.get("interception", pd.Series([0])).sum()
+        fumbles_lost = df.get("fumble_lost", pd.Series([0])).sum()
+        # Sacks taken
+        sacks_taken = df.get("sack", pd.Series([0])).sum()
+        # Penalties
+        pen = df[df.get("penalty") == 1]
+        pen_count = len(pen)
+        pen_yards = pen.get("penalty_yards", pd.Series([0])).sum()
+        # Plays
+        plays_count = len(df)
+
+        return {
+            "Total yards": int(total_yards),
+            "Passing yards": int(passing_yards),
+            "Rushing yards": int(rushing_yards),
+            "1st downs": int(first_downs),
+            "3rd down": (f"{int(third_conv)}/{int(third_att)} "
+                          f"({third_conv/max(third_att,1)*100:.0f}%)"
+                          if third_att else "0/0"),
+            "Red zone TD%": (f"{int(rz_drives['scored_td'].sum())}/"
+                              f"{len(rz_drives)} ({rz_td_pct:.0f}%)"
+                              if not rz_drives.empty else "—"),
+            "Turnovers": int(ints_thrown + fumbles_lost),
+            "Sacks allowed": int(sacks_taken),
+            "Penalties": f"{pen_count}-{int(pen_yards)}",
+            "Plays": int(plays_count),
+        }
+
+    team_t = _team_totals(rows_team)
+    opp_t = _team_totals(rows_opp)
+    if not team_t or not opp_t:
+        return
+
+    df = pd.DataFrame({
+        "Stat": list(team_t.keys()),
+        team: [team_t.get(k) for k in team_t.keys()],
+        opp:  [opp_t.get(k)  for k in team_t.keys()],
+    })
+    st.markdown("#### 📊 Team game stats")
+    st.dataframe(df, hide_index=True, use_container_width=True)
+
+
+def _render_box_score(plays: pd.DataFrame, team: str) -> None:
+    """Per-player counting stats + advanced metrics (EPA, success rate)."""
+    team_plays = plays[plays["posteam"] == team]
+    if team_plays.empty:
+        return
+
+    # ── QB box ──
+    qb_plays = team_plays[(team_plays.get("pass_attempt") == 1)
+                            | (team_plays.get("sack") == 1)
+                            | (team_plays.get("qb_scramble") == 1)]
+    qb_box = []
+    if not qb_plays.empty and "passer_player_name" in qb_plays.columns:
+        for passer, sub in qb_plays.dropna(subset=["passer_player_name"]).groupby("passer_player_name"):
+            attempts = (sub.get("pass_attempt") == 1).sum()
+            comps = (sub.get("complete_pass") == 1).sum()
+            yards = sub.get("passing_yards", pd.Series([0])).sum()
+            tds = sub.get("pass_touchdown", pd.Series([0])).sum()
+            ints = sub.get("interception", pd.Series([0])).sum()
+            sacks = (sub.get("sack") == 1).sum()
+            pass_only = sub[sub.get("pass_attempt") == 1]
+            epa = pass_only["epa"].mean() if not pass_only.empty else None
+            cpoe = (pass_only["cpoe"].mean()
+                    if "cpoe" in pass_only.columns
+                    and not pass_only.empty
+                    and not pass_only["cpoe"].dropna().empty else None)
+            success = pass_only["success"].mean() if not pass_only.empty else None
+            qb_box.append({
+                "Player": passer,
+                "Comp/Att": f"{int(comps)}/{int(attempts)}",
+                "Yds": int(yards),
+                "TD": int(tds), "INT": int(ints), "Sk": int(sacks),
+                "EPA/play": f"{epa:+.2f}" if epa is not None and not pd.isna(epa) else "—",
+                "Success%": f"{success*100:.0f}%" if success is not None and not pd.isna(success) else "—",
+                "CPOE": f"{cpoe:+.1f}" if cpoe is not None and not pd.isna(cpoe) else "—",
+            })
+
+    # ── RB box ──
+    rb_plays = team_plays[team_plays.get("rush_attempt") == 1]
+    rb_box = []
+    if not rb_plays.empty and "rusher_player_name" in rb_plays.columns:
+        for rusher, sub in rb_plays.dropna(subset=["rusher_player_name"]).groupby("rusher_player_name"):
+            carries = len(sub)
+            yards = sub.get("rushing_yards", pd.Series([0])).sum()
+            tds = sub.get("rush_touchdown", pd.Series([0])).sum()
+            epa = sub["epa"].mean()
+            success = sub["success"].mean()
+            rb_box.append({
+                "Player": rusher,
+                "Car": carries,
+                "Yds": int(yards),
+                "Avg": f"{yards/max(carries,1):.1f}",
+                "TD": int(tds),
+                "EPA/car": f"{epa:+.2f}" if not pd.isna(epa) else "—",
+                "Success%": f"{success*100:.0f}%" if not pd.isna(success) else "—",
+            })
+
+    # ── Receivers box ──
+    rec_plays = team_plays[(team_plays.get("pass_attempt") == 1)
+                              & team_plays.get("receiver_player_name").notna()] \
+        if "receiver_player_name" in team_plays.columns else pd.DataFrame()
+    rec_box = []
+    if not rec_plays.empty:
+        for rec, sub in rec_plays.groupby("receiver_player_name"):
+            tgts = len(sub)
+            comps = (sub.get("complete_pass") == 1).sum()
+            yards = sub.get("receiving_yards", pd.Series([0])).sum()
+            tds = sub.get("pass_touchdown", pd.Series([0])).sum()
+            yac = sub.get("yards_after_catch", pd.Series([0])).sum()
+            epa = sub["epa"].mean()
+            air_yards = sub.get("air_yards", pd.Series([0])).mean()
+            rec_box.append({
+                "Player": rec,
+                "Tgt": tgts,
+                "Rec": int(comps),
+                "Yds": int(yards),
+                "TD": int(tds),
+                "YAC": int(yac),
+                "aDOT": f"{air_yards:.1f}" if not pd.isna(air_yards) else "—",
+                "EPA/tgt": f"{epa:+.2f}" if not pd.isna(epa) else "—",
+            })
+
+    # Render in expanders so the box scores don't overwhelm the page
+    with st.expander("📋 Box score — passing", expanded=False):
+        if qb_box:
+            st.dataframe(pd.DataFrame(qb_box).sort_values("Yds", ascending=False),
+                          hide_index=True, use_container_width=True)
+            st.caption(
+                "**EPA/play** = expected points added per dropback. "
+                "**Success%** = % of plays that gained 40%/60%/100% of "
+                "needed yards by down. **CPOE** = completion % over "
+                "expected (NFL Next Gen Stats — only available "
+                "post-2018)."
+            )
+        else:
+            st.caption("_No passing data._")
+
+    with st.expander("📋 Box score — rushing", expanded=False):
+        if rb_box:
+            st.dataframe(pd.DataFrame(rb_box).sort_values("Yds", ascending=False),
+                          hide_index=True, use_container_width=True)
+            st.caption(
+                "**EPA/car** = expected points added per carry. "
+                "**Success%** = % of carries that hit the down-specific "
+                "yardage threshold."
+            )
+        else:
+            st.caption("_No rushing data._")
+
+    with st.expander("📋 Box score — receiving", expanded=False):
+        if rec_box:
+            st.dataframe(pd.DataFrame(rec_box).sort_values("Yds", ascending=False),
+                          hide_index=True, use_container_width=True)
+            st.caption(
+                "**aDOT** = average depth of target (avg air yards). "
+                "**YAC** = yards after catch. **EPA/tgt** = expected "
+                "points added per target."
+            )
+        else:
+            st.caption("_No receiving data._")
+
+
 def render_game_summary(team: str, season: int, week: int,
                           game_type: str = "REG") -> None:
     """Top-level rendering for the game summary modal."""
@@ -847,6 +1122,17 @@ def render_game_summary(team: str, season: int, week: int,
         f"({int(ts) if pd.notna(ts) else '—'}–"
         f"{int(os_) if pd.notna(os_) else '—'}, **{result}**)"
     )
+
+    plays_all = summary["all_plays"]
+    is_home = summary["is_home"]
+
+    # Standard game-summary sections
+    _render_score_by_quarter(plays_all, team, opp, is_home)
+    _render_scoring_plays(plays_all, team)
+    _render_team_game_stats(plays_all, team, opp)
+    st.markdown("---")
+    _render_box_score(plays_all, team)
+    st.markdown("---")
 
     render_wp_arc(summary)
 
