@@ -15,6 +15,7 @@ import streamlit as st
 
 from lib_draft_2027 import (
     attach_composite_z,
+    attach_nfl_comps,
     load_2027_prospects,
     load_consensus_board,
 )
@@ -55,6 +56,14 @@ if consensus.empty:
     st.stop()
 
 board = attach_composite_z(consensus, prospects)
+
+# NFL comps — cached on a signature of the consensus list so it
+# invalidates if you reorder/edit the seed.
+_board_sig = tuple((int(r["expert_rank"]), r["player"], r["school"])
+                    for _, r in consensus.iterrows())
+nfl_comps_df = attach_nfl_comps(_board_sig)
+if not nfl_comps_df.empty:
+    board = board.merge(nfl_comps_df, on="expert_rank", how="left")
 
 
 # ── Filters ─────────────────────────────────────────────────────
@@ -164,6 +173,41 @@ def _render_prospect_row(rank_label: str, r: pd.Series,
                 )
         else:
             st.caption("_profile pending_")
+
+    # ── NFL statistical comps (collapsed by default) ──────────
+    comps = r.get("nfl_comps")
+    if isinstance(comps, list) and comps:
+        top_comp_label = r.get("top_comp") or "—"
+        with st.expander(
+            f"🎯 Plays like: {top_comp_label}",
+            expanded=False,
+        ):
+            for c in comps:
+                yr = c.get("draft_year") or "—"
+                rd = c.get("draft_round") or "—"
+                pk = c.get("draft_overall") or "—"
+                st.markdown(
+                    f"**{c['similarity']*100:.0f}%** · {c['player']} "
+                    f"({yr} {c['school']}) → "
+                    f"R{rd} P{pk} {c['nfl_team']}"
+                )
+            # Hit-rate distribution
+            r1 = r.get("hit_rate_r1")
+            r2_3 = r.get("hit_rate_r2_3")
+            r4_7 = r.get("hit_rate_r4_7")
+            if pd.notna(r1):
+                st.caption(
+                    f"_Top-50 most-similar profiles: "
+                    f"**{r1*100:.0f}% went R1** · "
+                    f"{r2_3*100:.0f}% R2-3 · "
+                    f"{r4_7*100:.0f}% R4-7. "
+                    "Empirical hit-rate framing — not a prediction._"
+                )
+    elif r["position"] == "OL":
+        st.caption(
+            "🛠 _OL NFL comps coming v1.1 — historical OL linkage "
+            "parquet not yet built._"
+        )
 
 
 # ── Tabs ────────────────────────────────────────────────────────

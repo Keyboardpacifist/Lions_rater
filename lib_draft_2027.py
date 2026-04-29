@@ -100,6 +100,63 @@ def _normalize_school(s) -> str:
     return aliases.get(s, s)
 
 
+@st.cache_data(show_spinner="Computing NFL comps for the board…")
+def attach_nfl_comps(board_signature: tuple) -> pd.DataFrame:
+    """Compute NFL statistical comps for every prospect on the consensus
+    board. Cached on a board signature (tuple of (rank, player, school))
+    so the cache invalidates when the seed list changes.
+
+    Returns a DataFrame keyed by expert_rank with columns:
+      nfl_comps      — list of top-5 comp dicts (or empty)
+      top_comp       — formatted str of the #1 comp ('95% Player X (R2 P41)')
+      hit_rate_r1    — pct of top-50 comps drafted in R1
+      hit_rate_r2_3  — pct in R2-3
+    """
+    from lib_nfl_comps import (
+        find_nfl_comps, hit_rate_distribution, lookup_prospect_row,
+    )
+    consensus = load_consensus_board()
+    if consensus.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for _, r in consensus.iterrows():
+        prospect_row = lookup_prospect_row(
+            r["player"], r["school"], r["position"]
+        )
+        if prospect_row is None:
+            rows.append({
+                "expert_rank": int(r["expert_rank"]),
+                "nfl_comps": [],
+                "top_comp": None,
+                "hit_rate_r1": None,
+                "hit_rate_r2_3": None,
+                "hit_rate_r4_7": None,
+            })
+            continue
+        comps = find_nfl_comps(prospect_row, r["position"], n=5)
+        hr = hit_rate_distribution(prospect_row, r["position"],
+                                       top_pool_n=50)
+        top = None
+        if comps:
+            c0 = comps[0]
+            yr_str = (f" {c0['draft_year']}"
+                      if c0.get("draft_year") else "")
+            r_str = (f"R{c0['draft_round']}P{c0['draft_overall']}"
+                     if c0.get("draft_round") else "—")
+            top = (f"{c0['similarity']*100:.0f}% — {c0['player']}"
+                   f"{yr_str} ({r_str}, {c0['nfl_team']})")
+        rows.append({
+            "expert_rank": int(r["expert_rank"]),
+            "nfl_comps": comps,
+            "top_comp": top,
+            "hit_rate_r1": hr.get("r1"),
+            "hit_rate_r2_3": hr.get("r2_3"),
+            "hit_rate_r4_7": hr.get("r4_7"),
+        })
+    return pd.DataFrame(rows)
+
+
 def attach_composite_z(consensus: pd.DataFrame,
                           prospects: pd.DataFrame) -> pd.DataFrame:
     """Add composite_z + verified-eligibility columns to the consensus
