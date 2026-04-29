@@ -249,6 +249,116 @@ def _confidence_color(conf: str) -> str:
     return {"HIGH": "#34A853", "MEDIUM": "#E67E22", "LOW": "#888"}[conf]
 
 
+# ── Coverage narrative knowledge base ───────────────────────────
+# Each coverage gets a base description + depth-specific notes.
+# Used to generate 1-2 sentence "what would have helped/hurt and why"
+# text for every counterfactual row.
+_COVERAGE_TRAITS = {
+    "COVER_0": {
+        "ident":    "All-out blitz, no safety help over the top.",
+        "deep":     "Vulnerable to any contested deep ball — one missed tackle or beaten cornerback becomes a touchdown.",
+        "intermediate": "Designed to win on the rush before the route develops; if the QB gets it out clean, the underneath defenders are isolated.",
+        "short":    "The quick pass usually beats it — receivers sit behind their man with the safety vacated.",
+    },
+    "COVER_1": {
+        "ident":    "Single-high safety, man across the rest of the field.",
+        "deep":     "The lone deep safety has to range to help — favors the offense if the matched WR creates separation.",
+        "intermediate": "Sticky if the matchups hold but exposed by rub routes and pick concepts.",
+        "short":    "Man coverage on quick routes — a step of separation is all the QB needs.",
+    },
+    "COVER_2": {
+        "ident":    "Two-deep zone with five underneath. Soft middle, hard sideline.",
+        "deep":     "Strong against vertical routes split between the safeties; the seam is the soft spot.",
+        "intermediate": "Vulnerable to the soft middle hole between linebackers and safeties — the known weakness.",
+        "short":    "Underneath defenders flow hard; quick outs and flats can dent it.",
+    },
+    "2_MAN": {
+        "ident":    "Two-deep safeties with man underneath — designed against rub routes and shallow crossers.",
+        "deep":     "Mostly equivalent to Cover 2 deep; favors the defense if the safeties stay disciplined.",
+        "intermediate": "Strong against in-breakers and crossers; the trade-off is no underneath help on scrambles.",
+        "short":    "Tight man coverage on quick routes — separation is the only crack.",
+    },
+    "COVER_3": {
+        "ident":    "Three-deep zone covering the field in thirds, four under.",
+        "deep":     "Strong against pure verticals down the sideline. The seam between deep-third and curl/flat is the wrinkle.",
+        "intermediate": "Vulnerable to dig routes attacking the middle hole behind the linebackers.",
+        "short":    "Underneath defenders read the QB's eyes and flow to the ball — flats can find a window.",
+    },
+    "COVER_4": {
+        "ident":    "Four-deep quarters, pattern-matching underneath. The best deep coverage available.",
+        "deep":     "Maxes out deep help — usually the safest call against vertical concepts.",
+        "intermediate": "Route combinations that pull the safeties forward (smash, flood) can crack it.",
+        "short":    "Outside corners often play soft — quick screens and slants succeed if the OL holds.",
+    },
+    "COVER_6": {
+        "ident":    "Half-field combo — Cover 4 to the boundary, Cover 2 to the field. Designed to be matchup-aware by side.",
+        "deep":     "Optimized for splitting deep responsibilities by formation strength.",
+        "intermediate": "The boundary side is denser; the field side is more vulnerable to dig/cross combos.",
+        "short":    "Underneath structure resembles Cover 2 — flats and quick hitches the soft spot.",
+    },
+    "COVER_9": {
+        "ident":    "A pattern-match variant — usually a Cover 1/3 hybrid based on offensive alignment.",
+        "deep":     "Reads the route distribution post-snap; effective when execution is clean.",
+        "intermediate": "Exposed when the receivers run combination routes that confuse the matching rules.",
+        "short":    "Quick game generally beats it before the match develops.",
+    },
+    "COMBO": {
+        "ident":    "Combination coverage — different rules for different sides of the field.",
+        "deep":     "Effective in disguise; depends on which half is responsible for what.",
+        "intermediate": "Combo calls are often a defensive coordinator's response to specific route combos they expect.",
+        "short":    "Quick passes generally exploit whichever side has zone underneath.",
+    },
+}
+
+
+def _depth_band(air_yards: float) -> str:
+    if pd.isna(air_yards):
+        return "intermediate"
+    if air_yards >= 18:
+        return "deep"
+    if air_yards >= 8:
+        return "intermediate"
+    return "short"
+
+
+def _coverage_blurb(cov_code: str, play_row: pd.Series,
+                      counterfactual_epa: float,
+                      actual_epa: float | None,
+                      is_actual: bool) -> str:
+    """One or two sentences explaining the coverage's role + how it
+    compared to the actual call. Adapts to play depth and to whether
+    this coverage would have helped or hurt."""
+    traits = _COVERAGE_TRAITS.get(cov_code)
+    if not traits:
+        return ""
+    depth = _depth_band(play_row.get("air_yards", float("nan")))
+    depth_note = traits.get(depth, "")
+    base = traits["ident"]
+
+    if is_actual:
+        # Closing the loop on what actually happened
+        return f"_{base} {depth_note}_"
+
+    if actual_epa is None:
+        return f"_{base} {depth_note}_"
+
+    diff = counterfactual_epa - actual_epa
+    if diff <= -0.20:
+        verdict = " **Would have been a notably better call** — saves "\
+                  f"~{abs(diff):.2f} EPA on this matchup."
+    elif diff <= -0.05:
+        verdict = " Would have been a marginally better call here."
+    elif diff >= 0.20:
+        verdict = " **Would have been worse** — gives up "\
+                  f"~{diff:.2f} more EPA than what was actually played."
+    elif diff >= 0.05:
+        verdict = " Would have been a marginally worse call here."
+    else:
+        verdict = " Roughly equivalent to what was actually called."
+
+    return f"_{base} {depth_note}_{verdict}"
+
+
 def _render_critical_play(idx: int, play: pd.Series, team: str) -> None:
     """One expandable card per critical play with counterfactual analysis."""
     qtr = int(play.get("qtr", 0)) if pd.notna(play.get("qtr")) else "—"
@@ -290,6 +400,7 @@ def _render_critical_play(idx: int, play: pd.Series, team: str) -> None:
                 )
                 # Sort coverages by expected EPA (best for defense first = lowest EPA)
                 rows = sorted(cf.items(), key=lambda kv: kv[1]["epa"])
+                actual_epa = cf.get(cov, {}).get("epa") if cov in cf else None
                 for cov_code, info in rows:
                     is_actual = cov_code == cov
                     badge = (
@@ -307,10 +418,13 @@ def _render_critical_play(idx: int, play: pd.Series, team: str) -> None:
                            if info["confidence"] == "MEDIUM"
                            else "Small sample — interpret cautiously.")
                     )
+                    blurb = _coverage_blurb(cov_code, play, info["epa"],
+                                              actual_epa, is_actual)
                     st.markdown(
+                        f'<div style="padding:8px 10px;background:rgba(0,0,0,0.04);'
+                        f'border-radius:6px;margin-bottom:6px;font-size:13px;">'
                         f'<div style="display:flex;justify-content:space-between;'
-                        f'padding:6px 10px;background:rgba(0,0,0,0.04);'
-                        f'border-radius:6px;margin-bottom:4px;font-size:13px;">'
+                        f'align-items:center;">'
                         f'<div>{_COVERAGE_LABELS.get(cov_code, cov_code)}{badge}</div>'
                         f'<div>'
                         f'<span style="font-weight:700;">{info["epa"]:+.2f} EPA</span>'
@@ -319,7 +433,10 @@ def _render_critical_play(idx: int, play: pd.Series, team: str) -> None:
                         f'padding:2px 6px;border-radius:4px;margin-left:8px;'
                         f'cursor:help;font-weight:700;">'
                         f'{info["confidence"]} · n={info["n"]}</span>'
-                        f'</div></div>',
+                        f'</div></div>'
+                        f'<div style="font-size:12px;opacity:0.85;'
+                        f'margin-top:6px;line-height:1.4;">{blurb}</div>'
+                        f'</div>',
                         unsafe_allow_html=True,
                     )
 
