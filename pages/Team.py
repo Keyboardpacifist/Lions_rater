@@ -299,6 +299,17 @@ st.markdown("")
 _render_phase_panel("⏱️ Situational & Discipline", _SITUATIONAL_STATS,
                       team_df, team, int(season), row)
 
+# ── Game log — schedule with results, opponent context ───────
+st.markdown("---")
+st.markdown(f"### 📅 Game log — {team} {season}")
+st.caption(
+    "Every game with score, result, opponent's pass-defense rank, "
+    "and how this team performed against the spread."
+)
+from lib_team_game_log import render_game_log
+render_game_log(team, int(season))
+
+
 # ── Tendency explorer — offense & defense ────────────────────
 st.markdown("---")
 st.markdown(f"### 🎯 Tendencies — {team} {season}")
