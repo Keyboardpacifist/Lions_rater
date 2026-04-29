@@ -411,32 +411,41 @@ with tab_stats:
             comp_logo = comp_theme.get("logo", "")
             comp_name = comp_theme.get("name", c["team"])
             with col:
-                st.markdown(
-                    f"""
-<div style="background: linear-gradient(135deg, {comp_primary} 0%, {comp_secondary} 100%);
-    border-radius: 14px; padding: 20px; height: 100%; color: white;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-    <div style="display: flex; align-items: center; gap: 12px;">
-        {f'<img src="{comp_logo}" style="height: 60px; width: 60px; object-fit: contain;"/>' if comp_logo else ''}
-        <div>
-            <div style="font-size: 11px; opacity: 0.7; letter-spacing: 1.5px;">
-                SIMILARITY {c["similarity"]*100:.0f}%
-            </div>
-            <div style="font-size: 22px; font-weight: 800; line-height: 1.1;">
-                {c["season"]} {comp_name}
-            </div>
-        </div>
-    </div>
-    <div style="margin-top: 16px; font-size: 13px; line-height: 1.5; opacity: 0.95;">
-        <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;
-             opacity:0.7;margin-bottom:4px;">WHY SIMILAR</div>
-        <div>{c["reason"]}</div>
-        {f'<div style="font-size:10px;font-weight:800;letter-spacing:1.5px;opacity:0.7;margin:10px 0 4px 0;">WHERE THEY DIVERGE</div><div>{c["divergence"].replace("Where they diverge: ", "")}</div>' if c.get("divergence") else ''}
-    </div>
-</div>
-""",
-                    unsafe_allow_html=True,
+                _comp_logo_html = (
+                    f'<img src="{comp_logo}" style="height:60px;width:60px;'
+                    'object-fit:contain;"/>' if comp_logo else ''
                 )
+                _diverge_block = (
+                    '<div style="font-size:10px;font-weight:800;'
+                    'letter-spacing:1.5px;opacity:0.7;'
+                    'margin:10px 0 4px 0;">WHERE THEY DIVERGE</div>'
+                    f'<div>{c["divergence"].replace("Where they diverge: ", "")}</div>'
+                    if c.get("divergence") else ''
+                )
+                _card_html = (
+                    f'<div style="background:linear-gradient(135deg,'
+                    f'{comp_primary} 0%,{comp_secondary} 100%);'
+                    'border-radius:14px;padding:20px;height:100%;'
+                    'color:white;box-shadow:0 4px 12px rgba(0,0,0,0.15);">'
+                    '<div style="display:flex;align-items:center;gap:12px;">'
+                    f'{_comp_logo_html}'
+                    '<div>'
+                    '<div style="font-size:11px;opacity:0.7;'
+                    f'letter-spacing:1.5px;">SIMILARITY {c["similarity"]*100:.0f}%</div>'
+                    '<div style="font-size:22px;font-weight:800;'
+                    f'line-height:1.1;">{c["season"]} {comp_name}</div>'
+                    '</div></div>'
+                    '<div style="margin-top:16px;font-size:13px;'
+                    'line-height:1.5;opacity:0.95;">'
+                    '<div style="font-size:10px;font-weight:800;'
+                    'letter-spacing:1.5px;opacity:0.7;'
+                    f'margin-bottom:4px;">WHY SIMILAR</div>'
+                    f'<div>{c["reason"]}</div>'
+                    f'{_diverge_block}'
+                    '</div>'
+                    '</div>'
+                )
+                st.markdown(_card_html, unsafe_allow_html=True)
                 st.markdown("")
                 if st.button(
                     f"Open {c['season']} {c['team']} →",
