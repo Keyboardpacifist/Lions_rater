@@ -158,9 +158,19 @@ scope = st.radio(
                              "defense": "Defensive twins"}[s],
     key="college_comp_scope",
 )
+include_all_fbs = st.checkbox(
+    "🌐  Compare against all FBS teams",
+    value=False,
+    help=("By default, comps stay within the same tier (Power-4 vs "
+          "Group-of-5 vs FCS) so a Big Ten team isn't matched with a "
+          "Sun Belt program. Check this to open the pool to every FBS "
+          "team-season we have."),
+    key="college_comp_all_fbs",
+)
 comps = find_college_team_comps(
     team=team, season=int(season),
     scope=scope, n=3,
+    restrict_to_tier=not include_all_fbs,
 )
 if not comps:
     st.info("Not enough data to compute comps for this team-season yet.")

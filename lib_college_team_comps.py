@@ -19,6 +19,67 @@ def load_college_team_seasons() -> pd.DataFrame:
     return pd.read_parquet(path) if path.exists() else pd.DataFrame()
 
 
+# ── Tier classification (P4 / G5 / FCS) ─────────────────────────
+# Used to keep comps within the same tier of football by default.
+# Power-4 is the modern (post-2024 realignment) tier: SEC, Big Ten,
+# ACC, Big 12. Pac-12 was P5 through 2023 — handle the era split.
+# Notre Dame is treated as P4 across all seasons (Independent
+# but plays a P4 schedule).
+_P4_CONFS = {"SEC", "Big Ten", "ACC", "Big 12"}
+_G5_CONFS = {"American Athletic", "Mountain West", "Mid-American",
+             "Sun Belt", "Conference USA"}
+_PAC12_P4_THRU = 2023
+_ALWAYS_P4 = {"Notre Dame"}
+
+
+def _classify_tier(team: str, conference: str | None,
+                     season: int) -> str:
+    if team in _ALWAYS_P4:
+        return "P4"
+    if not conference:
+        return "FCS"
+    if conference in _P4_CONFS:
+        return "P4"
+    if conference == "Pac-12":
+        return "P4" if season <= _PAC12_P4_THRU else "G5"
+    if conference in _G5_CONFS:
+        return "G5"
+    if conference == "FBS Independents":
+        return "G5"
+    return "FCS"
+
+
+@st.cache_data(show_spinner=False)
+def _load_team_tiers() -> dict[tuple[str, int], str]:
+    """Return {(team, season): tier} dict for every team-season we
+    have conference data on. Falls back to FCS for unknowns.
+    """
+    out: dict[tuple[str, int], str] = {}
+    for fname in ("college_qb_all_seasons.parquet",
+                   "college_wr_all_seasons.parquet",
+                   "college_te_all_seasons.parquet",
+                   "college_rb_all_seasons.parquet",
+                   "college_def_all_seasons.parquet"):
+        path = _DATA / "college" / fname
+        if not path.exists():
+            continue
+        try:
+            df = pd.read_parquet(path,
+                                   columns=["team", "season", "conference"])
+        except Exception:
+            continue
+        df = df.dropna(subset=["team", "season"]).drop_duplicates(
+            ["team", "season"])
+        for _, r in df.iterrows():
+            key = (str(r["team"]), int(r["season"]))
+            if key in out:
+                continue
+            out[key] = _classify_tier(
+                str(r["team"]), r.get("conference"), int(r["season"])
+            )
+    return out
+
+
 # Stat columns we compare on. All are *_z derived position-group
 # strength scores from tools/build_college_team_seasons.py.
 _OFFENSE_COLS = [
@@ -71,7 +132,8 @@ def find_college_team_comps(team: str, season: int, *,
                                 n: int = 3,
                                 exclude_same_team: bool = True,
                                 min_seasons_apart: int = 0,
-                                min_total_players: int = 20) -> list[dict]:
+                                min_total_players: int = 20,
+                                restrict_to_tier: bool = True) -> list[dict]:
     """Return top-N most comparable college team-seasons.
 
     `min_total_players` — only consider team-seasons with at least this
@@ -79,6 +141,10 @@ def find_college_team_comps(team: str, season: int, *,
     per team (1 QB + 3 WR/TE + 1 TE + 2 RB + 5 OL + 11 DEF), so this
     threshold filters small-sample FCS programs while still keeping
     full Power-4 rosters in the pool.
+
+    `restrict_to_tier` — when True (default), candidates must be the
+    same football tier (P4 / G5 / FCS) as the target. Set False to
+    open the pool to all FBS teams.
     """
     df = load_college_team_seasons()
     if df.empty:
@@ -103,6 +169,13 @@ def find_college_team_comps(team: str, season: int, *,
     # similar defensive strength level.
     use_distance = (len(stat_cols) == 1)
 
+    # Tier filter — keep comps within the target's bracket of football.
+    target_tier = None
+    tier_map: dict[tuple[str, int], str] = {}
+    if restrict_to_tier:
+        tier_map = _load_team_tiers()
+        target_tier = tier_map.get((team, season))
+
     sims: list[tuple[float, str, int, np.ndarray]] = []
     for _, row in df.iterrows():
         t, s = row["team"], int(row["season"])
@@ -115,6 +188,9 @@ def find_college_team_comps(team: str, season: int, *,
             continue
         if total_n < min_total_players:
             continue
+        if target_tier is not None:
+            if tier_map.get((t, s)) != target_tier:
+                continue
         vec = _get_team_vector(df, t, s, stat_cols)
         if vec is None:
             continue
