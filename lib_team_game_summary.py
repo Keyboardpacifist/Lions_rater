@@ -40,10 +40,31 @@ _COVERAGE_LABELS = dict(_COVERAGE_TYPES)
 
 @st.cache_data(show_spinner="Loading game data…")
 def _load_season_pbp(season: int) -> pd.DataFrame:
-    """Pull season pbp via nflreadpy — cached per season."""
+    """Pull season pbp + join participation so each play carries
+    coverage / personnel / formation context. Cached per season."""
     try:
         import nflreadpy as nfl
-        return nfl.load_pbp([season]).to_pandas()
+        pbp = nfl.load_pbp([season]).to_pandas()
+        # Join participation — same fields we use in build_qb_dropbacks.py
+        try:
+            part = nfl.load_participation([season]).to_pandas()
+            part_cols = [c for c in (
+                "nflverse_game_id", "play_id",
+                "defense_coverage_type", "defense_man_zone_type",
+                "number_of_pass_rushers", "defenders_in_box",
+                "offense_personnel", "offense_formation",
+                "time_to_throw", "was_pressure", "route",
+            ) if c in part.columns]
+            if part_cols:
+                part_slim = part[part_cols].rename(
+                    columns={"nflverse_game_id": "game_id"}
+                )
+                pbp = pbp.merge(part_slim, on=["game_id", "play_id"],
+                                  how="left",
+                                  suffixes=("", "_part"))
+        except Exception:
+            pass
+        return pbp
     except Exception:
         return pd.DataFrame()
 
@@ -532,8 +553,30 @@ def _render_offensive_counterfactual(play: pd.Series, cov: str | None) -> None:
     called? Backed by the same league-wide pool with confidence flags.
     """
     cf = _offensive_counterfactual(play)
-    if not cf or not cov:
-        st.caption("_Not enough comparable data for offensive counterfactual analysis._")
+    if not cov:
+        # Run plays + scrambles aren't charted with coverage labels —
+        # we can't ask "vs Cover X" for these. Tell the fan why.
+        is_run = bool(play.get("rush_attempt") == 1
+                       or play.get("qb_scramble") == 1)
+        if is_run:
+            st.caption(
+                "_Run plays and scrambles aren't tagged with defensive "
+                "coverage in our data — coverage is a pass-play concept. "
+                "Counterfactual analysis is only available on pass attempts._"
+            )
+        else:
+            st.caption(
+                "_No defensive coverage tagged on this play in our data — "
+                "counterfactual analysis isn't available._"
+            )
+        return
+    if not cf:
+        st.caption(
+            f"_Not enough comparable plays in the league pool for this "
+            f"matchup ({_COVERAGE_LABELS.get(cov, cov)} on the same "
+            f"down/distance). Try a similar critical play to see the "
+            f"analysis._"
+        )
         return
     actual_concept = _classify_actual_offensive_concept(play)
     actual_info = cf.get(actual_concept) if actual_concept else None
