@@ -299,6 +299,135 @@ st.markdown("")
 _render_phase_panel("⏱️ Situational & Discipline", _SITUATIONAL_STATS,
                       team_df, team, int(season), row)
 
+# ── Tendency explorer — offense & defense ────────────────────
+st.markdown("---")
+st.markdown(f"### 🎯 Tendencies — {team} {season}")
+st.caption(
+    "What this team does in specific situations. Filter by down, "
+    "distance, formation, personnel, coverage faced — see run/pass "
+    "split, run direction, and target distribution. Toggle to defense "
+    "view to see what opponents do against this team."
+)
+
+from lib_team_tendencies import get_team_tendencies, get_filter_options
+
+t_side = st.radio(
+    "View",
+    options=["offense", "defense"],
+    horizontal=True,
+    format_func=lambda s: "🏈 Offense (when this team has the ball)" if s == "offense"
+    else "🛡️ Defense (when opponents have the ball vs this team)",
+    key="tendency_side",
+)
+t_opts = get_filter_options(team, int(season), side=t_side)
+
+f1, f2, f3 = st.columns(3)
+with f1:
+    t_downs = st.multiselect(
+        "Down",
+        options=[1, 2, 3, 4],
+        default=[],
+        placeholder="All downs",
+        key="tendency_downs",
+    )
+with f2:
+    t_dist = st.multiselect(
+        "Distance",
+        options=["Short", "Medium", "Long"],
+        default=[],
+        placeholder="All distances",
+        key="tendency_dist",
+        help="Short ≤3 · Medium 4-7 · Long 8+",
+    )
+with f3:
+    t_form = st.selectbox(
+        "Formation",
+        options=["All"] + (t_opts.get("formations") or []),
+        index=0,
+        key="tendency_form",
+    )
+
+f4, f5, f6 = st.columns(3)
+with f4:
+    t_pers = st.multiselect(
+        "Personnel",
+        options=t_opts.get("personnel") or [],
+        default=[],
+        placeholder="All personnel",
+        key="tendency_pers",
+    )
+with f5:
+    t_manzone = st.radio(
+        "Coverage style",
+        options=["All", "Man", "Zone"],
+        horizontal=True,
+        key="tendency_manzone",
+    )
+with f6:
+    t_rushers = st.radio(
+        "Pass rushers",
+        options=["All", "3", "4", "5+"],
+        horizontal=True,
+        key="tendency_rushers",
+        help="Only meaningful for pass plays",
+    )
+
+t_cov = st.multiselect(
+    "Coverage type (defense)",
+    options=t_opts.get("coverages") or [],
+    default=[],
+    placeholder="All coverages",
+    key="tendency_cov",
+    help="The coverage shell the defense was in on this play",
+)
+
+tend = get_team_tendencies(
+    team, int(season), side=t_side,
+    downs=t_downs or None,
+    distance_buckets=t_dist or None,
+    formation=t_form if t_form != "All" else None,
+    personnel=t_pers or None,
+    coverage=t_cov or None,
+    manzone=t_manzone if t_manzone != "All" else None,
+    rushers=t_rushers if t_rushers != "All" else None,
+)
+
+if not tend or tend.get("n_plays", 0) < 5:
+    st.info(
+        f"Only {tend.get('n_plays', 0)} plays match this filter combo "
+        "— loosen the filters."
+    )
+else:
+    n = tend["n_plays"]
+    st.caption(f"**{n:,} plays** match this scenario.")
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Run / Pass split",
+               f"{tend['run_pct']*100:.0f}% run · {tend['pass_pct']*100:.0f}% pass")
+    if tend.get("run_epa") is not None:
+        m2.metric("Run EPA / play", f"{tend['run_epa']:+.3f}")
+    if tend.get("pass_epa") is not None:
+        m3.metric("Pass EPA / play", f"{tend['pass_epa']:+.3f}")
+    if tend.get("sack_pct") is not None and (tend.get("n_passes") or 0) > 0:
+        m4.metric("Sack rate", f"{tend['sack_pct']*100:.1f}%")
+
+    rd = tend.get("run_direction") or {}
+    if rd:
+        rd_cols = st.columns(3)
+        for col, key in zip(rd_cols, ("left", "middle", "right")):
+            pct = rd.get(key, 0) * 100
+            col.metric(f"Run {key.title()}", f"{pct:.0f}%")
+
+    if t_side == "offense" and tend.get("top_targets"):
+        st.markdown("**Top targets:**")
+        for t in tend["top_targets"]:
+            st.markdown(
+                f"- `{t['receiver_player_id']}` · {int(t['n'])} targets · "
+                f"{t['catch_pct']*100:.0f}% caught · "
+                f"{t['epa']:+.3f} EPA/target"
+            )
+
+
 # ── Comp engine — the headline feature ────────────────────────
 st.markdown("---")
 st.markdown(
