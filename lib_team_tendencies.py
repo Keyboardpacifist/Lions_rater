@@ -20,6 +20,39 @@ _DATA = Path(__file__).resolve().parent / "data"
 
 
 @st.cache_data(show_spinner=False)
+def _player_name_index() -> dict:
+    """Build a {player_id → display_name} index from the position
+    parquets we already have. Used to resolve receiver_player_id
+    in the tendency output to readable names."""
+    out: dict[str, str] = {}
+    for fname in (
+        "league_wr_all_seasons.parquet",
+        "league_te_all_seasons.parquet",
+        "league_rb_all_seasons.parquet",
+        "league_qb_all_seasons.parquet",
+    ):
+        path = _DATA / fname
+        if not path.exists():
+            continue
+        try:
+            df = pl.read_parquet(path).to_pandas()
+        except Exception:
+            continue
+        if "player_id" not in df.columns:
+            continue
+        for name_col in ("player_display_name", "player_name", "full_name"):
+            if name_col in df.columns:
+                pairs = df[["player_id", name_col]].dropna().drop_duplicates(
+                    subset=["player_id"]
+                )
+                for pid, name in zip(pairs["player_id"], pairs[name_col]):
+                    if pid and pid not in out:
+                        out[str(pid)] = str(name)
+                break
+    return out
+
+
+@st.cache_data(show_spinner=False)
 def _load_unified_plays() -> pd.DataFrame:
     """Return a unified per-play view: every offensive play (run or
     dropback) for every team-season we have, with formation / personnel
@@ -101,7 +134,8 @@ def _load_unified_plays() -> pd.DataFrame:
                 df = df.rename(columns={src: dst})
                 cols_keep.append(dst)
         if run_specific:
-            for c in ("run_location", "run_gap", "yards_gained"):
+            for c in ("run_location", "run_gap", "yards_gained",
+                       "rusher_player_name", "player_id"):
                 if c in df.columns:
                     cols_keep.append(c)
         if pass_specific:
@@ -239,10 +273,10 @@ def get_team_tendencies(team: str, season: int, *, side: str = "offense",
         else {}
     )
 
-    # Top receivers (offense view) / target locations
+    # Top receivers (offense view) — resolve IDs to names
     top_targets = []
     if side == "offense" and not passes.empty and "receiver_player_id" in passes.columns:
-        # We don't have receiver name in dropbacks — just id. Bucket by id.
+        name_idx = _player_name_index()
         target_agg = (
             passes.dropna(subset=["receiver_player_id"])
             .groupby("receiver_player_id")
@@ -253,9 +287,30 @@ def get_team_tendencies(team: str, season: int, *, side: str = "offense",
             )
             .reset_index()
             .sort_values("n", ascending=False)
-            .head(5)
+            .head(8)
+        )
+        target_agg["name"] = target_agg["receiver_player_id"].apply(
+            lambda pid: name_idx.get(str(pid), str(pid))
         )
         top_targets = target_agg.to_dict("records")
+
+    # Top runners (per-back distribution on run plays)
+    top_runners = []
+    if not runs.empty and "rusher_player_name" in runs.columns:
+        runner_agg = (
+            runs.dropna(subset=["rusher_player_name"])
+            .groupby("rusher_player_name")
+            .agg(
+                n=("epa", "size"),
+                ypc=("yards_gained", "mean"),
+                epa=("epa", "mean"),
+                success_rate=("success", "mean"),
+            )
+            .reset_index()
+            .sort_values("n", ascending=False)
+            .head(6)
+        )
+        top_runners = runner_agg.to_dict("records")
 
     return {
         "n_plays": n,
@@ -268,6 +323,7 @@ def get_team_tendencies(team: str, season: int, *, side: str = "offense",
         "sack_pct": len(sacks) / max(len(passes) + len(sacks), 1),
         "run_direction": run_dir,
         "top_targets": top_targets,
+        "top_runners": top_runners,
     }
 
 

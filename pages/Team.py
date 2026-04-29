@@ -418,13 +418,37 @@ else:
             pct = rd.get(key, 0) * 100
             col.metric(f"Run {key.title()}", f"{pct:.0f}%")
 
-    if t_side == "offense" and tend.get("top_targets"):
-        st.markdown("**Top targets:**")
+    # Top targets (passes) and top runners (runs) side by side
+    if t_side == "offense" and (tend.get("top_targets") or tend.get("top_runners")):
+        tt_col, tr_col = st.columns(2)
+        with tt_col:
+            if tend.get("top_targets"):
+                st.markdown("**Top targets** (passes)")
+                for t in tend["top_targets"]:
+                    st.markdown(
+                        f"- **{t.get('name', t['receiver_player_id'])}** · "
+                        f"{int(t['n'])} targets · "
+                        f"{t['catch_pct']*100:.0f}% caught · "
+                        f"{t['epa']:+.3f} EPA/tgt"
+                    )
+        with tr_col:
+            if tend.get("top_runners"):
+                st.markdown("**Top runners** (runs)")
+                for r in tend["top_runners"]:
+                    st.markdown(
+                        f"- **{r['rusher_player_name']}** · "
+                        f"{int(r['n'])} carries · "
+                        f"{r['ypc']:.1f} YPC · "
+                        f"{r['epa']:+.3f} EPA/carry"
+                    )
+    elif t_side == "defense" and tend.get("top_targets"):
+        st.markdown("**Top targets opponents went to** (vs this defense)")
         for t in tend["top_targets"]:
             st.markdown(
-                f"- `{t['receiver_player_id']}` · {int(t['n'])} targets · "
+                f"- **{t.get('name', t['receiver_player_id'])}** · "
+                f"{int(t['n'])} targets · "
                 f"{t['catch_pct']*100:.0f}% caught · "
-                f"{t['epa']:+.3f} EPA/target"
+                f"{t['epa']:+.3f} EPA/tgt"
             )
 
 
