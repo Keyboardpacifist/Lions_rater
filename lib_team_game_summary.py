@@ -189,6 +189,173 @@ def _coverage_baseline_pool() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+# ── Offensive concept buckets (the offensive counterfactual) ────
+# Given the defense called coverage X, what offensive concept would
+# have been the best response? "Concept" here is intentionally
+# slightly abstract — not "play call" but a small set of buckets fans
+# can reason about.
+_OFFENSIVE_CONCEPTS = [
+    # (concept_id, label, filter_func, identity_blurb)
+    ("run_inside", "Run inside (between the tackles)",
+     lambda d: (d["play_type_run"] == 1) & (d["run_location_norm"] == "middle"),
+     "Inside zone / power runs through the A-B gaps."),
+    ("run_outside_left", "Run outside left",
+     lambda d: (d["play_type_run"] == 1) & (d["run_location_norm"] == "left"),
+     "Outside zone, sweeps, or end runs to the left side."),
+    ("run_outside_right", "Run outside right",
+     lambda d: (d["play_type_run"] == 1) & (d["run_location_norm"] == "right"),
+     "Outside zone, sweeps, or end runs to the right side."),
+    ("pass_short_left", "Short pass left",
+     lambda d: (d["play_type_pass"] == 1) & (d["air_yards"] < 8) & (d["pass_location"] == "left"),
+     "Quick game / screens / hitches to the left."),
+    ("pass_short_middle", "Short pass middle",
+     lambda d: (d["play_type_pass"] == 1) & (d["air_yards"] < 8) & (d["pass_location"] == "middle"),
+     "Slants, RB checkdowns, drag routes."),
+    ("pass_short_right", "Short pass right",
+     lambda d: (d["play_type_pass"] == 1) & (d["air_yards"] < 8) & (d["pass_location"] == "right"),
+     "Quick game / screens / hitches to the right."),
+    ("pass_intermediate_left", "Intermediate pass left",
+     lambda d: (d["play_type_pass"] == 1) & (d["air_yards"] >= 8) & (d["air_yards"] < 18) & (d["pass_location"] == "left"),
+     "Outs, curls, intermediate digs to the left side."),
+    ("pass_intermediate_middle", "Intermediate pass middle",
+     lambda d: (d["play_type_pass"] == 1) & (d["air_yards"] >= 8) & (d["air_yards"] < 18) & (d["pass_location"] == "middle"),
+     "Digs, in-routes, seam shots into the soft middle.",),
+    ("pass_intermediate_right", "Intermediate pass right",
+     lambda d: (d["play_type_pass"] == 1) & (d["air_yards"] >= 8) & (d["air_yards"] < 18) & (d["pass_location"] == "right"),
+     "Outs, curls, intermediate digs to the right side."),
+    ("pass_deep_left", "Deep pass left",
+     lambda d: (d["play_type_pass"] == 1) & (d["air_yards"] >= 18) & (d["pass_location"] == "left"),
+     "Vertical shots / posts / fades to the left sideline."),
+    ("pass_deep_middle", "Deep pass middle",
+     lambda d: (d["play_type_pass"] == 1) & (d["air_yards"] >= 18) & (d["pass_location"] == "middle"),
+     "Posts and seams attacking the middle of the field deep."),
+    ("pass_deep_right", "Deep pass right",
+     lambda d: (d["play_type_pass"] == 1) & (d["air_yards"] >= 18) & (d["pass_location"] == "right"),
+     "Vertical shots / posts / fades to the right sideline."),
+]
+
+
+@st.cache_data(show_spinner=False)
+def _full_play_pool() -> pd.DataFrame:
+    """Combined per-play view (runs + dropbacks) tagged with helper
+    columns for the offensive counterfactual concept-bucketing."""
+    try:
+        from lib_splits import _load_rusher_plays
+    except Exception:
+        return pd.DataFrame()
+    drops_path = _DATA / "qb_dropbacks.parquet"
+    runs = _load_rusher_plays()
+    if runs is None or runs.empty:
+        runs = pd.DataFrame()
+    else:
+        runs = runs.copy()
+        runs["play_type_run"] = 1
+        runs["play_type_pass"] = 0
+        # Normalize team col
+        if "team" in runs.columns and "posteam" not in runs.columns:
+            runs["posteam"] = runs["team"]
+        if "opponent_team" in runs.columns and "defteam" not in runs.columns:
+            runs["defteam"] = runs["opponent_team"]
+        runs["run_location_norm"] = runs.get("run_location")
+    try:
+        import polars as pl
+        drops = pl.read_parquet(drops_path).to_pandas()
+    except Exception:
+        drops = pd.DataFrame()
+    if not drops.empty:
+        drops = drops.copy()
+        drops["play_type_run"] = 0
+        drops["play_type_pass"] = drops.get("pass_attempt", 0).fillna(0).astype(int)
+        drops["run_location_norm"] = None
+
+    # Common columns
+    cols = ["game_id", "play_id", "season", "week", "posteam", "defteam",
+            "down", "ydstogo", "epa", "play_type_run", "play_type_pass",
+            "run_location_norm", "air_yards", "pass_location",
+            "defense_coverage_type", "defense_man_zone_type",
+            "number_of_pass_rushers"]
+    # Some columns may be missing in one source — pad with NaN
+    for df in (runs, drops):
+        for c in cols:
+            if c not in df.columns:
+                df[c] = None
+    runs_t = runs[cols] if not runs.empty else pd.DataFrame(columns=cols)
+    drops_t = drops[cols] if not drops.empty else pd.DataFrame(columns=cols)
+    return pd.concat([runs_t, drops_t], ignore_index=True, sort=False)
+
+
+def _offensive_counterfactual(play_row: pd.Series) -> dict | None:
+    """Given the defense called coverage X, what's the expected EPA
+    by offensive concept? Returns {concept_id: {"epa","n","confidence","label","blurb"}}.
+    """
+    pool = _full_play_pool()
+    if pool.empty:
+        return None
+    cov = play_row.get("defense_coverage_type")
+    if not cov:
+        return None
+    down = play_row.get("down")
+    ydstogo = play_row.get("ydstogo")
+    similar = pool[pool["defense_coverage_type"] == cov].copy()
+    if pd.notna(down) and pd.notna(ydstogo):
+        similar = similar[
+            (similar["down"] == down)
+            & (similar["ydstogo"].between(max(1, ydstogo - 3), ydstogo + 3))
+        ]
+    if similar.empty:
+        return None
+
+    out = {}
+    for cid, label, filter_fn, blurb in _OFFENSIVE_CONCEPTS:
+        try:
+            sub = similar[filter_fn(similar)]
+        except Exception:
+            continue
+        sub = sub.dropna(subset=["epa"])
+        if sub.empty:
+            continue
+        n = len(sub)
+        epa = float(sub["epa"].mean())
+        if n >= 30:
+            conf = "HIGH"
+        elif n >= 10:
+            conf = "MEDIUM"
+        else:
+            conf = "LOW"
+        out[cid] = {
+            "label": label, "blurb": blurb,
+            "epa": epa, "n": n, "confidence": conf,
+        }
+    return out
+
+
+def _classify_actual_offensive_concept(play_row: pd.Series) -> str | None:
+    """Given the actual play, identify which concept bucket it falls
+    into (used to badge the row that was actually called)."""
+    # Run plays
+    rl = play_row.get("run_location")
+    if pd.notna(rl) and rl in ("left", "middle", "right"):
+        if rl == "middle":
+            return "run_inside"
+        if rl == "left":
+            return "run_outside_left"
+        if rl == "right":
+            return "run_outside_right"
+    # Pass plays
+    if play_row.get("pass_attempt") == 1:
+        ay = play_row.get("air_yards")
+        loc = play_row.get("pass_location")
+        if pd.notna(ay) and pd.notna(loc) and loc in ("left", "middle", "right"):
+            if ay < 8:
+                depth = "short"
+            elif ay < 18:
+                depth = "intermediate"
+            else:
+                depth = "deep"
+            return f"pass_{depth}_{loc}"
+    return None
+
+
 def _coverage_counterfactual(play_row: pd.Series) -> dict | None:
     """For a critical pass play, compute the expected EPA against
     each major coverage given the matchup (depth + location).
@@ -359,8 +526,129 @@ def _coverage_blurb(cov_code: str, play_row: pd.Series,
     return f"_{base} {depth_note}_{verdict}"
 
 
+def _render_offensive_counterfactual(play: pd.Series, cov: str | None) -> None:
+    """Offense-view counterfactual: given the defense called X, what
+    offensive concepts would have been better than what was actually
+    called? Backed by the same league-wide pool with confidence flags.
+    """
+    cf = _offensive_counterfactual(play)
+    if not cf or not cov:
+        st.caption("_Not enough comparable data for offensive counterfactual analysis._")
+        return
+    actual_concept = _classify_actual_offensive_concept(play)
+    actual_info = cf.get(actual_concept) if actual_concept else None
+    actual_epa = actual_info["epa"] if actual_info else None
+
+    st.markdown(
+        f"**🤔 Given the defense called "
+        f"{_COVERAGE_LABELS.get(cov, cov)}, what offensive concept "
+        f"would have been the best response?**"
+    )
+    st.caption(
+        "Expected **offensive** EPA per play across the league when "
+        "facing this same coverage on a comparable down/distance. "
+        "**Higher EPA = better for the offense.** The 🟢 **optimal** "
+        "concept is highlighted. Confidence flag reflects sample size."
+    )
+
+    # Sort by EPA descending — best offensive concept first
+    rows = sorted(cf.items(), key=lambda kv: kv[1]["epa"], reverse=True)
+    eligible = [(k, v) for k, v in rows
+                if k != actual_concept
+                and v["confidence"] in ("HIGH", "MEDIUM")]
+    optimal_concept = eligible[0][0] if eligible else None
+
+    for cid, info in rows:
+        is_actual = cid == actual_concept
+        is_optimal = cid == optimal_concept
+        badge = (
+            '<span style="font-size:10px;background:rgba(31,119,180,0.15);'
+            'color:#1F77B4;padding:2px 6px;border-radius:4px;'
+            'font-weight:700;margin-left:6px;">ACTUAL</span>'
+            if is_actual else
+            '<span style="font-size:10px;background:rgba(52,168,83,0.15);'
+            'color:#1e7a3a;padding:2px 6px;border-radius:4px;'
+            'font-weight:700;margin-left:6px;">🟢 OPTIMAL</span>'
+            if is_optimal else ""
+        )
+        if is_optimal:
+            bg, border = "rgba(52,168,83,0.10)", "border-left:4px solid #34A853;"
+        elif is_actual:
+            bg, border = "rgba(31,119,180,0.08)", "border-left:4px solid #1F77B4;"
+        else:
+            bg, border = "rgba(0,0,0,0.04)", ""
+
+        conf_color = _confidence_color(info["confidence"])
+        conf_tip = (
+            f"Sample: {info['n']} comparable plays. "
+            f"≥30 = HIGH · 10–29 = MEDIUM · <10 = LOW. "
+            + ("Strong baseline." if info["confidence"] == "HIGH"
+               else "Treat as directional, not definitive."
+               if info["confidence"] == "MEDIUM"
+               else "Small sample — interpret cautiously.")
+        )
+        # Concept blurb + verdict
+        verdict = ""
+        if not is_actual and actual_epa is not None:
+            diff = info["epa"] - actual_epa
+            if diff >= 0.20:
+                verdict = (f" **Notably higher EV** — gains "
+                            f"~{diff:.2f} more EPA than what was called.")
+            elif diff >= 0.05:
+                verdict = " Marginally higher-EV alternative."
+            elif diff <= -0.20:
+                verdict = (f" **Notably lower EV** — loses "
+                            f"~{abs(diff):.2f} EPA vs what was called.")
+            elif diff <= -0.05:
+                verdict = " Marginally lower-EV alternative."
+            else:
+                verdict = " Roughly equivalent to the actual call."
+        full_blurb = f"_{info['blurb']}_{verdict}"
+
+        st.markdown(
+            f'<div style="padding:8px 10px;background:{bg};{border}'
+            f'border-radius:6px;margin-bottom:6px;font-size:13px;">'
+            f'<div style="display:flex;justify-content:space-between;'
+            f'align-items:center;">'
+            f'<div>{info["label"]}{badge}</div>'
+            f'<div>'
+            f'<span style="font-weight:700;">{info["epa"]:+.2f} EPA</span>'
+            f'<span title="{conf_tip}" '
+            f'style="font-size:10px;color:white;background:{conf_color};'
+            f'padding:2px 6px;border-radius:4px;margin-left:8px;'
+            f'cursor:help;font-weight:700;">'
+            f'{info["confidence"]} · n={info["n"]}</span>'
+            f'</div></div>'
+            f'<div style="font-size:12px;opacity:0.85;'
+            f'margin-top:6px;line-height:1.4;">{full_blurb}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    # Auto-narrative
+    if actual_info and optimal_concept and optimal_concept in cf:
+        best_info = cf[optimal_concept]
+        delta = best_info["epa"] - actual_info["epa"]
+        if delta > 0.10:
+            st.info(
+                f"**Monday-morning QB:** "
+                f"{best_info['label']} was the highest-EV response to "
+                f"{_COVERAGE_LABELS.get(cov, cov)} on this down/distance "
+                f"(expected {best_info['epa']:+.2f} EPA vs the "
+                f"{actual_info['epa']:+.2f} from the actual call). "
+                f"Difference: +{delta:.2f} EPA."
+            )
+
+
 def _render_critical_play(idx: int, play: pd.Series, team: str) -> None:
-    """One expandable card per critical play with counterfactual analysis."""
+    """One expandable card per critical play with counterfactual analysis.
+
+    Branches on which side of the ball the team was on:
+    - posteam == team (offense): "Given the defense called X, what
+      offensive concept would have been the optimal answer?"
+    - defteam == team (defense): "What other coverage could we have
+      called against this matchup?"
+    """
     qtr = int(play.get("qtr", 0)) if pd.notna(play.get("qtr")) else "—"
     qsr = int(play.get("quarter_seconds_remaining", 0)) if pd.notna(play.get("quarter_seconds_remaining")) else 0
     qsr_min = qsr // 60
@@ -369,9 +657,11 @@ def _render_critical_play(idx: int, play: pd.Series, team: str) -> None:
     wpa_pct = wpa * 100 if pd.notna(wpa) else 0
     desc = str(play.get("desc", ""))[:200]
     sign = "▲" if wpa_pct > 0 else "▼"
+    team_was_offense = (play.get("posteam") == team)
+    side_label = "🏈 Offense" if team_was_offense else "🛡️ Defense"
     label = (
         f"#{idx} — Q{qtr} {qsr_min}:{qsr_sec:02d} · "
-        f"{sign} {abs(wpa_pct):.1f}% WP swing"
+        f"{sign} {abs(wpa_pct):.1f}% WP swing · {side_label}"
     )
     with st.expander(label, expanded=(idx <= 2)):
         st.markdown(f"**Play:** {desc}")
@@ -388,7 +678,13 @@ def _render_critical_play(idx: int, play: pd.Series, team: str) -> None:
         if ctx:
             st.caption(" · ".join(ctx))
 
-        # Counterfactual analysis (only if it was a pass attempt)
+        # Branch: offense view (offensive counterfactual) vs defense
+        # view (defensive coverage counterfactual)
+        if team_was_offense:
+            _render_offensive_counterfactual(play, cov)
+            return
+
+        # DEFENSIVE counterfactual — only meaningful if it was a pass
         if play.get("pass_attempt") == 1 and pd.notna(play.get("air_yards")):
             cf = _coverage_counterfactual(play)
             if cf:
