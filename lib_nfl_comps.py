@@ -216,6 +216,91 @@ def hit_rate_distribution(prospect_row: pd.Series, position: str,
     }
 
 
+# ── Strengths & concerns ────────────────────────────────────────
+# Plain-English label per z-stat. The position parquets already
+# sign-align z-cols so positive = good direction (e.g. INT-rate z is
+# flipped: positive z = LOWER INT rate = better ball security).
+
+_STAT_LABELS = {
+    # QB
+    "completion_pct_z":      "Accuracy (completion %)",
+    "td_rate_z":             "TD per attempt",
+    "int_rate_z":            "Ball security (low INT)",
+    "yards_per_attempt_z":   "Big-play passing (Y/A)",
+    "pass_tds_z":            "TD volume",
+    "rush_yards_total_z":    "Rushing yardage",
+    # WR / TE
+    "rec_yards_total_z":     "Receiving yardage",
+    "rec_tds_total_z":       "TD production",
+    "receptions_total_z":    "Target absorber / volume",
+    "yards_per_rec_z":       "Explosive playmaker (Y/R)",
+    # RB
+    "rush_tds_total_z":      "TD finishing",
+    "carries_total_z":       "Workhorse usage",
+    "yards_per_carry_z":     "Explosive runner (YPC)",
+    "total_yards_z":         "Total scrimmage yardage",
+    # Defense
+    "tackles_per_game_z":    "Tackle production",
+    "sacks_per_game_z":      "Pass-rush production",
+    "tfl_per_game_z":        "Backfield disruption (TFL)",
+    "qb_hurries_per_game_z": "Pressure generation",
+    "pd_per_game_z":         "Coverage / passes deflected",
+    "int_per_game_z":        "Ball-hawk (INT rate)",
+    "solo_tackles_per_game_z": "Solo-tackle volume",
+    "pressure_rate_z":       "Pressure-rate efficiency",
+}
+
+# Position-specific overrides where the same z-col means different
+# things (e.g. rush_yards_total is "rushing volume" for an RB but
+# "QB mobility" for a QB).
+_POS_LABEL_OVERRIDES = {
+    "QB": {
+        "rush_yards_total_z": "QB mobility (rush yds)",
+    },
+}
+
+
+def _label_for(stat: str, position: str) -> str:
+    pos_map = _POS_LABEL_OVERRIDES.get(position, {})
+    return (pos_map.get(stat)
+            or _STAT_LABELS.get(stat, stat.replace("_z", "")
+                                          .replace("_", " ").title()))
+
+
+def _z_to_percentile(z: float) -> int:
+    """Standard-normal CDF → percentile. No scipy dependency."""
+    import math
+    return round(0.5 * (1 + math.erf(z / math.sqrt(2))) * 100)
+
+
+def get_stat_profile(prospect_row: pd.Series, position: str) -> dict:
+    """Return the prospect's top strengths and concerns based on the
+    z-vector. Strengths = top 3 stats with z ≥ 1.0; concerns = bottom
+    3 with z ≤ -0.5. Empty lists if nothing qualifies."""
+    if position not in _STATS:
+        return {"strengths": [], "concerns": []}
+    items = []
+    for s in _STATS[position]:
+        if s in prospect_row.index and pd.notna(prospect_row.get(s)):
+            z = float(prospect_row[s])
+            z_clip = max(-3.0, min(3.0, z))
+            # Cap percentile at 99 — '100th pctl' isn't a real thing.
+            pct = min(99, max(1, _z_to_percentile(z_clip)))
+            items.append({
+                "stat": s,
+                "label": _label_for(s, position),
+                "z": z,
+                "pct": pct,
+            })
+    # Strengths — top 3 with z ≥ 1
+    strengths = sorted([i for i in items if i["z"] >= 1.0],
+                          key=lambda x: -x["z"])[:3]
+    # Concerns — bottom 3 with z ≤ -0.5
+    concerns = sorted([i for i in items if i["z"] <= -0.5],
+                         key=lambda x: x["z"])[:3]
+    return {"strengths": strengths, "concerns": concerns}
+
+
 def lookup_prospect_row(player_name: str, school: str,
                             position: str) -> pd.Series | None:
     """Find the prospect's 2025-season row in the relevant position

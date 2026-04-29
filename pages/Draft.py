@@ -174,14 +174,43 @@ def _render_prospect_row(rank_label: str, r: pd.Series,
         else:
             st.caption("_profile pending_")
 
-    # ── NFL statistical comps (collapsed by default) ──────────
+    # ── NFL statistical comps + statistical strengths/weaknesses ─
     comps = r.get("nfl_comps")
+    strengths = r.get("strengths") or []
+    weaknesses = r.get("concerns") or []
     if isinstance(comps, list) and comps:
         top_comp_label = r.get("top_comp") or "—"
         with st.expander(
             f"🎯 Statistical composition most like: {top_comp_label}",
             expanded=False,
         ):
+            # Strengths and weaknesses — surface FIRST since they're
+            # actionable (the comp is the headline, but the profile
+            # explains why).
+            if strengths:
+                st.markdown("**📈 Statistical Strengths**")
+                for s in strengths:
+                    sign = "+" if s["z"] >= 0 else ""
+                    st.markdown(
+                        f"- **{s['label']}** — "
+                        f"{s['pct']}th pctl ({sign}{s['z']:.2f}σ)"
+                    )
+            if weaknesses:
+                st.markdown("**📉 Statistical Weaknesses**")
+                for w in weaknesses:
+                    sign = "+" if w["z"] >= 0 else ""
+                    st.markdown(
+                        f"- **{w['label']}** — "
+                        f"{w['pct']}th pctl ({sign}{w['z']:.2f}σ)"
+                    )
+            if not strengths and not weaknesses:
+                st.caption(
+                    "_No notable statistical strengths or weaknesses "
+                    "in our model — well-rounded profile._"
+                )
+
+            st.markdown("---")
+            st.markdown("**🎯 Top 5 Statistical Comps**")
             for c in comps:
                 yr = c.get("draft_year") or "—"
                 rd = c.get("draft_round") or "—"
@@ -205,8 +234,8 @@ def _render_prospect_row(rank_label: str, r: pd.Series,
                 )
     elif r["position"] == "OL":
         st.caption(
-            "🛠 _OL NFL comps coming v1.1 — historical OL linkage "
-            "parquet not yet built._"
+            "🛠 _OL NFL comps + statistical strengths coming v1.1 "
+            "— historical OL linkage parquet not yet built._"
         )
 
 
