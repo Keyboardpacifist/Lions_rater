@@ -394,20 +394,38 @@ def _render_critical_play(idx: int, play: pd.Series, team: str) -> None:
             if cf:
                 st.markdown("**🤔 What if the defense had called something else?**")
                 st.caption(
-                    "Expected EPA per attempt for similar matchups "
-                    "(same pass depth/location + similar down & distance) "
-                    "across the league. Confidence flag reflects sample size."
+                    "Expected **offensive** EPA per attempt for similar "
+                    "matchups (same pass depth/location + similar down & "
+                    "distance) across the league. **Lower EPA = better for "
+                    "the defense** (offense expected to gain less). The "
+                    "**🟢 optimal** call against this specific matchup is "
+                    "highlighted. Confidence flag reflects sample size."
                 )
                 # Sort coverages by expected EPA (best for defense first = lowest EPA)
                 rows = sorted(cf.items(), key=lambda kv: kv[1]["epa"])
                 actual_epa = cf.get(cov, {}).get("epa") if cov in cf else None
+                # Identify the optimal call — lowest EPA that's NOT what was
+                # called and confidence is at least MEDIUM (don't crown a
+                # tiny sample as "optimal").
+                _eligible_optimal = [
+                    (k, v) for k, v in rows
+                    if k != cov and v["confidence"] in ("HIGH", "MEDIUM")
+                ]
+                optimal_cov = (_eligible_optimal[0][0]
+                                if _eligible_optimal else None)
+
                 for cov_code, info in rows:
                     is_actual = cov_code == cov
+                    is_optimal = cov_code == optimal_cov
                     badge = (
                         '<span style="font-size:10px;background:rgba(31,119,180,0.15);'
                         'color:#1F77B4;padding:2px 6px;border-radius:4px;'
                         'font-weight:700;margin-left:6px;">ACTUAL</span>'
-                        if is_actual else ""
+                        if is_actual else
+                        '<span style="font-size:10px;background:rgba(52,168,83,0.15);'
+                        'color:#1e7a3a;padding:2px 6px;border-radius:4px;'
+                        'font-weight:700;margin-left:6px;">🟢 OPTIMAL</span>'
+                        if is_optimal else ""
                     )
                     conf_color = _confidence_color(info["confidence"])
                     conf_tip = (
@@ -420,9 +438,20 @@ def _render_critical_play(idx: int, play: pd.Series, team: str) -> None:
                     )
                     blurb = _coverage_blurb(cov_code, play, info["epa"],
                                               actual_epa, is_actual)
+                    # Row styling — optimal call gets a green left border +
+                    # tint; actual call gets a blue left border.
+                    if is_optimal:
+                        bg = "rgba(52,168,83,0.10)"
+                        border = "border-left:4px solid #34A853;"
+                    elif is_actual:
+                        bg = "rgba(31,119,180,0.08)"
+                        border = "border-left:4px solid #1F77B4;"
+                    else:
+                        bg = "rgba(0,0,0,0.04)"
+                        border = ""
                     st.markdown(
-                        f'<div style="padding:8px 10px;background:rgba(0,0,0,0.04);'
-                        f'border-radius:6px;margin-bottom:6px;font-size:13px;">'
+                        f'<div style="padding:8px 10px;background:{bg};'
+                        f'{border}border-radius:6px;margin-bottom:6px;font-size:13px;">'
                         f'<div style="display:flex;justify-content:space-between;'
                         f'align-items:center;">'
                         f'<div>{_COVERAGE_LABELS.get(cov_code, cov_code)}{badge}</div>'
@@ -442,19 +471,21 @@ def _render_critical_play(idx: int, play: pd.Series, team: str) -> None:
 
                 # Auto-narrative: pick the optimal counterfactual
                 actual_info = cf.get(cov, {}) if cov in cf else None
-                if actual_info and len(cf) >= 2:
-                    best_cov, best_info = min(cf.items(), key=lambda kv: kv[1]["epa"])
-                    if best_cov != cov and (actual_info["epa"]
-                                              - best_info["epa"]) > 0.10:
-                        delta = actual_info["epa"] - best_info["epa"]
+                if (actual_info and optimal_cov
+                        and optimal_cov in cf
+                        and len(cf) >= 2):
+                    best_info = cf[optimal_cov]
+                    delta = actual_info["epa"] - best_info["epa"]
+                    if delta > 0.10:
                         st.info(
                             f"**Monday-morning QB:** "
-                            f"{_COVERAGE_LABELS.get(best_cov, best_cov)} would "
-                            f"have been the optimal call against this matchup "
-                            f"(expected {best_info['epa']:+.2f} EPA vs the "
-                            f"{actual_info['epa']:+.2f} they gave up in "
-                            f"{_COVERAGE_LABELS.get(cov, cov)}). Difference: "
-                            f"{delta:+.2f} EPA."
+                            f"{_COVERAGE_LABELS.get(optimal_cov, optimal_cov)} "
+                            f"would have been the optimal call against this "
+                            f"matchup (expected to give up only "
+                            f"{best_info['epa']:+.2f} EPA vs the "
+                            f"{actual_info['epa']:+.2f} they actually gave "
+                            f"up). Difference: −{delta:.2f} EPA — that's how "
+                            f"much offense the defense would have prevented."
                         )
 
 
