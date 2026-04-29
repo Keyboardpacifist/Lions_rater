@@ -585,201 +585,203 @@ _render_card(
     season=(None if _yr["is_career_view"] else selected_season),
 )
 
-# ── QB panel — situational/pressure splits from per-dropback feed ──
-from lib_qb_panel import (
-    get_qb_peers as _get_qb_peers,
-    render_pressure_split as _render_pressure_split,
-    render_competition_split as _render_competition_split,
-    render_throw_map as _render_throw_map,
-    render_situational_split as _render_situational_split,
-    render_presnap_split as _render_presnap_split,
-    render_processing_split as _render_processing_split,
-)
-_qb_panel_pid = player.get("player_id")
-if _qb_panel_pid:
-    _qb_panel_season = None if _yr["is_career_view"] else selected_season
+# ════════════════════════════════════════════════════════════════
+# TABBED PLAYER DETAIL — Profile / Game-Context / Compare /
+# Career / Game splits
+# Trading card hero stays sticky above the tabs.
+# ════════════════════════════════════════════════════════════════
 
-    # ── Comparison picker (drives every contextual panel below) ──
-    _qb_peer_options = _get_qb_peers(
-        season=_qb_panel_season,
-        exclude_player_id=_qb_panel_pid,
+# Compute the radar benchmark once — used by Profile + Compare tabs
+_radar_row = view_row if view_row is not None else player
+_season_pool_qb = all_qbs_full[all_qbs_full["season_year"] == selected_season]
+_top32_qb = _season_pool_qb.sort_values("attempts", ascending=False).head(32)
+_radar_bench = {z: _top32_qb[z].mean() for z in RADAR_STATS
+                  if z in _top32_qb.columns and _top32_qb[z].notna().any()}
+_radar_bench_raw = {}
+for z in RADAR_STATS:
+    raw_col = RAW_COL_MAP.get(z)
+    if raw_col and raw_col in _top32_qb.columns and _top32_qb[raw_col].notna().any():
+        _radar_bench_raw[z] = _top32_qb[raw_col].mean()
+
+
+def _qb_score_of(row):
+    if row is None or total_weight <= 0:
+        return float("nan")
+    return sum(
+        row.get(z, 0) * (w / total_weight)
+        for z, w in effective_weights.items()
+        if pd.notna(row.get(z))
     )
-    _comp_labels = ["None"] + [opt["label"] for opt in _qb_peer_options]
-    _comp_pick = st.selectbox(
-        "Compare to another QB:",
-        options=_comp_labels,
-        index=0,
-        key=f"qb_compare_{_qb_panel_pid}",
-        help="Pick another QB-season to render every panel below in "
-             "side-by-side comparison mode.",
+
+
+tab_profile, tab_panel, tab_compare, tab_career, tab_splits = st.tabs([
+    "📊 Score & Profile",
+    "🎯 Game-Context Analysis",
+    "⚔️ Compare",
+    "📈 Career & Combine",
+    "📅 Game-by-game",
+])
+
+
+# ─── 📊 SCORE & PROFILE ─────────────────────────────────
+with tab_profile:
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        _sign = "+" if pd.notna(_view_score) and _view_score >= 0 else ""
+        _pct = format_percentile(zscore_to_percentile(_view_score)) if pd.notna(_view_score) else "—"
+        _score_str = f"{_sign}{_view_score:.2f}" if pd.notna(_view_score) else "—"
+        st.markdown(f"**Your score: {_score_str} ({_pct})**")
+        st.markdown("_This score is based on your slider settings. Change the sliders and this number changes._")
+        st.markdown("---")
+        st.markdown("**Where the score comes from**")
+        st.markdown("Each row shows how much one skill contributed to the total, based on your slider weights.")
+
+        if not advanced_mode:
+            stat_rows = []; shown = set()
+            for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
+            for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+                raw_col = RAW_COL_MAP.get(z_col)
+                z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
+                pct = zscore_to_percentile(z) if pd.notna(z) else None
+                if raw_col in ("completion_pct", "td_rate", "int_rate", "sack_rate", "first_down_rate", "turnover_rate"):
+                    raw_fmt = f"{raw:.1%}" if pd.notna(raw) else "—"
+                elif raw_col in ("passing_cpoe",):
+                    raw_fmt = f"{raw:+.2f}" if pd.notna(raw) else "—"
+                else:
+                    raw_fmt = f"{raw:.2f}" if pd.notna(raw) else "—"
+                stat_rows.append({"Stat": stat_labels.get(z_col, z_col), "Value": raw_fmt, "Percentile": f"{int(pct)}th" if pct is not None else "—"})
+            if stat_rows:
+                st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
+
+            with st.expander("⚙️  How your slider preset weights this player"):
+                bundle_rows = []
+                for bk, bundle in active_bundles.items():
+                    bw = bundle_weights.get(bk, 0)
+                    if bw == 0: continue
+                    contribution = sum(
+                        view_row.get(z, 0) * (bw * internal / total_weight)
+                        for z, internal in bundle["stats"].items()
+                        if pd.notna(view_row.get(z)) and total_weight > 0
+                    )
+                    bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
+                if bundle_rows:
+                    st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
+                else:
+                    st.caption("No bundles weighted — drag some sliders.")
+        else:
+            rows = []
+            for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+                raw_col = RAW_COL_MAP.get(z_col)
+                z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
+                w = effective_weights.get(z_col, 0)
+                contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
+                pct = zscore_to_percentile(z) if pd.notna(z) else None
+                if raw_col in ("completion_pct", "td_rate", "int_rate", "sack_rate", "first_down_rate", "turnover_rate"):
+                    raw_fmt = f"{raw:.1%}" if pd.notna(raw) else "—"
+                elif raw_col in ("passing_cpoe",):
+                    raw_fmt = f"{raw:+.2f}" if pd.notna(raw) else "—"
+                else:
+                    raw_fmt = f"{raw:.2f}" if pd.notna(raw) else "—"
+                rows.append({"Stat": stat_labels.get(z_col, z_col), "Value": raw_fmt, "Percentile": f"{int(pct)}th" if pct is not None else "—", "Weight": f"{w}", "Points added": f"{contrib:+.2f}"})
+            if rows: st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    with c2:
+        st.markdown("**Percentile profile vs. all league QBs**")
+        st.caption("Solid blue = this player. Dashed gray = top-32 starter average. INT rate and sack rate are inverted (higher = fewer turnovers/sacks).")
+        fig = build_radar_figure(_radar_row, stat_labels, stat_methodology,
+                                  benchmark=_radar_bench, benchmark_raw=_radar_bench_raw)
+        if fig: st.plotly_chart(fig, use_container_width=True)
+
+
+# ─── 🎯 GAME-CONTEXT ANALYSIS (the QB panel) ────────────
+with tab_panel:
+    from lib_qb_panel import (
+        get_qb_peers as _get_qb_peers,
+        render_pressure_split as _render_pressure_split,
+        render_competition_split as _render_competition_split,
+        render_throw_map as _render_throw_map,
+        render_situational_split as _render_situational_split,
+        render_presnap_split as _render_presnap_split,
+        render_processing_split as _render_processing_split,
     )
-    if _comp_pick != "None":
-        _comp_idx = _comp_labels.index(_comp_pick) - 1
-        _comp = _qb_peer_options[_comp_idx]
-        _comp_pid = _comp["player_id"]
-        _comp_name = _comp["label"].split(" — ")[0]
-        _comp_season = _comp["season"]
+    _qb_panel_pid = player.get("player_id")
+    if not _qb_panel_pid:
+        st.info("No player_id available — game-context analysis isn't available.")
     else:
-        _comp_pid = _comp_name = _comp_season = None
+        _qb_panel_season = None if _yr["is_career_view"] else selected_season
 
-    # ── HERO panel: contextual throw map (always visible, filterable) ──
-    st.markdown("### 🎯 Throw map — where does he hit?")
-    _render_throw_map(
-        player_id=_qb_panel_pid,
-        player_name=selected,
-        season=_qb_panel_season,
-        theme=_theme(_team_abbr),
-        key_prefix=f"qb_{_qb_panel_pid}",
-        comparison_player_id=_comp_pid,
-        comparison_player_name=_comp_name,
-        comparison_season=_comp_season,
-    )
+        # Comparison picker — drives every panel below in side-by-side mode
+        _qb_peer_options = _get_qb_peers(
+            season=_qb_panel_season,
+            exclude_player_id=_qb_panel_pid,
+        )
+        _comp_labels = ["None"] + [opt["label"] for opt in _qb_peer_options]
+        _comp_pick = st.selectbox(
+            "Compare to another QB:",
+            options=_comp_labels,
+            index=0,
+            key=f"qb_compare_{_qb_panel_pid}",
+            help="Pick another QB-season to render every panel below in "
+                 "side-by-side comparison mode.",
+        )
+        if _comp_pick != "None":
+            _comp_idx = _comp_labels.index(_comp_pick) - 1
+            _comp = _qb_peer_options[_comp_idx]
+            _comp_pid = _comp["player_id"]
+            _comp_name = _comp["label"].split(" — ")[0]
+            _comp_season = _comp["season"]
+        else:
+            _comp_pid = _comp_name = _comp_season = None
 
-    _comp_kwargs = dict(
-        comparison_player_id=_comp_pid,
-        comparison_player_name=_comp_name,
-        comparison_season=_comp_season,
-    )
-
-    # ── Supplementary buckets (collapsible to keep the page short) ──
-    with st.expander("📋  Pre-snap — formation, tempo, down splits", expanded=False):
-        _render_presnap_split(
+        # HERO panel: throw map (always visible at top of tab)
+        st.markdown("### 🎯 Throw map — where does he hit?")
+        _render_throw_map(
             player_id=_qb_panel_pid,
             player_name=selected,
             season=_qb_panel_season,
             theme=_theme(_team_abbr),
-            **_comp_kwargs,
-        )
-    with st.expander("🧠  Processing — time to throw, aggressiveness, depth", expanded=False):
-        _render_processing_split(
-            player_id=_qb_panel_pid,
-            player_name=selected,
-            season=_qb_panel_season,
-            theme=_theme(_team_abbr),
-            **_comp_kwargs,
-        )
-    with st.expander("🥊  Under pressure — clean pocket vs. pressured", expanded=False):
-        _render_pressure_split(
-            player_id=_qb_panel_pid,
-            player_name=selected,
-            season=_qb_panel_season,
-            theme=_theme(_team_abbr),
-            **_comp_kwargs,
-        )
-    with st.expander("⏱️  Situational — 3rd down, red zone, 4th quarter, 2-min drill", expanded=False):
-        _render_situational_split(
-            player_id=_qb_panel_pid,
-            player_name=selected,
-            season=_qb_panel_season,
-            theme=_theme(_team_abbr),
-            **_comp_kwargs,
-        )
-    with st.expander("🏆  Elite vs. weak competition — does he rise to elite D or feast on bad ones?", expanded=False):
-        _render_competition_split(
-            player_id=_qb_panel_pid,
-            player_name=selected,
-            season=_qb_panel_season,
-            theme=_theme(_team_abbr),
-            **_comp_kwargs,
+            key_prefix=f"qb_{_qb_panel_pid}",
+            comparison_player_id=_comp_pid,
+            comparison_player_name=_comp_name,
+            comparison_season=_comp_season,
         )
 
-# ── Combine workout chart vs. all-time QB pool ────────────────
-_WORKOUTS_PATH = Path(__file__).resolve().parent.parent / "data" / "college" / "nfl_all_workouts.parquet"
-render_combine_chart(
-    player_name=selected,
-    position="QB",
-    workouts_path=_WORKOUTS_PATH,
-    key=f"qb_combine_chart_{player.get('player_id', selected)}",
-)
-
-c1, c2 = st.columns([1, 1])
-with c1:
-    _sign = "+" if pd.notna(_view_score) and _view_score >= 0 else ""
-    _pct = format_percentile(zscore_to_percentile(_view_score)) if pd.notna(_view_score) else "—"
-    _score_str = f"{_sign}{_view_score:.2f}" if pd.notna(_view_score) else "—"
-    st.markdown(f"**Your score: {_score_str} ({_pct})**")
-    st.markdown("_This score is based on your slider settings. Change the sliders and this number changes._")
-
-    st.markdown("---")
-    st.markdown("**Where the score comes from**")
-    st.markdown("Each row shows how much one skill contributed to the total, based on your slider weights.")
-
-    if not advanced_mode:
-        # ── Underlying stats — primary view ──
-        stat_rows = []; shown = set()
-        for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
-        for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
-            raw_col = RAW_COL_MAP.get(z_col)
-            z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
-            pct = zscore_to_percentile(z) if pd.notna(z) else None
-            if raw_col in ("completion_pct", "td_rate", "int_rate", "sack_rate", "first_down_rate", "turnover_rate"):
-                raw_fmt = f"{raw:.1%}" if pd.notna(raw) else "—"
-            elif raw_col in ("passing_cpoe",):
-                raw_fmt = f"{raw:+.2f}" if pd.notna(raw) else "—"
-            else:
-                raw_fmt = f"{raw:.2f}" if pd.notna(raw) else "—"
-            stat_rows.append({"Stat": stat_labels.get(z_col, z_col), "Value": raw_fmt, "Percentile": f"{int(pct)}th" if pct is not None else "—"})
-        if stat_rows:
-            st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
-
-        with st.expander("⚙️  How your slider preset weights this player"):
-            bundle_rows = []
-            for bk, bundle in active_bundles.items():
-                bw = bundle_weights.get(bk, 0)
-                if bw == 0: continue
-                contribution = sum(
-                    view_row.get(z, 0) * (bw * internal / total_weight)
-                    for z, internal in bundle["stats"].items()
-                    if pd.notna(view_row.get(z)) and total_weight > 0
-                )
-                bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
-            if bundle_rows:
-                st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
-            else:
-                st.caption("No bundles weighted — drag some sliders.")
-    else:
-        rows = []
-        for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
-            raw_col = RAW_COL_MAP.get(z_col)
-            z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
-            w = effective_weights.get(z_col, 0)
-            contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
-            pct = zscore_to_percentile(z) if pd.notna(z) else None
-            if raw_col in ("completion_pct", "td_rate", "int_rate", "sack_rate", "first_down_rate", "turnover_rate"):
-                raw_fmt = f"{raw:.1%}" if pd.notna(raw) else "—"
-            elif raw_col in ("passing_cpoe",):
-                raw_fmt = f"{raw:+.2f}" if pd.notna(raw) else "—"
-            else:
-                raw_fmt = f"{raw:.2f}" if pd.notna(raw) else "—"
-            rows.append({"Stat": stat_labels.get(z_col, z_col), "Value": raw_fmt, "Percentile": f"{int(pct)}th" if pct is not None else "—", "Weight": f"{w}", "Points added": f"{contrib:+.2f}"})
-        if rows: st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-with c2:
-    st.markdown("**Percentile profile vs. all league QBs**")
-    st.caption("Solid blue = this player. Dashed gray = top-32 starter average. INT rate and sack rate are inverted (higher = fewer turnovers/sacks).")
-    radar_row = view_row if view_row is not None else player
-    season_pool = all_qbs_full[all_qbs_full["season_year"] == selected_season]
-    top32 = season_pool.sort_values("attempts", ascending=False).head(32)
-    radar_bench = {z: top32[z].mean() for z in RADAR_STATS if z in top32.columns and top32[z].notna().any()}
-    radar_bench_raw = {}
-    for z in RADAR_STATS:
-        raw_col = RAW_COL_MAP.get(z)
-        if raw_col and raw_col in top32.columns and top32[raw_col].notna().any():
-            radar_bench_raw[z] = top32[raw_col].mean()
-    fig = build_radar_figure(radar_row, stat_labels, stat_methodology,
-                              benchmark=radar_bench, benchmark_raw=radar_bench_raw)
-    if fig: st.plotly_chart(fig, use_container_width=True)
-
-    def _qb_score_of(row):
-        if row is None or total_weight <= 0:
-            return float("nan")
-        return sum(
-            row.get(z, 0) * (w / total_weight)
-            for z, w in effective_weights.items()
-            if pd.notna(row.get(z))
+        _comp_kwargs = dict(
+            comparison_player_id=_comp_pid,
+            comparison_player_name=_comp_name,
+            comparison_season=_comp_season,
         )
 
-    from lib_shared import render_player_comparison, team_theme as _theme
+        with st.expander("📋  Pre-snap — formation, tempo, down splits", expanded=False):
+            _render_presnap_split(
+                player_id=_qb_panel_pid, player_name=selected,
+                season=_qb_panel_season, theme=_theme(_team_abbr), **_comp_kwargs,
+            )
+        with st.expander("🧠  Processing — time to throw, aggressiveness, depth", expanded=False):
+            _render_processing_split(
+                player_id=_qb_panel_pid, player_name=selected,
+                season=_qb_panel_season, theme=_theme(_team_abbr), **_comp_kwargs,
+            )
+        with st.expander("🥊  Under pressure — clean pocket vs. pressured", expanded=False):
+            _render_pressure_split(
+                player_id=_qb_panel_pid, player_name=selected,
+                season=_qb_panel_season, theme=_theme(_team_abbr), **_comp_kwargs,
+            )
+        with st.expander("⏱️  Situational — 3rd down, red zone, 4th quarter, 2-min drill", expanded=False):
+            _render_situational_split(
+                player_id=_qb_panel_pid, player_name=selected,
+                season=_qb_panel_season, theme=_theme(_team_abbr), **_comp_kwargs,
+            )
+        with st.expander("🏆  Elite vs. weak competition — does he rise to elite D or feast on bad ones?", expanded=False):
+            _render_competition_split(
+                player_id=_qb_panel_pid, player_name=selected,
+                season=_qb_panel_season, theme=_theme(_team_abbr), **_comp_kwargs,
+            )
+
+
+# ─── ⚔️ COMPARE ─────────────────────────────────────────
+with tab_compare:
+    from lib_shared import render_player_comparison
     render_player_comparison(
         player_row=view_row,
         player_name=selected,
@@ -789,8 +791,8 @@ with c2:
         primary_score=_view_score,
         compute_comparison_score=_qb_score_of,
         radar_builder=build_radar_figure,
-        benchmark=radar_bench,
-        benchmark_raw=radar_bench_raw,
+        benchmark=_radar_bench,
+        benchmark_raw=_radar_bench_raw,
         stat_labels=stat_labels,
         stat_methodology=stat_methodology,
         key_prefix=f"qb_cmp_{player.get('player_id', selected)}",
@@ -798,25 +800,37 @@ with c2:
         theme=_theme(player.get("recent_team") or ""),
     )
 
-# ── Game-by-game splits explorer ─────────────────────────────
-from lib_splits import render_splits_section as _render_splits_section
-_render_splits_section(
-    player_name=selected,
-    season=selected_season,
-    position_group="QB",
-    key_prefix=f"qb_{player.get('player_id') or selected}",
-    is_career_view=_yr["is_career_view"],
-)
 
-career_arc_section(
-    player=player,
-    league_parquet_path=DATA_PATH,
-    z_score_cols=list(RAW_COL_MAP.keys()),
-    stat_labels=stat_labels,
-    id_col="player_id",
-    name_col="player_display_name",
-    position_label="quarterbacks",
-)
+# ─── 📈 CAREER & COMBINE ────────────────────────────────
+with tab_career:
+    _WORKOUTS_PATH = Path(__file__).resolve().parent.parent / "data" / "college" / "nfl_all_workouts.parquet"
+    render_combine_chart(
+        player_name=selected,
+        position="QB",
+        workouts_path=_WORKOUTS_PATH,
+        key=f"qb_combine_chart_{player.get('player_id', selected)}",
+    )
+    career_arc_section(
+        player=player,
+        league_parquet_path=DATA_PATH,
+        z_score_cols=list(RAW_COL_MAP.keys()),
+        stat_labels=stat_labels,
+        id_col="player_id",
+        name_col="player_display_name",
+        position_label="quarterbacks",
+    )
+
+
+# ─── 📅 GAME-BY-GAME SPLITS ─────────────────────────────
+with tab_splits:
+    from lib_splits import render_splits_section as _render_splits_section
+    _render_splits_section(
+        player_name=selected,
+        season=selected_season,
+        position_group="QB",
+        key_prefix=f"qb_{player.get('player_id') or selected}",
+        is_career_view=_yr["is_career_view"],
+    )
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.caption(
