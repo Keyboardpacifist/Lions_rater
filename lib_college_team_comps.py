@@ -71,13 +71,14 @@ def find_college_team_comps(team: str, season: int, *,
                                 n: int = 3,
                                 exclude_same_team: bool = True,
                                 min_seasons_apart: int = 0,
-                                min_total_players: int = 25) -> list[dict]:
+                                min_total_players: int = 20) -> list[dict]:
     """Return top-N most comparable college team-seasons.
 
     `min_total_players` — only consider team-seasons with at least this
-    many players counted in our system. Filters out small-sample FCS
-    programs that pollute the pool (McNeese, Mercyhurst, etc.) when
-    a Power-4 program asks for comps.
+    many players counted in our system. The dataset caps at 23 players
+    per team (1 QB + 3 WR/TE + 1 TE + 2 RB + 5 OL + 11 DEF), so this
+    threshold filters small-sample FCS programs while still keeping
+    full Power-4 rosters in the pool.
     """
     df = load_college_team_seasons()
     if df.empty:
@@ -94,6 +95,14 @@ def find_college_team_comps(team: str, season: int, *,
     else:
         df = df.assign(_total_n=0)
 
+    # Cosine works well in multi-D (captures shape: which traits are
+    # the team's strengths). In 1-D (defense scope, until we add more
+    # defensive z-stats) it degenerates to ±1, so every above-avg
+    # defense looks 100% similar to every other one. Fall back to
+    # value-distance in that case so we actually find teams with a
+    # similar defensive strength level.
+    use_distance = (len(stat_cols) == 1)
+
     sims: list[tuple[float, str, int, np.ndarray]] = []
     for _, row in df.iterrows():
         t, s = row["team"], int(row["season"])
@@ -109,7 +118,11 @@ def find_college_team_comps(team: str, season: int, *,
         vec = _get_team_vector(df, t, s, stat_cols)
         if vec is None:
             continue
-        sim = _cosine(target, vec)
+        if use_distance:
+            # Map |Δz| → similarity in [0, 1]. 4 z-units apart = 0.
+            sim = max(0.0, 1.0 - abs(float(target[0]) - float(vec[0])) / 4.0)
+        else:
+            sim = _cosine(target, vec)
         sims.append((sim, t, s, vec))
 
     sims.sort(key=lambda x: x[0], reverse=True)
