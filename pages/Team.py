@@ -306,8 +306,35 @@ st.caption(
     "Every game with score, result, opponent's pass-defense rank, "
     "and how this team performed against the spread."
 )
-from lib_team_game_log import render_game_log
+from lib_team_game_log import render_game_log, get_team_game_log
 render_game_log(team, int(season))
+
+# ── Game summary deep-dive — pick a week to see the WP arc + critical
+#    plays + counterfactual coverage analysis
+_glog = get_team_game_log(team, int(season))
+if not _glog.empty:
+    week_options = ["—"] + [
+        f"Wk {int(r['week'])} {r['home_away']} {r['opponent']} "
+        f"({int(r['team_score'])}–{int(r['opp_score'])}, {r['result']})"
+        for _, r in _glog.iterrows()
+    ]
+    week_choice = st.selectbox(
+        "🔬 Pick a week to deep-dive",
+        options=week_options,
+        index=0,
+        key="game_summary_week_pick",
+        help="Shows WP arc, top 5 critical plays, and counterfactual "
+             "coverage analysis for each pass — what other coverages "
+             "would have produced against this matchup.",
+    )
+    if week_choice != "—":
+        chosen_idx = week_options.index(week_choice) - 1
+        chosen_row = _glog.iloc[chosen_idx]
+        from lib_team_game_summary import render_game_summary
+        render_game_summary(
+            team, int(season), int(chosen_row["week"]),
+            game_type=chosen_row.get("game_type", "REG"),
+        )
 
 
 # ── Tendency explorer — offense & defense ────────────────────
