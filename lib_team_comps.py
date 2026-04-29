@@ -202,30 +202,43 @@ def _build_comp_divergence(target: np.ndarray, comp: np.ndarray,
     if len(available) != len(target):
         return ""
 
-    candidates = []  # (abs_delta, stat, target_z, comp_z)
+    # Pass 1 — strict: real tier-gap differences with at least one
+    # side notable. Best fan-readable output.
+    strong = []
+    # Pass 2 — loose: just biggest absolute deltas, ignoring tier match
+    all_deltas = []
+
     for i, stat in enumerate(available):
         if stat not in _DIVERGENCE_PHRASES:
             continue
         if np.isnan(target[i]) or np.isnan(comp[i]):
             continue
         delta = float(target[i]) - float(comp[i])
-        # Require ≥1 full descriptor-tier of difference (z gap ≥ 1.0)
-        # so we don't surface "elite vs above-average" as divergence
+        all_deltas.append((abs(delta), stat, float(target[i]),
+                            float(comp[i])))
         if abs(delta) < 1.0:
             continue
-        # Skip unless the descriptors actually land in different tiers —
-        # that's what makes the difference fan-readable.
         if _z_descriptor(target[i]) == _z_descriptor(comp[i]):
             continue
-        # And require at least one side to be notable (≥ "above-average"
-        # or ≤ "below-average") — otherwise it's noise around the mean.
         if abs(target[i]) < 0.7 and abs(comp[i]) < 0.7:
             continue
-        candidates.append((abs(delta), stat, float(target[i]),
-                            float(comp[i])))
+        strong.append((abs(delta), stat, float(target[i]),
+                        float(comp[i])))
+
+    candidates = strong if strong else None
+    fallback_used = False
+    if not candidates:
+        # Fall back to the top-3 deltas regardless of tier match —
+        # ensures every comp has SOMETHING to say about where they
+        # differ, even if the differences are subtle.
+        all_deltas.sort(reverse=True)
+        candidates = all_deltas[:3]
+        fallback_used = True
 
     if not candidates:
-        return ""
+        return ("Where they diverge: these two team-seasons are "
+                "statistically near-identical across every category "
+                "we measure.")
     candidates.sort(reverse=True)
     top = candidates[:3]
 
@@ -234,7 +247,6 @@ def _build_comp_divergence(target: np.ndarray, comp: np.ndarray,
         phrase = _DIVERGENCE_PHRASES.get(stat, stat.replace("_z", "")
                                                   .replace("_", " "))
         if tz > cz:
-            # Target had it, comp didn't
             fragments.append(
                 f"**{target_label}**'s {phrase} was {_z_descriptor(tz)} "
                 f"({_z_descriptor(cz)} for {comp_label})"
@@ -245,9 +257,11 @@ def _build_comp_divergence(target: np.ndarray, comp: np.ndarray,
                 f"({_z_descriptor(tz)} for {target_label})"
             )
 
+    prefix = ("Where they diverge (subtle — these team-seasons are "
+              "very close): " if fallback_used else "Where they diverge: ")
     if len(fragments) == 1:
-        return f"Where they diverge: {fragments[0]}."
-    return "Where they diverge: " + "; ".join(fragments) + "."
+        return f"{prefix}{fragments[0]}."
+    return prefix + "; ".join(fragments) + "."
 
 
 def _build_comp_reason(target: np.ndarray, comp: np.ndarray,
