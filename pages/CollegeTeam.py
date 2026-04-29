@@ -49,6 +49,18 @@ if team_df.empty:
 teams_avail = sorted(team_df["team"].unique().tolist())
 seasons_avail = sorted(team_df["season"].unique().tolist(), reverse=True)
 
+# Apply pending nav intent (set by the "Open …" comp buttons) before
+# the selectbox widgets render. We can't write to widget keys after
+# they're instantiated, so the click handler stashes the target in
+# `college_nav_intent` and we resolve it here, on the rerun.
+_nav = st.session_state.pop("college_nav_intent", None)
+if _nav:
+    nav_team, nav_season = _nav
+    if nav_team in teams_avail:
+        st.session_state["college_team_pick"] = nav_team
+    if nav_season in seasons_avail:
+        st.session_state["college_season_pick"] = int(nav_season)
+
 # Read query params into session_state ONLY on first render. After
 # that, the selectbox is the source of truth — pushing stale qp
 # values back in on every rerun would overwrite the user's pick
@@ -216,8 +228,13 @@ else:
                 key=f"cgo_{c['team']}_{c['season']}",
                 use_container_width=True,
             ):
-                st.session_state["college_team_pick"] = c["team"]
-                st.session_state["college_season_pick"] = int(c["season"])
+                # Stash the target on a NAV-INTENT key (not the widget
+                # keys) — those would raise StreamlitAPIException
+                # because the selectboxes already rendered this run.
+                # First-render logic above applies the intent next run.
+                st.session_state["college_nav_intent"] = (
+                    c["team"], int(c["season"])
+                )
                 st.query_params.update({
                     "team": c["team"],
                     "season": str(c["season"]),
