@@ -309,7 +309,13 @@ st.caption(
     "view to see what opponents do against this team."
 )
 
-from lib_team_tendencies import get_team_tendencies, get_filter_options
+from lib_team_tendencies import (
+    get_team_tendencies,
+    get_filter_options,
+    render_filtered_route_tree,
+    render_filtered_run_profile,
+    render_filtered_throw_map,
+)
 
 t_side = st.radio(
     "View",
@@ -418,29 +424,83 @@ else:
             pct = rd.get(key, 0) * 100
             col.metric(f"Run {key.title()}", f"{pct:.0f}%")
 
-    # Top targets (passes) and top runners (runs) side by side
-    if t_side == "offense" and (tend.get("top_targets") or tend.get("top_runners")):
-        tt_col, tr_col = st.columns(2)
-        with tt_col:
-            if tend.get("top_targets"):
-                st.markdown("**Top targets** (passes)")
+    # Build the scenario kwargs that will be re-applied when filtering
+    # a specific player's plays for the chart drill-down.
+    _scenario_kwargs = dict(
+        downs=t_downs or None,
+        distance_buckets=t_dist or None,
+        formation=t_form if t_form != "All" else None,
+        personnel=t_pers or None,
+        coverage=t_cov or None,
+        manzone=t_manzone if t_manzone != "All" else None,
+        rushers=t_rushers if t_rushers != "All" else None,
+    )
+    _scenario_label_parts = []
+    if t_downs: _scenario_label_parts.append(
+        f"down {','.join(str(d) for d in t_downs)}")
+    if t_dist: _scenario_label_parts.append(", ".join(t_dist).lower())
+    if t_form != "All": _scenario_label_parts.append(t_form.lower())
+    if t_pers: _scenario_label_parts.append(", ".join(t_pers))
+    if t_cov: _scenario_label_parts.append(", ".join(t_cov))
+    if t_manzone != "All": _scenario_label_parts.append(f"{t_manzone} coverage")
+    if t_rushers != "All": _scenario_label_parts.append(f"{t_rushers} rushers")
+    _scenario_label = " · ".join(_scenario_label_parts) or "all situations"
+
+    # Section: Top players in this scenario — clickable, opens filtered chart
+    _selected_key = "tendency_selected_player"
+    if t_side == "offense" and (
+        tend.get("top_targets") or tend.get("top_runners")
+        or tend.get("top_passers")
+    ):
+        cols_count = sum(1 for k in ("top_passers", "top_targets", "top_runners")
+                          if tend.get(k))
+        cols = st.columns(max(cols_count, 1))
+        col_idx = 0
+        if tend.get("top_passers"):
+            with cols[col_idx]:
+                st.markdown("**Top passers** (dropbacks)")
+                for p in tend["top_passers"]:
+                    label = (f"{p.get('name', p['passer_player_id'])} · "
+                             f"{int(p['n'])} dbk · "
+                             f"{p['comp_pct']*100:.0f}% comp · "
+                             f"{p['epa']:+.2f} EPA")
+                    if st.button(label, key=f"qb_btn_{p['passer_player_id']}",
+                                  use_container_width=True):
+                        st.session_state[_selected_key] = (
+                            "QB", p["passer_player_id"], p.get("name", "")
+                        )
+            col_idx += 1
+        if tend.get("top_targets"):
+            with cols[col_idx]:
+                st.markdown("**Top targets**")
                 for t in tend["top_targets"]:
-                    st.markdown(
-                        f"- **{t.get('name', t['receiver_player_id'])}** · "
-                        f"{int(t['n'])} targets · "
-                        f"{t['catch_pct']*100:.0f}% caught · "
-                        f"{t['epa']:+.3f} EPA/tgt"
-                    )
-        with tr_col:
-            if tend.get("top_runners"):
-                st.markdown("**Top runners** (runs)")
+                    label = (f"{t.get('name', t['receiver_player_id'])} · "
+                             f"{int(t['n'])} tgt · "
+                             f"{t['catch_pct']*100:.0f}% · "
+                             f"{t['epa']:+.2f}")
+                    if st.button(label,
+                                  key=f"wr_btn_{t['receiver_player_id']}",
+                                  use_container_width=True):
+                        st.session_state[_selected_key] = (
+                            "WR", t["receiver_player_id"],
+                            t.get("name", "")
+                        )
+            col_idx += 1
+        if tend.get("top_runners"):
+            with cols[col_idx]:
+                st.markdown("**Top runners**")
                 for r in tend["top_runners"]:
-                    st.markdown(
-                        f"- **{r['rusher_player_name']}** · "
-                        f"{int(r['n'])} carries · "
-                        f"{r['ypc']:.1f} YPC · "
-                        f"{r['epa']:+.3f} EPA/carry"
-                    )
+                    label = (f"{r['rusher_player_name']} · "
+                             f"{int(r['n'])} car · "
+                             f"{r['ypc']:.1f} YPC · "
+                             f"{r['epa']:+.2f}")
+                    if st.button(label,
+                                  key=f"rb_btn_{r['rusher_player_name']}",
+                                  use_container_width=True):
+                        st.session_state[_selected_key] = (
+                            "RB", r['rusher_player_name'],
+                            r['rusher_player_name']
+                        )
     elif t_side == "defense" and tend.get("top_targets"):
         st.markdown("**Top targets opponents went to** (vs this defense)")
         for t in tend["top_targets"]:
@@ -450,6 +510,34 @@ else:
                 f"{t['catch_pct']*100:.0f}% caught · "
                 f"{t['epa']:+.3f} EPA/tgt"
             )
+
+    # ── Drill-down chart for selected player ──
+    selected = st.session_state.get(_selected_key)
+    if selected and t_side == "offense":
+        kind, ident, display_name = selected
+        with st.expander(f"📊  {display_name} — drill-down chart "
+                          f"(filtered to: {_scenario_label})", expanded=True):
+            if st.button("✕ Close", key="tendency_close_drilldown"):
+                st.session_state.pop(_selected_key, None)
+                st.rerun()
+            if kind == "QB":
+                render_filtered_throw_map(
+                    ident, team, int(season),
+                    scenario=_scenario_kwargs,
+                    scenario_label=_scenario_label,
+                )
+            elif kind == "WR":
+                render_filtered_route_tree(
+                    ident, team, int(season),
+                    scenario=_scenario_kwargs,
+                    scenario_label=_scenario_label,
+                )
+            elif kind == "RB":
+                render_filtered_run_profile(
+                    ident, team, int(season),
+                    scenario=_scenario_kwargs,
+                    scenario_label=_scenario_label,
+                )
 
 
 # ── Comp engine — the headline feature ────────────────────────

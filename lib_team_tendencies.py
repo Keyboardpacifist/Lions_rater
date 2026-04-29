@@ -310,7 +310,60 @@ def get_team_tendencies(team: str, season: int, *, side: str = "offense",
             .sort_values("n", ascending=False)
             .head(6)
         )
+        # Map rusher name → player_id (from the runs subset itself)
+        if "player_id" in runs.columns:
+            id_lookup = (
+                runs.dropna(subset=["rusher_player_name", "player_id"])
+                .groupby("rusher_player_name")["player_id"]
+                .first()
+                .to_dict()
+            )
+            runner_agg["player_id"] = runner_agg["rusher_player_name"].map(id_lookup)
         top_runners = runner_agg.to_dict("records")
+
+    # Top QBs (passers) on dropbacks — only relevant on offense view
+    top_passers = []
+    if side == "offense":
+        # Passers = passes + sacks + scrambles all share passer_player_id.
+        # Pull from the original dropbacks subset, joined back via game/play.
+        # Simpler: filter the unified df where play_type ∈ {pass, sack, scramble}
+        # and pull the original passer_player_id from qb_dropbacks. We don't
+        # carry passer_player_id in the unified df, so re-load it for this
+        # team-season-filtered slice.
+        try:
+            db = pl.read_parquet(_DATA / "qb_dropbacks.parquet").to_pandas()
+        except Exception:
+            db = pd.DataFrame()
+        if not db.empty:
+            db_team = db[(db["posteam"] == team) & (db["season"] == season)]
+            # Re-apply a simplified scenario filter to dropbacks
+            db_filtered = db_team
+            # Replicate the filters using available columns
+            # Down / distance via ydstogo
+            if "down" in db_filtered.columns:
+                pass  # filtering applied below via a helper
+            # We just join on (game_id, play_id) to the already-filtered df
+            keep_keys = passes[["game_id", "play_id"]].drop_duplicates()
+            db_filtered = db_filtered.merge(keep_keys,
+                                              on=["game_id", "play_id"], how="inner")
+            if not db_filtered.empty and "passer_player_id" in db_filtered.columns:
+                name_idx = _player_name_index()
+                passer_agg = (
+                    db_filtered.dropna(subset=["passer_player_id"])
+                    .groupby("passer_player_id")
+                    .agg(
+                        n=("epa", "size"),
+                        epa=("epa", "mean"),
+                        comp_pct=("complete_pass", "mean"),
+                    )
+                    .reset_index()
+                    .sort_values("n", ascending=False)
+                    .head(3)
+                )
+                passer_agg["name"] = passer_agg["passer_player_id"].apply(
+                    lambda pid: name_idx.get(str(pid), str(pid))
+                )
+                top_passers = passer_agg.to_dict("records")
 
     return {
         "n_plays": n,
@@ -324,7 +377,168 @@ def get_team_tendencies(team: str, season: int, *, side: str = "offense",
         "run_direction": run_dir,
         "top_targets": top_targets,
         "top_runners": top_runners,
+        "top_passers": top_passers,
     }
+
+
+def _filter_plays_to_scenario(plays: pd.DataFrame, *,
+                                  downs, distance_buckets, formation,
+                                  personnel, coverage, manzone,
+                                  rushers) -> pd.DataFrame:
+    """Apply the same scenario filter set that drives the tendency
+    explorer to a player-specific play subset (for filtered charts)."""
+    out = plays
+    if downs:
+        out = out[out["down"].isin(downs)]
+    if distance_buckets and "ydstogo" in out.columns:
+        def _b(v):
+            if pd.isna(v): return None
+            if v <= 3: return "Short"
+            if v <= 7: return "Medium"
+            return "Long"
+        out = out[out["ydstogo"].apply(_b).isin(distance_buckets)]
+    if formation and formation != "All" and "offense_formation" in out.columns:
+        out = out[out["offense_formation"] == formation]
+    if personnel and "offense_personnel" in out.columns:
+        # Need to bucket personnel — reuse the helper logic
+        def _bucket(s):
+            if not isinstance(s, str): return None
+            rb = te = wr = 0
+            for tok in s.split(","):
+                tok = tok.strip()
+                head = tok.split(" ")[0]
+                if not head.isdigit(): continue
+                if " RB" in tok: rb = int(head)
+                elif " TE" in tok: te = int(head)
+                elif " WR" in tok: wr = int(head)
+            if rb == 0: return "Empty"
+            if rb == 1 and te == 1 and wr == 3: return "11"
+            if rb == 1 and te == 2 and wr == 2: return "12"
+            if rb == 2 and te == 1 and wr == 2: return "21"
+            if te >= 3 or rb >= 2: return "Heavy"
+            return None
+        out = out[out["offense_personnel"].apply(_bucket).isin(personnel)]
+    if coverage and "defense_coverage_type" in out.columns:
+        out = out[out["defense_coverage_type"].isin(coverage)]
+    if manzone == "Man" and "defense_man_zone_type" in out.columns:
+        out = out[out["defense_man_zone_type"] == "MAN_COVERAGE"]
+    elif manzone == "Zone" and "defense_man_zone_type" in out.columns:
+        out = out[out["defense_man_zone_type"] == "ZONE_COVERAGE"]
+    if "number_of_pass_rushers" in out.columns:
+        if rushers == "3":
+            out = out[out["number_of_pass_rushers"] == 3]
+        elif rushers == "4":
+            out = out[out["number_of_pass_rushers"] == 4]
+        elif rushers == "5+":
+            out = out[out["number_of_pass_rushers"] >= 5]
+    return out
+
+
+def render_filtered_route_tree(player_id: str, team: str, season: int,
+                                  *, scenario: dict, scenario_label: str) -> None:
+    """Show the receiver's route tree filtered to the current scenario."""
+    try:
+        from lib_splits import _load_targeted_plays
+        from lib_field_viz import build_route_tree
+    except Exception as e:
+        st.error(f"Couldn't load route-tree dependencies: {e}")
+        return
+    tp = _load_targeted_plays()
+    if tp is None or tp.empty:
+        st.info("Targeted-plays data not available.")
+        return
+    sub = tp[(tp["team"] == team) & (tp["season"] == season)
+              & (tp["player_id"] == player_id)]
+    sub = _filter_plays_to_scenario(sub, **scenario)
+    if sub.empty or len(sub) < 3:
+        st.warning(
+            f"Only {len(sub)} matching pass(es) in this scenario — "
+            f"too few to render a meaningful route tree."
+        )
+        return
+    st.caption(
+        f"📌 Route tree for **this scenario only**: {scenario_label}. "
+        f"{len(sub)} target(s) in slice."
+    )
+    fig = build_route_tree(sub, metric="epa_per_target")
+    if fig is not None:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Not enough labeled routes in this slice.")
+
+
+def render_filtered_run_profile(player_name: str, team: str, season: int,
+                                   *, scenario: dict, scenario_label: str) -> None:
+    """Show the runner's gap-distribution chart filtered to scenario."""
+    try:
+        from lib_splits import _load_rusher_plays, _classify_gap
+        from lib_field_viz import build_gap_diagram
+    except Exception as e:
+        st.error(f"Couldn't load run-profile dependencies: {e}")
+        return
+    rp = _load_rusher_plays()
+    if rp is None or rp.empty:
+        st.info("Rusher-plays data not available.")
+        return
+    sub = rp[(rp["team"] == team) & (rp["season"] == season)
+              & (rp["rusher_player_name"] == player_name)].copy()
+    sub = _filter_plays_to_scenario(sub, **scenario)
+    if sub.empty or len(sub) < 3:
+        st.warning(
+            f"Only {len(sub)} carry(ies) in this scenario — too few."
+        )
+        return
+    sub["gap_code"] = sub.apply(_classify_gap, axis=1)
+    st.caption(
+        f"📌 Run profile for **this scenario only**: {scenario_label}. "
+        f"{len(sub)} carry(ies) in slice."
+    )
+    fig = build_gap_diagram(sub, metric="epa_per_carry")
+    if fig is not None:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Not enough run data in this slice.")
+
+
+def render_filtered_throw_map(player_id: str, team: str, season: int,
+                                  *, scenario: dict, scenario_label: str) -> None:
+    """Show a QB's 3×3 zone throw map filtered to current scenario."""
+    try:
+        from lib_qb_panel import (
+            load_qb_dropbacks, _build_throw_grid, _render_throw_grid,
+            _league_throw_map,
+        )
+    except Exception as e:
+        st.error(f"Couldn't load throw-map dependencies: {e}")
+        return
+    db = load_qb_dropbacks()
+    sub = db[(db["passer_player_id"] == player_id) & (db["season"] == season)]
+    if sub.empty:
+        st.info(f"No dropbacks for this passer in {season}.")
+        return
+    # Filter pass attempts only
+    sub = sub[(sub["pass_attempt"] == 1)
+              & sub["air_yards"].notna()
+              & sub["pass_location"].notna()]
+    sub = _filter_plays_to_scenario(sub, **scenario)
+    if sub.empty or len(sub) < 5:
+        st.warning(
+            f"Only {len(sub)} attempt(s) in this scenario — "
+            f"too few for a meaningful throw map."
+        )
+        return
+    league = _league_throw_map(season)
+    epa, ann = _build_throw_grid(sub, league)
+    flat = [v for row in epa for v in row if v is not None]
+    z_scale = max((abs(min(flat)), abs(max(flat))), default=0.5)
+    z_scale = max(z_scale, 0.1)
+    st.caption(
+        f"📌 Throw map for **this scenario only**: {scenario_label}. "
+        f"{len(sub)} attempt(s) in slice."
+    )
+    fig = _render_throw_grid(epa, ann, title="", z_scale=z_scale,
+                                show_colorbar=True, height=400)
+    st.plotly_chart(fig, use_container_width=True)
 
 
 @st.cache_data(show_spinner=False)
