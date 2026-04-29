@@ -2288,134 +2288,160 @@ def render_splits_section(*, player_name: str, season,
         _render_headline_tiles(games, cfg)
         st.markdown("")
 
-        # ── Game-context filters ──
-        st.markdown("**Slice by game context:**")
-        f1, f2, f3 = st.columns(3)
-        f4, f5, f6 = st.columns(3)
-        with f1:
-            tier_pick = st.selectbox(
-                "Opponent defense",
-                ["All",
-                 "Top 10% (toughest)",
-                 "Top 25%",
-                 "Top half",
-                 "Bottom half",
-                 "Bottom 25% (easiest)"],
-                key=f"{key_prefix}_split_tier",
-            )
-        with f2:
-            roof_pick = st.selectbox(
-                "Roof",
-                ["All", "Outdoor", "Indoor"],
-                key=f"{key_prefix}_split_roof",
-            )
-        with f3:
-            surf_pick = st.selectbox(
-                "Surface",
-                ["All", "Grass", "Turf"],
-                key=f"{key_prefix}_split_surface",
-            )
-        with f4:
-            wx_pick = st.selectbox(
-                "Weather",
-                ["All", "Cold (<40°)", "Windy (>15mph)", "Mild / clear"],
-                key=f"{key_prefix}_split_weather",
-            )
-        with f5:
-            loc_pick = st.selectbox(
-                "Location",
-                ["All", "Home", "Away"],
-                key=f"{key_prefix}_split_loc",
-            )
-        with f6:
-            res_pick = st.selectbox(
-                "Result",
-                ["All", "Win", "Loss"],
-                key=f"{key_prefix}_split_result",
-            )
+        # ─── FILTER UI: chips + popover ─────────────────────────
+        # All filter dropdowns live inside one popover. Above the
+        # popover we render a chip row showing only the *active*
+        # filters; clicking a chip's ✕ clears that one filter.
+        # Default state = no clutter.
 
-        # ── Scheme filters (only render the dropdowns whose source
-        # column is present — keeps older seasons graceful) ──
-        scheme_cols_present = [c for c in
-                                ["box_bucket", "blitz_bucket", "man_bucket",
-                                 "top_coverage"]
-                                if c in games.columns]
-        box_pick = blitz_pick = man_pick = cov_pick = "All"
-        if scheme_cols_present:
-            st.markdown("**Slice by opponent's defensive scheme:**")
-            s1, s2, s3, s4 = st.columns(4)
-            if "box_bucket" in scheme_cols_present:
-                with s1:
-                    box_pick = st.selectbox(
-                        "Box defenders",
-                        ["All", "Light box", "Balanced box", "Heavy box"],
-                        key=f"{key_prefix}_split_box",
-                    )
-            if "blitz_bucket" in scheme_cols_present:
-                with s2:
-                    blitz_pick = st.selectbox(
-                        "Blitz rate",
-                        ["All", "Low blitz (<20%)", "Avg blitz (20–35%)",
-                         "High blitz (>35%)"],
-                        key=f"{key_prefix}_split_blitz",
-                    )
-            if "man_bucket" in scheme_cols_present:
-                with s3:
-                    man_pick = st.selectbox(
-                        "Man / zone",
-                        ["All", "Zone-heavy (<40% man)", "Mixed coverage",
-                         "Man-heavy (>55% man)"],
-                        key=f"{key_prefix}_split_man",
-                    )
-            if "top_coverage" in scheme_cols_present:
-                with s4:
-                    cov_options = ["All"] + [
-                        c for c in ["Cover-0", "Cover-1", "Cover-2",
-                                     "Cover-3", "Cover-4", "Cover-6",
-                                     "Cover-9", "2-Man"]
-                        if c in set(games["top_coverage"].dropna().unique())
-                    ]
-                    cov_pick = st.selectbox(
-                        "Top coverage shell",
-                        cov_options,
-                        key=f"{key_prefix}_split_cov",
-                    )
+        # Filter spec: (suffix, label, options_or_None, column_required_or_None)
+        # If options is None, we derive from data at render time.
+        _ALL = "All"
+        _filter_specs = [
+            ("tier",    "Opp defense",
+             [_ALL, "Top 10% (toughest)", "Top 25%", "Top half",
+              "Bottom half", "Bottom 25% (easiest)"], None),
+            ("roof",    "Roof",
+             [_ALL, "Outdoor", "Indoor"], None),
+            ("surface", "Surface",
+             [_ALL, "Grass", "Turf"], None),
+            ("weather", "Weather",
+             [_ALL, "Cold (<40°)", "Windy (>15mph)", "Mild / clear"], None),
+            ("loc",     "Location",
+             [_ALL, "Home", "Away"], None),
+            ("result",  "Result",
+             [_ALL, "Win", "Loss"], None),
+            ("box",     "Box defenders",
+             [_ALL, "Light box", "Balanced box", "Heavy box"], "box_bucket"),
+            ("blitz",   "Blitz rate",
+             [_ALL, "Low blitz (<20%)", "Avg blitz (20–35%)",
+              "High blitz (>35%)"], "blitz_bucket"),
+            ("man",     "Man / zone",
+             [_ALL, "Zone-heavy (<40% man)", "Mixed coverage",
+              "Man-heavy (>55% man)"], "man_bucket"),
+            ("cov",     "Coverage shell", None, "top_coverage"),
+            ("pers",    "Personnel",      None, "off_pers_bucket"),
+            ("pace",    "Game pace",
+             [_ALL, "Run-heavy (<50%)", "Balanced (50–60%)",
+              "Pass-heavy (>60%)"], "off_pace_bucket"),
+            ("sg",      "Formation",
+             [_ALL, "Under-center heavy", "Mixed", "Shotgun-heavy"],
+             "off_shotgun_bucket"),
+        ]
 
-        # ── Own-offense scheme filters (offensive players only) ──
-        own_scheme_cols = [c for c in
-                            ["off_pers_bucket", "off_pace_bucket",
-                             "off_shotgun_bucket"]
-                            if c in games.columns]
-        pers_pick = pace_pick = sg_pick = "All"
-        if own_scheme_cols:
-            st.markdown("**Slice by own-offense scheme:**")
-            o1, o2, o3 = st.columns(3)
-            if "off_pers_bucket" in own_scheme_cols:
-                with o1:
-                    pers_options = ["All"] + sorted(
-                        set(games["off_pers_bucket"].dropna().unique())
-                    )
-                    pers_pick = st.selectbox(
-                        "Personnel grouping",
-                        pers_options,
-                        key=f"{key_prefix}_split_pers",
-                    )
-            if "off_pace_bucket" in own_scheme_cols:
-                with o2:
-                    pace_pick = st.selectbox(
-                        "Game pace",
-                        ["All", "Run-heavy (<50%)",
-                         "Balanced (50–60%)", "Pass-heavy (>60%)"],
-                        key=f"{key_prefix}_split_pace",
-                    )
-            if "off_shotgun_bucket" in own_scheme_cols:
-                with o3:
-                    sg_pick = st.selectbox(
-                        "Formation profile",
-                        ["All", "Under-center heavy", "Mixed",
-                         "Shotgun-heavy"],
-                        key=f"{key_prefix}_split_sg",
-                    )
+        def _opts_for(suffix: str, fixed_opts, col_req: str | None):
+            if col_req and col_req not in games.columns:
+                return None
+            if fixed_opts is not None:
+                return fixed_opts
+            # Data-derived options
+            if suffix == "cov":
+                present = set(games["top_coverage"].dropna().unique())
+                return [_ALL] + [c for c in
+                                  ["Cover-0", "Cover-1", "Cover-2", "Cover-3",
+                                   "Cover-4", "Cover-6", "Cover-9", "2-Man"]
+                                  if c in present]
+            if suffix == "pers":
+                return [_ALL] + sorted(
+                    set(games["off_pers_bucket"].dropna().unique())
+                )
+            return [_ALL]
+
+        # Active chips: read session_state for any non-default filter
+        active_filters = []
+        for suffix, label, fixed_opts, col_req in _filter_specs:
+            opts = _opts_for(suffix, fixed_opts, col_req)
+            if opts is None:
+                continue
+            state_key = f"{key_prefix}_split_{suffix}"
+            val = st.session_state.get(state_key, _ALL)
+            if val != _ALL:
+                active_filters.append((state_key, label, val))
+
+        # Render chip row + popover trigger
+        cap_col, btn_col = st.columns([5, 1])
+        with cap_col:
+            if active_filters:
+                chip_cols = st.columns(min(len(active_filters), 6))
+                for i, (state_key, label, val) in enumerate(active_filters):
+                    with chip_cols[i % len(chip_cols)]:
+                        if st.button(f"✕ {label}: {val}",
+                                       key=f"{state_key}_chip",
+                                       help="Click to clear this filter"):
+                            st.session_state[state_key] = _ALL
+                            st.rerun()
+            else:
+                st.caption("Showing **all games** — open the filter "
+                            "panel to slice by opponent, scheme, weather, etc.")
+        with btn_col:
+            with st.popover(f"🔧 Filters{f' ({len(active_filters)})' if active_filters else ''}",
+                              use_container_width=True):
+                # ── Game-context filters ──
+                st.markdown("**Game context**")
+                f1, f2, f3 = st.columns(3)
+                f4, f5, f6 = st.columns(3)
+                ctx_pairs = [(f1, "tier"), (f2, "roof"), (f3, "surface"),
+                              (f4, "weather"), (f5, "loc"), (f6, "result")]
+                for col, suffix in ctx_pairs:
+                    spec = next(s for s in _filter_specs if s[0] == suffix)
+                    opts = _opts_for(suffix, spec[2], spec[3])
+                    if opts is None:
+                        continue
+                    with col:
+                        st.selectbox(spec[1], opts,
+                                       key=f"{key_prefix}_split_{suffix}")
+
+                # ── Opp scheme filters (only if data present) ──
+                scheme_specs = [s for s in _filter_specs
+                                  if s[0] in ("box", "blitz", "man", "cov")
+                                  and _opts_for(s[0], s[2], s[3]) is not None]
+                if scheme_specs:
+                    st.markdown("**Opponent defensive scheme**")
+                    s_cols = st.columns(min(len(scheme_specs), 4))
+                    for i, spec in enumerate(scheme_specs):
+                        opts = _opts_for(spec[0], spec[2], spec[3])
+                        with s_cols[i % len(s_cols)]:
+                            st.selectbox(spec[1], opts,
+                                           key=f"{key_prefix}_split_{spec[0]}")
+
+                # ── Own-offense scheme filters ──
+                own_specs = [s for s in _filter_specs
+                              if s[0] in ("pers", "pace", "sg")
+                              and _opts_for(s[0], s[2], s[3]) is not None]
+                if own_specs:
+                    st.markdown("**Own-offense scheme**")
+                    o_cols = st.columns(min(len(own_specs), 3))
+                    for i, spec in enumerate(own_specs):
+                        opts = _opts_for(spec[0], spec[2], spec[3])
+                        with o_cols[i % len(o_cols)]:
+                            st.selectbox(spec[1], opts,
+                                           key=f"{key_prefix}_split_{spec[0]}")
+
+                # ── Reset all ──
+                if active_filters:
+                    if st.button("Reset all filters",
+                                   key=f"{key_prefix}_split_reset",
+                                   use_container_width=True):
+                        for state_key, _, _ in active_filters:
+                            st.session_state[state_key] = _ALL
+                        st.rerun()
+
+        # Read final values from session_state (set by the popover widgets)
+        def _val(suffix):
+            return st.session_state.get(f"{key_prefix}_split_{suffix}", _ALL)
+        tier_pick  = _val("tier")
+        roof_pick  = _val("roof")
+        surf_pick  = _val("surface")
+        wx_pick    = _val("weather")
+        loc_pick   = _val("loc")
+        res_pick   = _val("result")
+        box_pick   = _val("box")
+        blitz_pick = _val("blitz")
+        man_pick   = _val("man")
+        cov_pick   = _val("cov")
+        pers_pick  = _val("pers")
+        pace_pick  = _val("pace")
+        sg_pick    = _val("sg")
 
         # ── Apply filters ──
         filt = games.copy()

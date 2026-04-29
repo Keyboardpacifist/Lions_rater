@@ -946,132 +946,165 @@ _render_card(
     season=(None if _yr["is_career_view"] else selected_season),
 )
 
-# ── Combine workout chart vs. all-time RB pool ────────────────
-_WORKOUTS_PATH = Path(__file__).resolve().parent.parent / "data" / "college" / "nfl_all_workouts.parquet"
-render_combine_chart(
-    player_name=selected,
-    position="RB",
-    workouts_path=_WORKOUTS_PATH,
-    key=f"rb_combine_chart_{player.get('player_id', selected)}",
-)
+# ════════════════════════════════════════════════════════════════
+# TABBED PLAYER DETAIL — Profile / Run Scheme / Coverage / Compare /
+# Career & Combine / Game splits
+# Trading card hero stays sticky above the tabs.
+# ════════════════════════════════════════════════════════════════
 
-c1, c2 = st.columns([1, 1])
-with c1:
-    st.markdown(f"**Your score:** {format_score(_view_score)}")
-    st.markdown("---")
-    st.markdown("**How your score breaks down**")
+_radar_row = view_row if view_row is not None else player
+_season_pool_rb = all_rbs_full[all_rbs_full["season_year"] == selected_season]
+_top32_rb = _season_pool_rb.sort_values("off_snaps", ascending=False).head(32)
+_radar_bench = {z: _top32_rb[z].mean() for z in RADAR_STATS
+                  if z in _top32_rb.columns and _top32_rb[z].notna().any()}
+_radar_bench_raw = {}
+for z in RADAR_STATS:
+    raw_col = RAW_COL_MAP.get(z)
+    if raw_col and raw_col in _top32_rb.columns and _top32_rb[raw_col].notna().any():
+        _radar_bench_raw[z] = _top32_rb[raw_col].mean()
 
-    if not advanced_mode:
-        # ── Underlying stats — primary view (what fans care about) ──
-        stat_rows = []
-        shown_stats = set()
-        for bundle in active_bundles.values():
-            shown_stats.update(bundle["stats"].keys())
-        if 1 in new_enabled:
-            for z_col, t in stat_tiers.items():
-                if t == 1:
-                    shown_stats.add(z_col)
-        for z_col in sorted(shown_stats, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
-            tier = stat_tiers.get(z_col, 2)
-            label = stat_labels.get(z_col, z_col)
-            raw_col = RAW_COL_MAP.get(z_col)
-            z = view_row.get(z_col)
-            raw = view_row.get(raw_col) if raw_col else None
-            stat_rows.append({
-                "Tier": tier_badge(tier),
-                "Stat": label,
-                "Raw": f"{raw:.2f}" if pd.notna(raw) else "—",
-                "Z-score": f"{z:+.2f}" if pd.notna(z) else "—",
-            })
-        if stat_rows:
-            st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
-        else:
-            st.caption("No stats to show — enable more tiers in the sidebar.")
 
-        # ── Slider/bundle breakdown — collapsible (the methodology) ──
-        with st.expander("⚙️  How your slider preset weights this player"):
-            bundle_rows = []
-            for bk, bundle in active_bundles.items():
-                bw = bundle_weights.get(bk, 0)
-                if bw == 0:
-                    continue
-                contribution = 0.0
-                for z_col, internal in bundle["stats"].items():
-                    z = view_row.get(z_col)
-                    if pd.notna(z) and total_weight > 0:
-                        contribution += z * (bw * internal / total_weight)
-                bundle_rows.append({
-                    "Skill": bundle["label"],
-                    "Your weight": f"{bw}",
-                    "Points added": f"{contribution:+.2f}",
-                })
-            if bundle_rows:
-                st.dataframe(pd.DataFrame(bundle_rows),
-                              use_container_width=True, hide_index=True)
-            else:
-                st.caption("No bundles weighted — drag some sliders.")
-
-    else:
-        st.caption("Stat-by-stat breakdown (z-score vs league)")
-        rows = []
-        for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
-            tier = stat_tiers.get(z_col, 2)
-            label = stat_labels.get(z_col, z_col)
-            raw_col = RAW_COL_MAP.get(z_col)
-            z = view_row.get(z_col)
-            raw = view_row.get(raw_col) if raw_col else None
-            w = effective_weights.get(z_col, 0)
-            contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
-            rows.append({
-                "Tier": tier_badge(tier),
-                "Stat": label,
-                "Raw": f"{raw:.2f}" if pd.notna(raw) else "—",
-                "Z-score": f"{z:+.2f}" if pd.notna(z) else "—",
-                "Weight": f"{w}",
-                "Points added": f"{contrib:+.2f}",
-            })
-        if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-        else:
-            st.caption("No stats weighted — drag some sliders.")
-
-with c2:
-    st.markdown("**Stat profile** (percentiles vs. league reference)")
-    st.caption("Solid blue = this player. Dashed gray = top-32 starter average.")
-    radar_row = view_row if view_row is not None else player
-    season_pool = all_rbs_full[all_rbs_full["season_year"] == selected_season]
-    top32 = season_pool.sort_values("off_snaps", ascending=False).head(32)
-    radar_bench = {z: top32[z].mean() for z in RADAR_STATS if z in top32.columns and top32[z].notna().any()}
-    radar_bench_raw = {}
-    for z in RADAR_STATS:
-        raw_col = RAW_COL_MAP.get(z)
-        if raw_col and raw_col in top32.columns and top32[raw_col].notna().any():
-            radar_bench_raw[z] = top32[raw_col].mean()
-    fig = build_radar_figure(radar_row, stat_labels, stat_methodology,
-                              benchmark=radar_bench, benchmark_raw=radar_bench_raw)
-    if fig is not None:
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.caption("No radar data available for this player.")
-    st.caption(
-        "Each axis shows where this player ranks among RBs with 100+ snaps. "
-        "50 = league median, 84 = +1 SD, 97 = +2 SD. "
-        "Hover any data point for stat details."
+def _rb_score_of(row):
+    if row is None or total_weight <= 0:
+        return float("nan")
+    return sum(
+        row.get(z, 0) * (w / total_weight)
+        for z, w in effective_weights.items()
+        if pd.notna(row.get(z))
     )
 
-    # ── Compare radar to another running back ────────────
-    # Side-by-side radars + score-comparison headline. Helper handles
-    # dropdown, toggle, layout. Score for the comparison player is
-    # computed via the same effective_weights formula as the primary.
-    def _rb_score_of(row):
-        if row is None or total_weight <= 0:
-            return float("nan")
-        return sum(
-            row.get(z, 0) * (w / total_weight)
-            for z, w in effective_weights.items()
-            if pd.notna(row.get(z))
+
+tab_profile, tab_runscheme, tab_coverage, tab_compare, tab_career, tab_splits = st.tabs([
+    "📊 Score & Profile",
+    "🏃 Run Scheme",
+    "🎯 Coverage Matchup",
+    "⚔️ Compare",
+    "📈 Career & Combine",
+    "📅 Game-by-game",
+])
+
+
+# ─── 📊 SCORE & PROFILE ─────────────────────────────────
+with tab_profile:
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.markdown(f"**Your score:** {format_score(_view_score)}")
+        st.markdown("---")
+        st.markdown("**How your score breaks down**")
+
+        if not advanced_mode:
+            stat_rows = []
+            shown_stats = set()
+            for bundle in active_bundles.values():
+                shown_stats.update(bundle["stats"].keys())
+            if 1 in new_enabled:
+                for z_col, t in stat_tiers.items():
+                    if t == 1:
+                        shown_stats.add(z_col)
+            for z_col in sorted(shown_stats, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+                tier = stat_tiers.get(z_col, 2)
+                label = stat_labels.get(z_col, z_col)
+                raw_col = RAW_COL_MAP.get(z_col)
+                z = view_row.get(z_col)
+                raw = view_row.get(raw_col) if raw_col else None
+                stat_rows.append({
+                    "Tier": tier_badge(tier),
+                    "Stat": label,
+                    "Raw": f"{raw:.2f}" if pd.notna(raw) else "—",
+                    "Z-score": f"{z:+.2f}" if pd.notna(z) else "—",
+                })
+            if stat_rows:
+                st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
+            else:
+                st.caption("No stats to show — enable more tiers in the sidebar.")
+
+            with st.expander("⚙️  How your slider preset weights this player"):
+                bundle_rows = []
+                for bk, bundle in active_bundles.items():
+                    bw = bundle_weights.get(bk, 0)
+                    if bw == 0:
+                        continue
+                    contribution = 0.0
+                    for z_col, internal in bundle["stats"].items():
+                        z = view_row.get(z_col)
+                        if pd.notna(z) and total_weight > 0:
+                            contribution += z * (bw * internal / total_weight)
+                    bundle_rows.append({
+                        "Skill": bundle["label"],
+                        "Your weight": f"{bw}",
+                        "Points added": f"{contribution:+.2f}",
+                    })
+                if bundle_rows:
+                    st.dataframe(pd.DataFrame(bundle_rows),
+                                  use_container_width=True, hide_index=True)
+                else:
+                    st.caption("No bundles weighted — drag some sliders.")
+
+        else:
+            st.caption("Stat-by-stat breakdown (z-score vs league)")
+            rows = []
+            for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+                tier = stat_tiers.get(z_col, 2)
+                label = stat_labels.get(z_col, z_col)
+                raw_col = RAW_COL_MAP.get(z_col)
+                z = view_row.get(z_col)
+                raw = view_row.get(raw_col) if raw_col else None
+                w = effective_weights.get(z_col, 0)
+                contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
+                rows.append({
+                    "Tier": tier_badge(tier),
+                    "Stat": label,
+                    "Raw": f"{raw:.2f}" if pd.notna(raw) else "—",
+                    "Z-score": f"{z:+.2f}" if pd.notna(z) else "—",
+                    "Weight": f"{w}",
+                    "Points added": f"{contrib:+.2f}",
+                })
+            if rows:
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            else:
+                st.caption("No stats weighted — drag some sliders.")
+
+    with c2:
+        st.markdown("**Stat profile** (percentiles vs. league reference)")
+        st.caption("Solid blue = this player. Dashed gray = top-32 starter average.")
+        fig = build_radar_figure(_radar_row, stat_labels, stat_methodology,
+                                  benchmark=_radar_bench, benchmark_raw=_radar_bench_raw)
+        if fig is not None:
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No radar data available for this player.")
+        st.caption(
+            "Each axis shows where this player ranks among RBs with 100+ snaps. "
+            "50 = league median, 84 = +1 SD, 97 = +2 SD. "
+            "Hover any data point for stat details."
         )
 
+
+# ─── 🏃 RUN SCHEME ──────────────────────────────────────
+with tab_runscheme:
+    from lib_splits import render_run_scheme_section as _render_run_scheme_section
+    _render_run_scheme_section(
+        player_name=selected,
+        season=selected_season,
+        key_prefix=f"rb_run_{player.get('player_id') or selected}",
+        is_career_view=_yr["is_career_view"],
+    )
+
+
+# ─── 🎯 COVERAGE MATCHUP ────────────────────────────────
+with tab_coverage:
+    from lib_splits import render_coverage_matchup_section as _render_coverage_matchup_section
+    _render_coverage_matchup_section(
+        player_name=selected,
+        season=selected_season,
+        position_group="RB",
+        key_prefix=f"rb_cov_{player.get('player_id') or selected}",
+        is_career_view=_yr["is_career_view"],
+    )
+
+
+# ─── ⚔️ COMPARE ─────────────────────────────────────────
+with tab_compare:
     from lib_shared import render_player_comparison, team_theme as _theme
     render_player_comparison(
         player_row=view_row,
@@ -1082,8 +1115,8 @@ with c2:
         primary_score=_view_score,
         compute_comparison_score=_rb_score_of,
         radar_builder=build_radar_figure,
-        benchmark=radar_bench,
-        benchmark_raw=radar_bench_raw,
+        benchmark=_radar_bench,
+        benchmark_raw=_radar_bench_raw,
         stat_labels=stat_labels,
         stat_methodology=stat_methodology,
         key_prefix=f"rb_cmp_{player.get('player_id', selected)}",
@@ -1092,51 +1125,36 @@ with c2:
     )
 
 
-# ── Run scheme profile (exposed, full-width) ─────────────────
-from lib_splits import render_run_scheme_section as _render_run_scheme_section
-_render_run_scheme_section(
-    player_name=selected,
-    season=selected_season,
-    key_prefix=f"rb_run_{player.get('player_id') or selected}",
-    is_career_view=_yr["is_career_view"],
-)
-
-# ── Coverage matchup profile (exposed, full-width) ───────────
-from lib_splits import render_coverage_matchup_section as _render_coverage_matchup_section
-_render_coverage_matchup_section(
-    player_name=selected,
-    season=selected_season,
-    position_group="RB",
-    key_prefix=f"rb_cov_{player.get('player_id') or selected}",
-    is_career_view=_yr["is_career_view"],
-)
-
-# ── Game-by-game splits explorer (NEW) ───────────────────────
-# Schedule-adjusted form / strength / consistency tiles + filters
-# (opponent strength, roof, surface, weather, location, result).
-# Single-season only; renders nothing in all-career view.
-from lib_splits import render_splits_section as _render_splits_section
-_render_splits_section(
-    player_name=selected,
-    season=selected_season,
-    position_group="RB",
-    key_prefix=f"rb_{player.get('player_id') or selected}",
-    is_career_view=_yr["is_career_view"],
-)
+# ─── 📈 CAREER & COMBINE ────────────────────────────────
+with tab_career:
+    _WORKOUTS_PATH = Path(__file__).resolve().parent.parent / "data" / "college" / "nfl_all_workouts.parquet"
+    render_combine_chart(
+        player_name=selected,
+        position="RB",
+        workouts_path=_WORKOUTS_PATH,
+        key=f"rb_combine_chart_{player.get('player_id', selected)}",
+    )
+    career_arc_section(
+        player=player,
+        league_parquet_path=DATA_PATH,
+        z_score_cols=list(RAW_COL_MAP.keys()),
+        stat_labels=stat_labels,
+        id_col="player_id",
+        name_col="player_display_name",
+        position_label="running backs",
+    )
 
 
-# ============================================================
-# Community algorithms
-# ============================================================
-career_arc_section(
-    player=player,
-    league_parquet_path=DATA_PATH,
-    z_score_cols=list(RAW_COL_MAP.keys()),
-    stat_labels=stat_labels,
-    id_col="player_id",
-    name_col="player_display_name",
-    position_label="running backs",
-)
+# ─── 📅 GAME-BY-GAME SPLITS ─────────────────────────────
+with tab_splits:
+    from lib_splits import render_splits_section as _render_splits_section
+    _render_splits_section(
+        player_name=selected,
+        season=selected_season,
+        position_group="RB",
+        key_prefix=f"rb_{player.get('player_id') or selected}",
+        is_career_view=_yr["is_career_view"],
+    )
 
 
 # ============================================================

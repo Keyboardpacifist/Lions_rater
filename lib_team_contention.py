@@ -396,6 +396,101 @@ def render_trajectory_html(traj: dict) -> str:
     )
 
 
+def compute_team_timeline(team: str,
+                            min_season: int = 2016,
+                            max_season: int = 2025) -> list[dict]:
+    """Classify the team across every season we have data for.
+    Returns: [{season, state, team_rating}, ...] in chronological order.
+    """
+    out = []
+    for s in range(min_season, max_season + 1):
+        result = classify_team(team, s)
+        out.append({
+            "season": s,
+            "state": result["state"],
+            "rating": result.get("signals", {}).get("team_rating", 0),
+            "rationale": result.get("rationale", ""),
+        })
+    return out
+
+
+def render_team_timeline_html(timeline: list[dict],
+                                 highlight_season: int | None = None) -> str:
+    """Render a horizontal ribbon: one cell per season, colored by
+    contention state, with current season highlighted."""
+    if not timeline:
+        return ""
+
+    cells = []
+    for entry in timeline:
+        state = entry["state"]
+        season = entry["season"]
+        style = STATE_STYLES.get(state, STATE_STYLES.get("Rebuild"))
+        is_current = (highlight_season is not None and season == highlight_season)
+        border = "3px solid white" if is_current else "1px solid rgba(0,0,0,0.08)"
+        scale = "transform:scale(1.10);" if is_current else ""
+        glow = ("box-shadow:0 0 0 2px rgba(255,255,255,0.6),"
+                "0 4px 14px rgba(0,0,0,0.35);"
+                if is_current else
+                "box-shadow:0 1px 3px rgba(0,0,0,0.12);")
+        # Compact state label for the cell — abbreviate the longer ones
+        state_short = {
+            "Super Bowl Contender": "SB",
+            "Playoff Contender":    "Plyf",
+            "Ascending":            "Asc",
+            "Fading":               "Fade",
+            "Rebuild":              "Reb",
+            "Unknown":              "—",
+        }.get(state, state)
+        cells.append(
+            f'<div title="{season}: {state} — {entry.get("rationale","")}" '
+            f'style="flex:1;min-width:0;padding:8px 4px;'
+            f'background:{style["bg"]};color:{style["fg"]};'
+            f'border-radius:8px;border:{border};'
+            f'text-align:center;{glow}{scale}'
+            f'transition:transform 0.15s ease;cursor:default;">'
+            f'<div style="font-size:11px;font-weight:800;letter-spacing:0.5px;'
+            f'opacity:0.8;line-height:1;">{season}</div>'
+            f'<div style="font-size:13px;font-weight:900;margin-top:3px;'
+            f'line-height:1;">{style["icon"]}</div>'
+            f'<div style="font-size:10px;font-weight:700;'
+            f'letter-spacing:0.5px;margin-top:3px;opacity:0.95;">'
+            f'{state_short.upper()}</div>'
+            f'</div>'
+        )
+
+    legend_items = []
+    for state_name in ["Rebuild", "Ascending", "Playoff Contender",
+                        "Super Bowl Contender", "Fading"]:
+        s = STATE_STYLES[state_name]
+        legend_items.append(
+            f'<span style="display:inline-flex;align-items:center;gap:4px;'
+            f'font-size:11px;opacity:0.75;">'
+            f'<span style="display:inline-block;width:10px;height:10px;'
+            f'background:{s["bg"]};border-radius:3px;"></span>'
+            f'{state_name}'
+            f'</span>'
+        )
+    legend = (
+        '<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;'
+        'justify-content:center;">' + "".join(legend_items) + '</div>'
+    )
+
+    return (
+        '<div style="margin-top:8px;padding:14px 16px;'
+        'background:rgba(255,255,255,0.03);border-radius:14px;">'
+        '<div style="font-size:11px;font-weight:800;letter-spacing:1.5px;'
+        'opacity:0.7;margin-bottom:8px;text-align:center;">'
+        '🕰️  CONTENTION TIMELINE'
+        '</div>'
+        '<div style="display:flex;gap:6px;align-items:stretch;">'
+        + "".join(cells) +
+        '</div>'
+        + legend +
+        '</div>'
+    )
+
+
 _GAP_TITLES = {
     "Super Bowl Contender": "What's keeping them from a championship",
     "Playoff Contender":    "What's keeping them out of true contention",

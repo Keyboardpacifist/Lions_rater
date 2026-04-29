@@ -2471,14 +2471,25 @@ else:
 
             with st.container(border=True):
 
-                # ── Recruiting header ─────────────────────
+                # ─── PLAYER PROFILE CARD ──────────────────────────
+                # Pulls scattered detail-view sections into one compact
+                # block: recruiting · usage · opponent-adjusted ·
+                # transfer/portal. Each row only renders if it has data.
+                # Placed above measurables so fans see context first.
+
+                _profile_rows = []
+
+                # Recruiting + draft eligibility
                 if rec is not None:
                     rec_parts = []
-                    if pd.notna(rec.get("stars")): rec_parts.append(f"{star_display(rec['stars'])} ({int(rec['stars'])}-star)")
-                    if pd.notna(rec.get("ranking")): rec_parts.append(f"#{int(rec['ranking'])} nationally")
-                    if pd.notna(rec.get("rating")): rec_parts.append(f"rating: {rec['rating']:.4f}")
-                    if pd.notna(rec.get("city")) and pd.notna(rec.get("state")): rec_parts.append(f"{rec['city']}, {rec['state']}")
-                    # Draft eligibility
+                    if pd.notna(rec.get("stars")):
+                        rec_parts.append(f"{star_display(rec['stars'])} ({int(rec['stars'])}-star)")
+                    if pd.notna(rec.get("ranking")):
+                        rec_parts.append(f"#{int(rec['ranking'])} nationally")
+                    if pd.notna(rec.get("rating")):
+                        rec_parts.append(f"rating {rec['rating']:.4f}")
+                    if pd.notna(rec.get("city")) and pd.notna(rec.get("state")):
+                        rec_parts.append(f"{rec['city']}, {rec['state']}")
                     if pd.notna(rec.get("recruit_year")):
                         elig_year = int(rec["recruit_year"]) + 3
                         if elig_year <= 2025:
@@ -2488,7 +2499,88 @@ else:
                         else:
                             rec_parts.append(f"🔒 Eligible {elig_year}")
                     if rec_parts:
-                        st.caption(f"Recruiting: {' · '.join(rec_parts)}")
+                        _profile_rows.append(("Recruiting", " · ".join(rec_parts)))
+
+                # Usage rates
+                _usage = get_usage_info(name, selected_school, selected_college_season)
+                if _usage is not None:
+                    _u = []
+                    if pd.notna(_usage.get("usage_overall")): _u.append(f"Overall {_usage['usage_overall']:.1%}")
+                    if pd.notna(_usage.get("usage_pass")):    _u.append(f"Pass {_usage['usage_pass']:.1%}")
+                    if pd.notna(_usage.get("usage_rush")):    _u.append(f"Rush {_usage['usage_rush']:.1%}")
+                    if pd.notna(_usage.get("usage_third_down")):
+                        _u.append(f"3rd-down {_usage['usage_third_down']:.1%}")
+                    if _u:
+                        _profile_rows.append(("Usage", " · ".join(_u)))
+
+                # Opponent-adjusted (WEPA per stat type)
+                _adj = get_adjusted_info(name, selected_school, selected_college_season)
+                if _adj is not None and len(_adj) > 0:
+                    _a = []
+                    for _, _arow in _adj.iterrows():
+                        _stype = _arow.get("stat_type", "")
+                        _wepa = _arow.get("wepa")
+                        _plays = _arow.get("plays")
+                        if pd.notna(_wepa):
+                            if pd.notna(_plays):
+                                _a.append(f"{_stype.title()} WEPA: {_wepa:+.2f} ({int(_plays)} plays)")
+                            else:
+                                _a.append(f"{_stype.title()} WEPA: {_wepa:+.2f}")
+                    if _a:
+                        _profile_rows.append(("Opp-adjusted", " · ".join(_a)))
+
+                # Transfer history (multi-team) + portal info
+                _all_player_data = df[df["player"] == name].sort_values(season_col)
+                _unique_teams = _all_player_data["team"].unique() if len(_all_player_data) else []
+                _transfer_parts = []
+                if len(_unique_teams) > 1:
+                    _stops = []
+                    for _, _trow in _all_player_data.iterrows():
+                        _yr_short = f"'{int(_trow[season_col]) % 100:02d}"
+                        _stops.append(f"{_yr_short} {_trow.get('team', '')}")
+                    if _stops:
+                        _transfer_parts.append(" → ".join(_stops))
+                _portal = get_transfer_info(name, selected_school)
+                if _portal is not None and len(_portal) > 0:
+                    _portal_lines = []
+                    for _, _prow in _portal.iterrows():
+                        _origin = _prow.get("origin", "")
+                        _dest = _prow.get("destination", "")
+                        _pseason = _prow.get("season", "")
+                        if pd.notna(_origin) and pd.notna(_dest) and _dest:
+                            _portal_lines.append(
+                                f"'{int(_pseason) % 100:02d} {_origin} → {_dest}"
+                                if pd.notna(_pseason) else f"{_origin} → {_dest}"
+                            )
+                        elif pd.notna(_origin):
+                            _portal_lines.append(
+                                f"'{int(_pseason) % 100:02d} entered portal from {_origin}"
+                                if pd.notna(_pseason) else f"Entered portal from {_origin}"
+                            )
+                    if _portal_lines:
+                        _transfer_parts.append("Portal: " + " · ".join(_portal_lines))
+                if _transfer_parts:
+                    _profile_rows.append(("Transfer", " · ".join(_transfer_parts)))
+
+                if _profile_rows:
+                    _profile_html = (
+                        "<div style='background:#f8f9fb;border-radius:10px;"
+                        "padding:10px 14px;margin:4px 0 12px 0;font-size:0.88rem;'>"
+                        "<div style='color:#666;font-size:0.75rem;text-transform:uppercase;"
+                        "letter-spacing:0.6px;margin-bottom:6px;'>"
+                        "🎓 <b>Player profile</b></div>"
+                    )
+                    for _label, _val in _profile_rows:
+                        _profile_html += (
+                            f"<div style='margin:3px 0;'>"
+                            f"<span style='color:#888;display:inline-block;"
+                            f"min-width:110px;font-size:0.78rem;text-transform:uppercase;"
+                            f"letter-spacing:0.4px;'>{_label}</span>"
+                            f"<span style='color:#1a1a2e;'>{_val}</span>"
+                            f"</div>"
+                        )
+                    _profile_html += "</div>"
+                    st.markdown(_profile_html, unsafe_allow_html=True)
 
                 # ── Workout measurables ───────────────────
                 comb = get_combine_info(name, selected_school)
@@ -2609,29 +2701,6 @@ else:
                     if stat_rows:
                         st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
 
-                    # ── Usage data ────────────────────────
-                    usage = get_usage_info(name, selected_school, selected_college_season)
-                    if usage is not None:
-                        st.markdown("**Usage rates**")
-                        usage_items = []
-                        if pd.notna(usage.get("usage_overall")): usage_items.append(f"Overall: {usage['usage_overall']:.1%}")
-                        if pd.notna(usage.get("usage_pass")): usage_items.append(f"Pass: {usage['usage_pass']:.1%}")
-                        if pd.notna(usage.get("usage_rush")): usage_items.append(f"Rush: {usage['usage_rush']:.1%}")
-                        if pd.notna(usage.get("usage_third_down")): usage_items.append(f"3rd down: {usage['usage_third_down']:.1%}")
-                        if usage_items:
-                            st.caption(" · ".join(usage_items))
-
-                    # ── Adjusted metrics ──────────────────
-                    adj = get_adjusted_info(name, selected_school, selected_college_season)
-                    if adj is not None and len(adj) > 0:
-                        st.markdown("**Opponent-adjusted**")
-                        for _, arow in adj.iterrows():
-                            stype = arow.get("stat_type", "")
-                            wepa = arow.get("wepa")
-                            plays = arow.get("plays")
-                            if pd.notna(wepa):
-                                st.caption(f"{stype.title()} WEPA: {wepa:+.2f} ({int(plays)} plays)" if pd.notna(plays) else f"{stype.title()} WEPA: {wepa:+.2f}")
-
                     # ── Composite score (driven by year picker) ──
                     _avail_for_comp = [c for c in z_cols if c in view_row.index and pd.notna(view_row.get(c))]
                     _view_comp = (np.mean([view_row.get(c) for c in _avail_for_comp])
@@ -2640,11 +2709,13 @@ else:
                         pct = zscore_to_percentile(_view_comp)
                         st.markdown(f"**Composite: {_view_comp:+.2f}** ({format_percentile(pct)} of FBS {pos_display.lower()})")
 
-                    # ── Transfer history ──────────────────
+                    # Multi-team career table only renders if the player
+                    # has stints across multiple schools — quick visual
+                    # of how scores moved with the move.
                     all_player_data = df[df["player"] == name].sort_values(season_col)
                     unique_teams = all_player_data["team"].unique()
                     if len(unique_teams) > 1:
-                        st.markdown("**Transfer history**")
+                        st.markdown("**Career by school**")
                         t_rows = []
                         for _, trow in all_player_data.iterrows():
                             tz = [trow.get(c) for c in available_z if c in trow.index and pd.notna(trow.get(c))]
@@ -2656,21 +2727,6 @@ else:
                                 "Score": f"{tcomp:+.2f}" if pd.notna(tcomp) else "—",
                             })
                         st.dataframe(pd.DataFrame(t_rows), use_container_width=True, hide_index=True)
-
-                    # Portal info
-                    portal = get_transfer_info(name, selected_school)
-                    if portal is not None and len(portal) > 0:
-                        portal_lines = []
-                        for _, prow in portal.iterrows():
-                            origin = prow.get("origin", "")
-                            dest = prow.get("destination", "")
-                            season = prow.get("season", "")
-                            if pd.notna(origin) and pd.notna(dest) and dest:
-                                portal_lines.append(f"{int(season)}: {origin} → {dest}" if pd.notna(season) else f"{origin} → {dest}")
-                            elif pd.notna(origin):
-                                portal_lines.append(f"{int(season)}: Entered portal from {origin}" if pd.notna(season) else f"Entered portal from {origin}")
-                        if portal_lines:
-                            st.caption(f"Portal: {' · '.join(portal_lines)}")
 
                 with pc2:
                     # ── Radar chart — driven by the SAME year picker
