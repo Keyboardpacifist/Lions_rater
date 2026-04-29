@@ -175,7 +175,14 @@ def _render_prospect_row(rank_label: str, r: pd.Series,
         else:
             st.caption("_profile pending_")
 
-    # ── NFL statistical comps + statistical strengths/weaknesses ─
+    # ── Inline season + career stats (always visible) ────────────
+    # Brett's call: don't make fans click an expander to see basic
+    # stats. Strengths/Weaknesses + Comps stay in the expander since
+    # those are interpretation, not raw data.
+    if pd.notna(r.get("player_id")):
+        render_prospect_stats(str(r["player_id"]), r["position"])
+
+    # ── Expander: Strengths / Weaknesses / Comps / Hit-rate ───────
     comps = r.get("nfl_comps")
     strengths = r.get("strengths") or []
     weaknesses = r.get("concerns") or []
@@ -185,9 +192,6 @@ def _render_prospect_row(rank_label: str, r: pd.Series,
             f"🎯 Statistical composition most like: {top_comp_label}",
             expanded=False,
         ):
-            # Strengths and weaknesses — surface FIRST since they're
-            # actionable (the comp is the headline, but the profile
-            # explains why).
             if strengths:
                 st.markdown("**📈 Statistical Strengths**")
                 for s in strengths:
@@ -218,18 +222,6 @@ def _render_prospect_row(rank_label: str, r: pd.Series,
                         f"{w['pct']}th pctl ({sign}{w['z']:.2f}σ)"
                     )
 
-            # Season-by-season + career stats — mix of counting +
-            # advanced for the position. Pulls from the player's
-            # full career in our parquets.
-            st.markdown("---")
-            st.markdown("**📊 Season + Career Stats**")
-            if pd.notna(r.get("player_id")):
-                render_prospect_stats(
-                    str(r["player_id"]), r["position"]
-                )
-            else:
-                st.caption("_Career stats unavailable (no parquet match)._")
-
             st.markdown("---")
             st.markdown("**🎯 Top 5 Statistical Comps**")
             for c in comps:
@@ -241,7 +233,6 @@ def _render_prospect_row(rank_label: str, r: pd.Series,
                     f"({yr} {c['school']}) → "
                     f"R{rd} P{pk} {c['nfl_team']}"
                 )
-            # Hit-rate distribution
             r1 = r.get("hit_rate_r1")
             r2_3 = r.get("hit_rate_r2_3")
             r4_7 = r.get("hit_rate_r4_7")
