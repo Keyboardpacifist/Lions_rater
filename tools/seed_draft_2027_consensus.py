@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """Seed the 2027 NFL Draft consensus big board.
 
-Source: Brett's curated big board (April 2026 — re-ordered from
-the original consensus PDF). We treat this as the canonical board
-for the Draft page until we add scrapers that aggregate multiple
-sources.
+Source: Brett's curated big board (April 2026, returned-to-list edits
+on 2026-04-29 to re-add 8 of the 9 prospects originally cut). We treat
+this as the canonical board for the Draft page until we add scrapers
+that aggregate multiple sources.
 
-The seed list contains 98 entries with 8 obvious row-paste
-duplicates from the source spreadsheet; this script dedupes by
-keeping the first occurrence (highest rank) and renumbers
-sequentially, yielding 90 unique prospects.
+To re-rank: edit BOARD below in your desired order and re-run. The
+script auto-renumbers and dedupes by (player, school) just in case.
 
 Output: data/draft_2027_consensus.parquet
 
@@ -25,13 +23,14 @@ import pandas as pd
 REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "data" / "draft_2027_consensus.parquet"
 
-# Brett's curated order (raw, with duplicates — script dedupes below).
+# Final ordered board. Edit this list to re-rank.
 # Format: (player, board_position, school)
-BOARD_RAW = [
+BOARD = [
     ("Jeremiah Smith",         "WR",   "Ohio State"),
     ("Dante Moore",            "QB",   "Oregon"),
     ("Colin Simmons",          "EDGE", "Texas"),
     ("Leonard Moore",          "CB",   "Notre Dame"),
+    ("Arch Manning",           "QB",   "Texas"),
     ("Dylan Stewart",          "EDGE", "South Carolina"),
     ("Drew Mestemaker",        "QB",   "Oklahoma State"),
     ("Cam Coleman",            "WR",   "Texas"),
@@ -53,11 +52,8 @@ BOARD_RAW = [
     ("Jamari Johnson",         "TE",   "Oregon"),
     ("A'Mauri Washington",     "DL",   "Oregon"),
     ("Jacarrius Peak",         "OT",   "South Carolina"),
-    ("Zabien Brown",           "CB",   "Alabama"),           # dup
     ("Matayo Uiagalelei",      "EDGE", "Oregon"),
     ("Koi Perich",             "S",    "Oregon"),
-    ("Anthony Smith",          "DL",   "Minnesota"),         # dup
-    ("Kelley Jones",           "CB",   "Mississippi State"), # dup
     ("Quincy Rhodes Jr.",      "EDGE", "Arkansas"),
     ("Darian Mensah",          "QB",   "Miami (FL)"),
     ("Ryan Williams",          "WR",   "Alabama"),
@@ -72,6 +68,7 @@ BOARD_RAW = [
     ("OJ Frederique Jr.",      "CB",   "Miami (FL)"),
     ("William Echoles",        "DL",   "Mississippi"),
     ("Mario Craver",           "WR",   "Texas A&M"),
+    ("Jordan Ross",            "DL",   "LSU"),
     ("Jayden Maiava",          "QB",   "USC"),
     ("Austin Siereveld",       "OT",   "Ohio State"),
     ("Kade Pieper",            "IOL",  "Iowa"),
@@ -88,15 +85,18 @@ BOARD_RAW = [
     ("Chris Peal",             "CB",   "Syracuse"),
     ("Princewill Umanmielen",  "EDGE", "LSU"),
     ("Jayden Jackson",         "DL",   "Oklahoma State"),
-    ("Rasheem Biles",          "LB",   "Texas"),             # dup
     ("Ashton Hampton",         "CB",   "Clemson"),
     ("Will Heldt",             "EDGE", "Clemson"),
     ("Trevor Lauck",           "OT",   "Iowa"),
+    ("Anthonie Knapp",         "OT",   "Notre Dame"),
     ("Brendan Sorsby",         "QB",   "Texas Tech"),
     ("Carter Smith",           "OT",   "Indiana"),
     ("Nyck Harbor",            "WR",   "South Carolina"),
+    ("Bryant Wesco",           "WR",   "Clemson"),
     ("Josh Hoover",            "QB",   "Indiana"),
+    ("Bear Alexander",         "DL",   "Oregon"),
     ("Brice Pollock",          "CB",   "Texas Tech"),
+    ("Evan Tengesdahl",        "IOL",  "Cincinnati"),
     ("Lance Heard",            "OT",   "Kentucky"),
     ("Iapani Laloulu",         "IOL",  "Oregon"),
     ("John Henry Daley",       "EDGE", "Michigan"),
@@ -109,21 +109,20 @@ BOARD_RAW = [
     ("Kenyatta Jackson",       "EDGE", "Ohio State"),
     ("Maraad Watson",          "DL",   "Texas"),
     ("Adonijah Green",         "DL",   "Louisville"),
+    ("Dylan Raiola",           "QB",   "Oregon"),
     ("Marcus Neal Jr.",        "S",    "Penn State"),
+    ("Dashawn Spears",         "S",    "LSU"),
     ("Elijah Rushing",         "EDGE", "Oregon"),
     ("Bray Hubbard",           "S",    "Alabama"),
+    ("Greg Johnson",           "IOL",  "Minnesota"),
     ("Ty Benefield",           "S",    "LSU"),
     ("LJ McCray",              "EDGE", "Florida"),
     ("Ezomo Oratokhai",        "OT",   "Northwestern"),
     ("A.J. Holmes Jr",         "DL",   "Texas Tech"),
-    ("Maraad Watson",          "DL",   "Texas"),             # dup
-    ("Ezomo Oratokhai",        "OT",   "Northwestern"),      # dup
     ("Jelani McDonald",        "S",    "Texas"),
     ("Terrance Carter",        "TE",   "Texas Tech"),
     ("Jyaire Hill",            "CB",   "Michigan"),
-    ("Drake Lindsey",          "QB",   "Minnesota"),         # dup
     ("Mark Fletcher",          "RB",   "Miami (FL)"),
-    ("Jelani McDonald",        "S",    "Texas"),             # dup
     ("Niki Prongos",           "OT",   "Stanford"),
     ("Drew Bobo",              "IOL",  "Georgia"),
 ]
@@ -148,7 +147,7 @@ def main() -> None:
     seen: set[tuple[str, str]] = set()
     rows = []
     rank = 0
-    for player, board_pos, school in BOARD_RAW:
+    for player, board_pos, school in BOARD:
         key = (player.lower(), school.lower())
         if key in seen:
             continue
@@ -164,9 +163,7 @@ def main() -> None:
     df = pd.DataFrame(rows)
     OUT.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(OUT, index=False)
-    print(f"✓ wrote {OUT.relative_to(REPO)}")
-    print(f"  raw entries: {len(BOARD_RAW)} · unique: {len(df)} "
-          f"(deduped {len(BOARD_RAW) - len(df)})")
+    print(f"✓ wrote {OUT.relative_to(REPO)} · {len(df)} prospects")
     print(f"  positions: {df['position'].value_counts().to_dict()}")
 
 
