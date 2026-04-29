@@ -424,66 +424,75 @@ _render_card(
     season=(None if _yr["is_career_view"] else selected_season),
 )
 
-# ── Combine workout chart vs. all-time OL pool ────────────────
-_WORKOUTS_PATH = Path(__file__).resolve().parent.parent / "data" / "college" / "nfl_all_workouts.parquet"
-render_combine_chart(
-    player_name=selected,
-    position="OL",
-    pool_positions=["OT", "OG", "G", "C", "OL"],
-    workouts_path=_WORKOUTS_PATH,
-    key=f"ol_combine_chart_{player.get('player_id', selected)}",
-)
+# ════════════════════════════════════════════════════════════════
+# TABBED PLAYER DETAIL — Profile / Compare / Career & Combine
+# Trading card hero stays sticky above the tabs.
+# ════════════════════════════════════════════════════════════════
 
-c1, c2 = st.columns([1, 1])
-with c1:
-    pos = POSITION_LABELS.get(player.get("depth_position", ""), "")
-    gap_type = "outside/end-gap" if player.get("depth_position") in ("LT", "RT") else "interior gap" if player.get("depth_position") in ("LG", "RG") else "middle"
-    st.caption(f"**{pos}** · {gap_type} runs")
-    st.markdown(f"**Your score:** {format_score(_view_score)}")
-    st.markdown("---"); st.markdown("**How your score breaks down**")
-    if not advanced_mode:
-        # ── Underlying stats — primary view ──
-        stat_rows = []; shown = set()
-        for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
-        for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
-            raw_col = RAW_COL_MAP.get(z_col); z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
-            stat_rows.append({"Tier": tier_badge(stat_tiers.get(z_col, 2)), "Stat": stat_labels.get(z_col, z_col), "Raw": f"{raw:.3f}" if pd.notna(raw) else "—", "Z-score": f"{z:+.2f}" if pd.notna(z) else "—"})
-        if stat_rows: st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
-        with st.expander("⚙️  How your slider preset weights this player"):
-            bundle_rows = []
-            for bk, bundle in active_bundles.items():
-                bw = bundle_weights.get(bk, 0)
-                if bw == 0: continue
-                contribution = sum(view_row.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(view_row.get(z)) and total_weight > 0)
-                bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
-            if bundle_rows: st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
-            else: st.caption("No bundles weighted.")
-    else:
-        st.caption("Stat-by-stat breakdown")
-        rows = []
-        for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
-            raw_col = RAW_COL_MAP.get(z_col); z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
-            w = effective_weights.get(z_col, 0); contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
-            rows.append({"Tier": tier_badge(stat_tiers.get(z_col, 2)), "Stat": stat_labels.get(z_col, z_col), "Raw": f"{raw:.3f}" if pd.notna(raw) else "—", "Z-score": f"{z:+.2f}" if pd.notna(z) else "—", "Weight": f"{w}", "Points added": f"{contrib:+.2f}"})
-        if rows: st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+_radar_row = view_row if view_row is not None else player
 
-with c2:
-    st.markdown("**OL profile** (percentiles vs. league starters)")
-    radar_row = view_row if view_row is not None else player
-    fig = build_radar_figure(radar_row, stat_labels, stat_methodology)
-    if fig: st.plotly_chart(fig, use_container_width=True)
-    else: st.caption("No radar data available.")
-    st.caption("Each axis shows where this lineman ranks among all 153 qualified starting OL league-wide. 50 = median. Inverted stats (sacks, penalties) are flipped so higher = better on all axes.")
 
-    def _ol_score_of(row):
-        if row is None or total_weight <= 0:
-            return float("nan")
-        return sum(
-            row.get(z, 0) * (w / total_weight)
-            for z, w in effective_weights.items()
-            if pd.notna(row.get(z))
-        )
+def _ol_score_of(row):
+    if row is None or total_weight <= 0:
+        return float("nan")
+    return sum(
+        row.get(z, 0) * (w / total_weight)
+        for z, w in effective_weights.items()
+        if pd.notna(row.get(z))
+    )
 
+
+tab_profile, tab_compare, tab_career = st.tabs([
+    "📊 Score & Profile",
+    "⚔️ Compare",
+    "📈 Career & Combine",
+])
+
+
+# ─── 📊 SCORE & PROFILE ─────────────────────────────────
+with tab_profile:
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        pos = POSITION_LABELS.get(player.get("depth_position", ""), "")
+        gap_type = "outside/end-gap" if player.get("depth_position") in ("LT", "RT") else "interior gap" if player.get("depth_position") in ("LG", "RG") else "middle"
+        st.caption(f"**{pos}** · {gap_type} runs")
+        st.markdown(f"**Your score:** {format_score(_view_score)}")
+        st.markdown("---"); st.markdown("**How your score breaks down**")
+        if not advanced_mode:
+            stat_rows = []; shown = set()
+            for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
+            for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+                raw_col = RAW_COL_MAP.get(z_col); z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
+                stat_rows.append({"Tier": tier_badge(stat_tiers.get(z_col, 2)), "Stat": stat_labels.get(z_col, z_col), "Raw": f"{raw:.3f}" if pd.notna(raw) else "—", "Z-score": f"{z:+.2f}" if pd.notna(z) else "—"})
+            if stat_rows: st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
+            with st.expander("⚙️  How your slider preset weights this player"):
+                bundle_rows = []
+                for bk, bundle in active_bundles.items():
+                    bw = bundle_weights.get(bk, 0)
+                    if bw == 0: continue
+                    contribution = sum(view_row.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(view_row.get(z)) and total_weight > 0)
+                    bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
+                if bundle_rows: st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
+                else: st.caption("No bundles weighted.")
+        else:
+            st.caption("Stat-by-stat breakdown")
+            rows = []
+            for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+                raw_col = RAW_COL_MAP.get(z_col); z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
+                w = effective_weights.get(z_col, 0); contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
+                rows.append({"Tier": tier_badge(stat_tiers.get(z_col, 2)), "Stat": stat_labels.get(z_col, z_col), "Raw": f"{raw:.3f}" if pd.notna(raw) else "—", "Z-score": f"{z:+.2f}" if pd.notna(z) else "—", "Weight": f"{w}", "Points added": f"{contrib:+.2f}"})
+            if rows: st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    with c2:
+        st.markdown("**OL profile** (percentiles vs. league starters)")
+        fig = build_radar_figure(_radar_row, stat_labels, stat_methodology)
+        if fig: st.plotly_chart(fig, use_container_width=True)
+        else: st.caption("No radar data available.")
+        st.caption("Each axis shows where this lineman ranks among all 153 qualified starting OL league-wide. 50 = median. Inverted stats (sacks, penalties) are flipped so higher = better on all axes.")
+
+
+# ─── ⚔️ COMPARE ─────────────────────────────────────────
+with tab_compare:
     from lib_shared import render_player_comparison, team_theme as _theme
     render_player_comparison(
         player_row=view_row,
@@ -501,15 +510,26 @@ with c2:
         theme=_theme(player.get("team") or player.get("recent_team") or ""),
     )
 
-career_arc_section(
-    player=player,
-    league_parquet_path=DATA_PATH,
-    z_score_cols=list(RAW_COL_MAP.keys()),
-    stat_labels=stat_labels,
-    id_col="player_id",
-    name_col="full_name",
-    position_label="offensive linemen",
-)
+
+# ─── 📈 CAREER & COMBINE ────────────────────────────────
+with tab_career:
+    _WORKOUTS_PATH = Path(__file__).resolve().parent.parent / "data" / "college" / "nfl_all_workouts.parquet"
+    render_combine_chart(
+        player_name=selected,
+        position="OL",
+        pool_positions=["OT", "OG", "G", "C", "OL"],
+        workouts_path=_WORKOUTS_PATH,
+        key=f"ol_combine_chart_{player.get('player_id', selected)}",
+    )
+    career_arc_section(
+        player=player,
+        league_parquet_path=DATA_PATH,
+        z_score_cols=list(RAW_COL_MAP.keys()),
+        stat_labels=stat_labels,
+        id_col="player_id",
+        name_col="full_name",
+        position_label="offensive linemen",
+    )
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.caption("Data via [nflverse](https://github.com/nflverse) • Depth charts via ESPN • Play-by-play via nflfastR • Snap counts via PFR • 2024 regular season • Position-specific gap attribution • Fan project, not affiliated with the NFL or Detroit Lions.")

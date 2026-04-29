@@ -332,63 +332,73 @@ _render_card(
     season=(None if _yr["is_career_view"] else selected_season),
 )
 
-# ── Combine workout chart vs. all-time K pool ─────────────────
-_WORKOUTS_PATH = Path(__file__).resolve().parent.parent / "data" / "college" / "nfl_all_workouts.parquet"
-render_combine_chart(
-    player_name=selected,
-    position="K",
-    workouts_path=_WORKOUTS_PATH,
-    key=f"k_combine_chart_{player.get('player_id', selected)}",
-)
+# ════════════════════════════════════════════════════════════════
+# TABBED PLAYER DETAIL — Profile / Compare / Career & Combine
+# Trading card hero stays sticky above the tabs.
+# ════════════════════════════════════════════════════════════════
 
-c1, c2 = st.columns([1, 1])
-with c1:
-    st.markdown(f"**Your score:** {format_score(_view_score)}")
-    st.markdown("---"); st.markdown("**How your score breaks down**")
-    # ── Underlying stats — primary view ──
-    stat_rows = []; shown = set()
-    for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
-    for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
-        raw_col = RAW_COL_MAP.get(z_col); z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
-        if raw_col in ("fg_pct", "fg_40_pct", "clutch_pct", "xp_pct"):
-            raw_fmt = f"{raw:.1%}" if pd.notna(raw) else "—"
-        else:
-            raw_fmt = f"{raw:.3f}" if pd.notna(raw) else "—"
-        stat_rows.append({"Tier": tier_badge(stat_tiers.get(z_col, 2)), "Stat": stat_labels.get(z_col, z_col), "Raw": raw_fmt, "Z-score": f"{z:+.2f}" if pd.notna(z) else "—"})
-    if stat_rows: st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
-    with st.expander("⚙️  How your slider preset weights this player"):
-        bundle_rows = []
-        for bk, bundle in active_bundles.items():
-            bw = bundle_weights.get(bk, 0)
-            if bw == 0: continue
-            contribution = sum(view_row.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(view_row.get(z)) and total_weight > 0)
-            bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
-        if bundle_rows: st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
-        else: st.caption("No bundles weighted.")
+_radar_row = view_row if view_row is not None else player
+_season_pool_k = all_kickers[all_kickers["season_year"] == selected_season] if "season_year" in all_kickers.columns else all_kickers
+_radar_bench = {z: _season_pool_k[z].mean() for z in RADAR_STATS if z in _season_pool_k.columns and _season_pool_k[z].notna().any()}
+_radar_bench_raw = {}
+for z in RADAR_STATS:
+    raw_col = RAW_COL_MAP.get(z)
+    if raw_col and raw_col in _season_pool_k.columns and _season_pool_k[raw_col].notna().any():
+        _radar_bench_raw[z] = _season_pool_k[raw_col].mean()
 
-with c2:
-    st.markdown("**Kicker profile** (percentiles vs. league kickers)")
-    st.caption("Solid blue = this player. Dashed gray = league kicker average.")
-    radar_row = view_row if view_row is not None else player
-    season_pool = all_kickers[all_kickers["season_year"] == selected_season] if "season_year" in all_kickers.columns else all_kickers
-    radar_bench = {z: season_pool[z].mean() for z in RADAR_STATS if z in season_pool.columns and season_pool[z].notna().any()}
-    radar_bench_raw = {}
-    for z in RADAR_STATS:
-        raw_col = RAW_COL_MAP.get(z)
-        if raw_col and raw_col in season_pool.columns and season_pool[raw_col].notna().any():
-            radar_bench_raw[z] = season_pool[raw_col].mean()
-    fig = build_radar_figure(radar_row, stat_labels, stat_methodology, benchmark=radar_bench, benchmark_raw=radar_bench_raw)
-    if fig: st.plotly_chart(fig, use_container_width=True)
 
-    def _k_score_of(row):
-        if row is None or total_weight <= 0:
-            return float("nan")
-        return sum(
-            row.get(z, 0) * (w / total_weight)
-            for z, w in effective_weights.items()
-            if pd.notna(row.get(z))
-        )
+def _k_score_of(row):
+    if row is None or total_weight <= 0:
+        return float("nan")
+    return sum(
+        row.get(z, 0) * (w / total_weight)
+        for z, w in effective_weights.items()
+        if pd.notna(row.get(z))
+    )
 
+
+tab_profile, tab_compare, tab_career = st.tabs([
+    "📊 Score & Profile",
+    "⚔️ Compare",
+    "📈 Career & Combine",
+])
+
+
+# ─── 📊 SCORE & PROFILE ─────────────────────────────────
+with tab_profile:
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.markdown(f"**Your score:** {format_score(_view_score)}")
+        st.markdown("---"); st.markdown("**How your score breaks down**")
+        stat_rows = []; shown = set()
+        for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
+        for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+            raw_col = RAW_COL_MAP.get(z_col); z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
+            if raw_col in ("fg_pct", "fg_40_pct", "clutch_pct", "xp_pct"):
+                raw_fmt = f"{raw:.1%}" if pd.notna(raw) else "—"
+            else:
+                raw_fmt = f"{raw:.3f}" if pd.notna(raw) else "—"
+            stat_rows.append({"Tier": tier_badge(stat_tiers.get(z_col, 2)), "Stat": stat_labels.get(z_col, z_col), "Raw": raw_fmt, "Z-score": f"{z:+.2f}" if pd.notna(z) else "—"})
+        if stat_rows: st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
+        with st.expander("⚙️  How your slider preset weights this player"):
+            bundle_rows = []
+            for bk, bundle in active_bundles.items():
+                bw = bundle_weights.get(bk, 0)
+                if bw == 0: continue
+                contribution = sum(view_row.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(view_row.get(z)) and total_weight > 0)
+                bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
+            if bundle_rows: st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
+            else: st.caption("No bundles weighted.")
+
+    with c2:
+        st.markdown("**Kicker profile** (percentiles vs. league kickers)")
+        st.caption("Solid blue = this player. Dashed gray = league kicker average.")
+        fig = build_radar_figure(_radar_row, stat_labels, stat_methodology, benchmark=_radar_bench, benchmark_raw=_radar_bench_raw)
+        if fig: st.plotly_chart(fig, use_container_width=True)
+
+
+# ─── ⚔️ COMPARE ─────────────────────────────────────────
+with tab_compare:
     from lib_shared import render_player_comparison, team_theme as _theme
     render_player_comparison(
         player_row=view_row,
@@ -399,8 +409,8 @@ with c2:
         primary_score=_view_score,
         compute_comparison_score=_k_score_of,
         radar_builder=build_radar_figure,
-        benchmark=radar_bench,
-        benchmark_raw=radar_bench_raw,
+        benchmark=_radar_bench,
+        benchmark_raw=_radar_bench_raw,
         stat_labels=stat_labels,
         stat_methodology=stat_methodology,
         key_prefix=f"k_cmp_{player.get('player_id', selected)}",
@@ -408,15 +418,25 @@ with c2:
         theme=_theme(player.get("recent_team") or ""),
     )
 
-career_arc_section(
-    player=player,
-    league_parquet_path=DATA_PATH,
-    z_score_cols=list(RAW_COL_MAP.keys()),
-    stat_labels=stat_labels,
-    id_col="player_id",
-    name_col="player_display_name",
-    position_label="kickers",
-)
+
+# ─── 📈 CAREER & COMBINE ────────────────────────────────
+with tab_career:
+    _WORKOUTS_PATH = Path(__file__).resolve().parent.parent / "data" / "college" / "nfl_all_workouts.parquet"
+    render_combine_chart(
+        player_name=selected,
+        position="K",
+        workouts_path=_WORKOUTS_PATH,
+        key=f"k_combine_chart_{player.get('player_id', selected)}",
+    )
+    career_arc_section(
+        player=player,
+        league_parquet_path=DATA_PATH,
+        z_score_cols=list(RAW_COL_MAP.keys()),
+        stat_labels=stat_labels,
+        id_col="player_id",
+        name_col="player_display_name",
+        position_label="kickers",
+    )
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.caption("Data via [nflverse](https://github.com/nflverse) • 2024 regular season • Z-scored against 38 kickers with 10+ FG attempts • Fan project, not affiliated with the NFL or Detroit Lions.")

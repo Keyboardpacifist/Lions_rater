@@ -591,80 +591,100 @@ _render_card(
     season=(None if _yr["is_career_view"] else selected_season),
 )
 
-# ── Combine workout chart vs. all-time WR pool ────────────────
-_WORKOUTS_PATH = Path(__file__).resolve().parent.parent / "data" / "college" / "nfl_all_workouts.parquet"
-render_combine_chart(
-    player_name=selected,
-    position="WR",
-    workouts_path=_WORKOUTS_PATH,
-    key=f"wr_combine_chart_{player.get('player_id', selected)}",
-)
+# ════════════════════════════════════════════════════════════════
+# TABBED PLAYER DETAIL — Profile / Coverage / Compare / Career / Splits
+# Trading card hero stays sticky above the tabs.
+# ════════════════════════════════════════════════════════════════
 
-c1, c2 = st.columns([1, 1])
-with c1:
-    # "Your score" is now shown prominently on the trading card above —
-    # this section just breaks down WHERE that score comes from.
-    st.markdown("**Where the score comes from**")
-    st.caption("_This score is based on your slider settings. Change the sliders and the score changes._")
-    st.markdown("Each row shows how much one skill contributed to the total, based on your slider weights.")
-    if not advanced_mode:
-        # ── Underlying stats — primary view (what fans care about) ──
-        stat_rows = []; shown = set()
-        for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
-        for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
-            raw_col = RAW_COL_MAP.get(z_col); z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
-            pct = zscore_to_percentile(z) if pd.notna(z) else None
-            raw_fmt = f"{raw:.2f}" if pd.notna(raw) else "—"
-            stat_rows.append({"Stat": stat_labels.get(z_col, z_col), "Value": raw_fmt, "Percentile": f"{int(pct)}th" if pct is not None else "—"})
-        if stat_rows:
-            st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
-        # ── Slider preset breakdown — collapsible ──
-        with st.expander("⚙️  How your slider preset weights this player"):
-            bundle_rows = []
-            for bk, bundle in active_bundles.items():
-                bw = bundle_weights.get(bk, 0)
-                if bw == 0: continue
-                contribution = sum(view_row.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(view_row.get(z)) and total_weight > 0)
-                bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
-            if bundle_rows: st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
-            else: st.caption("No bundles weighted — drag some sliders.")
-    else:
-        rows = []
-        for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
-            raw_col = RAW_COL_MAP.get(z_col); z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
-            w = effective_weights.get(z_col, 0); contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
-            pct = zscore_to_percentile(z) if pd.notna(z) else None
-            rows.append({"Stat": stat_labels.get(z_col, z_col), "Value": f"{raw:.2f}" if pd.notna(raw) else "—", "Percentile": f"{int(pct)}th" if pct is not None else "—", "Weight": f"{w}", "Points added": f"{contrib:+.2f}"})
-        if rows: st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+# Compute the radar benchmark once — used by Profile + Compare tabs
+_radar_row = view_row if view_row is not None else player
+_season_pool_wr = all_wrs_full[all_wrs_full["season_year"] == selected_season]
+_top32_wr = _season_pool_wr.sort_values("off_snaps", ascending=False).head(32)
+_radar_bench = {z: _top32_wr[z].mean() for z in RADAR_STATS
+                  if z in _top32_wr.columns and _top32_wr[z].notna().any()}
+_radar_bench_raw = {}
+for z in RADAR_STATS:
+    raw_col = RAW_COL_MAP.get(z)
+    if raw_col and raw_col in _top32_wr.columns and _top32_wr[raw_col].notna().any():
+        _radar_bench_raw[z] = _top32_wr[raw_col].mean()
 
-with c2:
-    st.markdown("**Percentile profile vs. all league WRs**")
-    st.caption("Solid blue = this player. Dashed gray = top-32 starter average.")
-    # Radar driven by the unified Season picker above (its old internal
-    # picker is gone — view_row IS the radar source).
-    radar_row = view_row if view_row is not None else player
-    season_pool = all_wrs_full[all_wrs_full["season_year"] == selected_season]
-    top32 = season_pool.sort_values("off_snaps", ascending=False).head(32)
-    radar_bench = {z: top32[z].mean() for z in RADAR_STATS if z in top32.columns and top32[z].notna().any()}
-    radar_bench_raw = {}
-    for z in RADAR_STATS:
-        raw_col = RAW_COL_MAP.get(z)
-        if raw_col and raw_col in top32.columns and top32[raw_col].notna().any():
-            radar_bench_raw[z] = top32[raw_col].mean()
-    fig = build_radar_figure(radar_row, stat_labels, stat_methodology,
-                              benchmark=radar_bench, benchmark_raw=radar_bench_raw)
-    if fig: st.plotly_chart(fig, use_container_width=True)
 
-    # ── Side-by-side player comparison ─────────────────────
-    def _wr_score_of(row):
-        if row is None or total_weight <= 0:
-            return float("nan")
-        return sum(
-            row.get(z, 0) * (w / total_weight)
-            for z, w in effective_weights.items()
-            if pd.notna(row.get(z))
-        )
+def _wr_score_of(row):
+    if row is None or total_weight <= 0:
+        return float("nan")
+    return sum(
+        row.get(z, 0) * (w / total_weight)
+        for z, w in effective_weights.items()
+        if pd.notna(row.get(z))
+    )
 
+
+tab_profile, tab_coverage, tab_compare, tab_career, tab_splits = st.tabs([
+    "📊 Score & Profile",
+    "🎯 Coverage Matchup",
+    "⚔️ Compare",
+    "📈 Career & Combine",
+    "📅 Game-by-game",
+])
+
+
+# ─── 📊 SCORE & PROFILE ─────────────────────────────────
+with tab_profile:
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.markdown("**Where the score comes from**")
+        st.caption("_This score is based on your slider settings. Change the sliders and the score changes._")
+        st.markdown("Each row shows how much one skill contributed to the total, based on your slider weights.")
+        if not advanced_mode:
+            stat_rows = []; shown = set()
+            for bundle in active_bundles.values(): shown.update(bundle["stats"].keys())
+            for z_col in sorted(shown, key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+                raw_col = RAW_COL_MAP.get(z_col); z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
+                pct = zscore_to_percentile(z) if pd.notna(z) else None
+                raw_fmt = f"{raw:.2f}" if pd.notna(raw) else "—"
+                stat_rows.append({"Stat": stat_labels.get(z_col, z_col), "Value": raw_fmt, "Percentile": f"{int(pct)}th" if pct is not None else "—"})
+            if stat_rows:
+                st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
+            with st.expander("⚙️  How your slider preset weights this player"):
+                bundle_rows = []
+                for bk, bundle in active_bundles.items():
+                    bw = bundle_weights.get(bk, 0)
+                    if bw == 0: continue
+                    contribution = sum(view_row.get(z, 0) * (bw * internal / total_weight) for z, internal in bundle["stats"].items() if pd.notna(view_row.get(z)) and total_weight > 0)
+                    bundle_rows.append({"Skill": bundle["label"], "Your weight": f"{bw}", "Points added": f"{contribution:+.2f}"})
+                if bundle_rows: st.dataframe(pd.DataFrame(bundle_rows), use_container_width=True, hide_index=True)
+                else: st.caption("No bundles weighted — drag some sliders.")
+        else:
+            rows = []
+            for z_col in sorted(effective_weights.keys(), key=lambda z: (stat_tiers.get(z, 2), stat_labels.get(z, z))):
+                raw_col = RAW_COL_MAP.get(z_col); z = view_row.get(z_col); raw = view_row.get(raw_col) if raw_col else None
+                w = effective_weights.get(z_col, 0); contrib = (z if pd.notna(z) else 0) * (w / total_weight) if total_weight > 0 else 0
+                pct = zscore_to_percentile(z) if pd.notna(z) else None
+                rows.append({"Stat": stat_labels.get(z_col, z_col), "Value": f"{raw:.2f}" if pd.notna(raw) else "—", "Percentile": f"{int(pct)}th" if pct is not None else "—", "Weight": f"{w}", "Points added": f"{contrib:+.2f}"})
+            if rows: st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    with c2:
+        st.markdown("**Percentile profile vs. all league WRs**")
+        st.caption("Solid blue = this player. Dashed gray = top-32 starter average.")
+        fig = build_radar_figure(_radar_row, stat_labels, stat_methodology,
+                                  benchmark=_radar_bench, benchmark_raw=_radar_bench_raw)
+        if fig: st.plotly_chart(fig, use_container_width=True)
+
+
+# ─── 🎯 COVERAGE MATCHUP ────────────────────────────────
+with tab_coverage:
+    from lib_splits import render_coverage_matchup_section as _render_coverage_matchup_section
+    _render_coverage_matchup_section(
+        player_name=selected,
+        season=selected_season,
+        position_group="WR",
+        key_prefix=f"wr_cov_{player.get('player_id') or selected}",
+        is_career_view=_yr["is_career_view"],
+    )
+
+
+# ─── ⚔️ COMPARE ─────────────────────────────────────────
+with tab_compare:
     from lib_shared import render_player_comparison, team_theme as _theme
     _wr_team_abbr = _yr.get("team_str") or (player.get("recent_team") or "") if isinstance(_yr, dict) else (player.get("recent_team") or "")
     render_player_comparison(
@@ -676,8 +696,8 @@ with c2:
         primary_score=_view_score,
         compute_comparison_score=_wr_score_of,
         radar_builder=build_radar_figure,
-        benchmark=radar_bench,
-        benchmark_raw=radar_bench_raw,
+        benchmark=_radar_bench,
+        benchmark_raw=_radar_bench_raw,
         stat_labels=stat_labels,
         stat_methodology=stat_methodology,
         key_prefix=f"wr_cmp_{player.get('player_id', selected)}",
@@ -685,35 +705,37 @@ with c2:
         theme=_theme(_wr_team_abbr),
     )
 
-# ── Coverage matchup profile (exposed, full-width) ───────────
-from lib_splits import render_coverage_matchup_section as _render_coverage_matchup_section
-_render_coverage_matchup_section(
-    player_name=selected,
-    season=selected_season,
-    position_group="WR",
-    key_prefix=f"wr_cov_{player.get('player_id') or selected}",
-    is_career_view=_yr["is_career_view"],
-)
 
-# ── Game-by-game splits explorer ─────────────────────────────
-from lib_splits import render_splits_section as _render_splits_section
-_render_splits_section(
-    player_name=selected,
-    season=selected_season,
-    position_group="WR",
-    key_prefix=f"wr_{player.get('player_id') or selected}",
-    is_career_view=_yr["is_career_view"],
-)
+# ─── 📈 CAREER & COMBINE ────────────────────────────────
+with tab_career:
+    _WORKOUTS_PATH = Path(__file__).resolve().parent.parent / "data" / "college" / "nfl_all_workouts.parquet"
+    render_combine_chart(
+        player_name=selected,
+        position="WR",
+        workouts_path=_WORKOUTS_PATH,
+        key=f"wr_combine_chart_{player.get('player_id', selected)}",
+    )
+    career_arc_section(
+        player=player,
+        league_parquet_path=DATA_PATH,
+        z_score_cols=list(RAW_COL_MAP.keys()),
+        stat_labels=stat_labels,
+        id_col="player_id",
+        name_col="player_display_name",
+        position_label="wide receivers",
+    )
 
-career_arc_section(
-    player=player,
-    league_parquet_path=DATA_PATH,
-    z_score_cols=list(RAW_COL_MAP.keys()),
-    stat_labels=stat_labels,
-    id_col="player_id",
-    name_col="player_display_name",
-    position_label="wide receivers",
-)
+
+# ─── 📅 GAME-BY-GAME SPLITS ─────────────────────────────
+with tab_splits:
+    from lib_splits import render_splits_section as _render_splits_section
+    _render_splits_section(
+        player_name=selected,
+        season=selected_season,
+        position_group="WR",
+        key_prefix=f"wr_{player.get('player_id') or selected}",
+        is_career_view=_yr["is_career_view"],
+    )
 
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.caption("Data via [nflverse](https://github.com/nflverse) · NGS tracking data · regular season only · Z-scored against league-wide WRs with 100+ offensive snaps · Fan project, not affiliated with the NFL or any team.")
