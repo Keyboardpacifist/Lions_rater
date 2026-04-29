@@ -1,15 +1,23 @@
 """2027 NFL Draft research — fan-built prospect big board.
 
-Surfaces 2025-season FBS production filtered to 2027-eligible
-prospects, with composite z-score per player. Click any prospect
-to jump to their College mode detail (existing infrastructure).
+Big Board + By Position tabs are driven by the expert seed board
+(top-100, generated from `tools/seed_draft_2027_consensus.py`).
+For each pick we attach our composite z-score from the College mode
+production pool, so fans see expert rank alongside our model. Click
+a prospect → jumps to their full College profile.
+
+Schools tab + Conference tab summarize the same expert pool.
 """
 from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
 
-from lib_draft_2027 import load_2027_prospects
+from lib_draft_2027 import (
+    attach_composite_z,
+    load_2027_prospects,
+    load_consensus_board,
+)
 from lib_shared import inject_css
 
 st.set_page_config(
@@ -31,64 +39,48 @@ st.markdown("""
   </div>
   <div style="font-size:14px;opacity:0.88;margin-top:8px;font-weight:500;
               letter-spacing:0.4px;">
-    Fan-built prospect rankings · 2025-season FBS production · composite
-    z-scores against position peers · click any prospect for the full
-    college profile
+    Top 100 expert big board · seeded April 2026 · we attach our composite
+    z-score from 2025 college production · click any prospect for the
+    full college profile
   </div>
 </div>
 """, unsafe_allow_html=True)
 
-df = load_2027_prospects()
-if df.empty:
-    st.error("No prospect data available — confirm the college parquets "
-             "are loaded.")
+consensus = load_consensus_board()
+prospects = load_2027_prospects()
+
+if consensus.empty:
+    st.error("Consensus board not loaded — run "
+             "`python tools/seed_draft_2027_consensus.py`.")
     st.stop()
+
+board = attach_composite_z(consensus, prospects)
+
 
 # ── Filters ─────────────────────────────────────────────────────
 positions_avail = ["All", "QB", "RB", "WR", "TE", "OL", "DE", "DT",
                     "LB", "CB", "S"]
-confs_avail = ["All"] + sorted(df["conference"].dropna().unique().tolist())
-schools_avail = ["All"] + sorted(df["team"].dropna().unique().tolist())
+schools_avail = ["All"] + sorted(board["school"].dropna().unique().tolist())
 
-f1, f2, f3, f4 = st.columns([2, 2, 2, 2])
+f1, f2 = st.columns([2, 2])
 with f1:
     pos_filter = st.selectbox("Position", positions_avail,
                                 key="draft_pos_filter")
 with f2:
-    conf_filter = st.selectbox("Conference", confs_avail,
-                                 key="draft_conf_filter")
-with f3:
     school_filter = st.selectbox("School", schools_avail,
                                    key="draft_school_filter")
-with f4:
-    class_filter = st.selectbox(
-        "Class",
-        ["All eligible",
-         "True junior (2024 recruit)",
-         "Senior+ (2023 recruit or earlier)",
-         "Eligibility verified only"],
-        key="draft_class_filter",
-    )
 
-filt = df.copy()
+filt = board.copy()
 if pos_filter != "All":
     filt = filt[filt["position"] == pos_filter]
-if conf_filter != "All":
-    filt = filt[filt["conference"] == conf_filter]
 if school_filter != "All":
-    filt = filt[filt["team"] == school_filter]
-if class_filter == "True junior (2024 recruit)":
-    filt = filt[filt["recruit_year"] == 2024]
-elif class_filter == "Senior+ (2023 recruit or earlier)":
-    filt = filt[filt["recruit_year"] <= 2023]
-elif class_filter == "Eligibility verified only":
-    filt = filt[filt["eligibility_verified"]]
+    filt = filt[filt["school"] == school_filter]
 
 st.caption(
-    f"**{len(filt):,} prospects** match · _Eligibility based on roster + "
-    "recruiting year where available — players without recruiting data "
-    "are included by default since the data only covers ~36% of the pool. "
-    "Use the 'Eligibility verified only' class filter for the strict pool._"
+    f"**{len(filt):,} of {len(board)} consensus prospects** match · "
+    "_The expert board is one published source; composite z is our "
+    "z-score against 2025 FBS peers. Mismatches between the two are "
+    "the conversation._"
 )
 
 
@@ -96,7 +88,7 @@ st.caption(
 def _open_college_profile(team: str, season: int, position: str,
                             player: str) -> None:
     """Push session state for College mode and switch_page to app.py.
-    Same handler the College team page uses for its roster click-through."""
+    Same handler the College Team page uses for its roster click-through."""
     st.session_state["college_school_v2"] = team
     st.session_state["college_season_landing"] = int(season)
     st.session_state["college_position_top"] = position
@@ -109,29 +101,42 @@ def _open_college_profile(team: str, season: int, position: str,
     st.switch_page("app.py")
 
 
-def _render_prospect_row(rank: int, r: pd.Series, key_prefix: str) -> None:
-    cols = st.columns([0.5, 5, 1.4, 1.4, 1.6])
+def _render_prospect_row(rank_label: str, r: pd.Series,
+                            key_prefix: str) -> None:
+    cols = st.columns([0.7, 5, 1.6, 1.4, 1.4])
     with cols[0]:
         st.markdown(
-            f"<div style='font-size:1.5rem;font-weight:800;color:#666;"
-            f"padding-top:6px;'>{rank}</div>",
+            f"<div style='font-size:1.4rem;font-weight:800;color:#1e3a8a;"
+            f"padding-top:6px;line-height:1.1;'>{rank_label}</div>",
             unsafe_allow_html=True,
         )
     with cols[1]:
-        sign = "+" if r["composite_z"] >= 0 else ""
-        verified = "✓" if r.get("eligibility_verified") else "?"
+        actual_team = r.get("team")
+        if (pd.notna(actual_team)
+                and str(actual_team).lower() != str(r["school"]).lower()):
+            sub_school = (f"{r['school']} on board · "
+                          f"_{actual_team}_ in our 2025 stats")
+        else:
+            sub_school = r["school"]
         st.markdown(
-            f"**{r['player']}** · `{r['position']}` · "
-            f"{r['team']} _{r.get('conference', '') or ''}_"
+            f"**{r['player']}** · `{r['board_position']}` · {sub_school}"
         )
-        st.caption(
-            f"{sign}{r['composite_z']:.2f} composite z · "
-            f"{verified} eligibility"
-        )
+        if pd.notna(r.get("composite_z")):
+            sign = "+" if r["composite_z"] >= 0 else ""
+            verified = "✓" if r.get("eligibility_verified") else "?"
+            st.caption(
+                f"Our composite z: {sign}{r['composite_z']:.2f} · "
+                f"{verified} 2027 eligibility"
+            )
+        else:
+            st.caption(
+                "_No 2025 production data yet (likely a true freshman "
+                "from the 2025 recruit class)._"
+            )
     with cols[2]:
         if pd.notna(r.get("stars")):
             stars = "★" * int(r["stars"])
-            st.caption(f"{stars} ({int(r['stars'])}-star)")
+            st.caption(f"{stars} ({int(r['stars'])}-star recruit)")
         else:
             st.caption("_no recruit data_")
     with cols[3]:
@@ -142,15 +147,23 @@ def _render_prospect_row(rank: int, r: pd.Series, key_prefix: str) -> None:
         else:
             st.caption("—")
     with cols[4]:
-        if st.button(
-            "Profile →",
-            key=f"{key_prefix}_{r['player_id']}",
-            use_container_width=True,
-        ):
-            _open_college_profile(
-                team=r["team"], season=2025, position=r["position"],
-                player=r["player"],
-            )
+        if pd.notna(r.get("player_id")):
+            target_team = (r.get("team") if pd.notna(r.get("team"))
+                           else r["school"])
+            target_pos = r["position"]
+            if st.button(
+                "Profile →",
+                key=f"{key_prefix}_{int(r['expert_rank'])}",
+                use_container_width=True,
+            ):
+                _open_college_profile(
+                    team=str(target_team),
+                    season=2025,
+                    position=target_pos,
+                    player=r["player"],
+                )
+        else:
+            st.caption("_profile pending_")
 
 
 # ── Tabs ────────────────────────────────────────────────────────
@@ -161,95 +174,83 @@ tab_board, tab_pos, tab_school, tab_conf = st.tabs([
     "🏟 By Conference",
 ])
 
-# 📋 Big Board — top-100 across positions
+# 📋 Big Board — expert rank order
 with tab_board:
-    st.markdown("### Top prospects (composite z, all positions)")
-    st.caption(
-        "Ranked by raw composite z-score — no positional-value multiplier "
-        "yet. QBs and OTs typically under-rank here vs traditional draft "
-        "boards because position value isn't applied. Adjust by filtering "
-        "to a single position or coming back when the v1.1 board with "
-        "positional value lands."
-    )
-    sorted_df = filt.sort_values("composite_z", ascending=False).head(100)
-    if sorted_df.empty:
+    if filt.empty:
         st.info("No prospects match your filters.")
     else:
-        for i, (_, r) in enumerate(sorted_df.iterrows(), start=1):
-            _render_prospect_row(i, r, "bb")
-            if i < len(sorted_df):
-                st.divider()
+        for _, r in filt.sort_values("expert_rank").iterrows():
+            _render_prospect_row(f"{int(r['expert_rank'])}", r, "bb")
+            st.divider()
 
-# 🎯 By Position
+# 🎯 By Position — grouped by normalized position
 with tab_pos:
-    st.markdown("### Top 15 per position")
+    st.markdown("### Top prospects per position (expert board)")
     st.caption(
-        "Same composite z, grouped by position. Each section is "
-        "expandable. Tier 1 prospects are typically those with z ≥ 1.5; "
-        "tier 2 with z ≥ 1.0; below that gets noisier."
+        "Expert ranks grouped by position. Each section is "
+        "expandable; QB opens by default."
     )
     positions_order = ["QB", "RB", "WR", "TE", "OL",
                         "DE", "DT", "LB", "CB", "S"]
     for pos in positions_order:
-        pos_df = filt[filt["position"] == pos].sort_values(
-            "composite_z", ascending=False
-        ).head(15)
+        pos_df = filt[filt["position"] == pos].sort_values("expert_rank")
         if pos_df.empty:
             continue
         with st.expander(
-            f"**{pos}** — top {len(pos_df)} of "
-            f"{(filt['position'] == pos).sum()} eligible",
+            f"**{pos}** — {len(pos_df)} prospects on the expert board",
             expanded=(pos == "QB"),
         ):
             for i, (_, r) in enumerate(pos_df.iterrows(), start=1):
-                _render_prospect_row(i, r, f"pos_{pos}")
-                if i < len(pos_df):
-                    st.divider()
+                rank_html = (
+                    f"#{i}<br><span style='font-size:0.7rem;color:#888;"
+                    f"font-weight:500;'>(overall #{int(r['expert_rank'])})"
+                    f"</span>"
+                )
+                _render_prospect_row(rank_html, r, f"pos_{pos}")
+                st.divider()
 
-# 🏫 By School — prospect counts + drill-down
+# 🏫 By School
 with tab_school:
-    st.markdown("### Schools by 2027 prospect count")
+    st.markdown("### Schools by expert-board prospects")
     st.caption(
-        "How many 2027-eligible players each school has in our composite "
-        "pool, plus the average composite z of their top 5 prospects. "
-        "Click any school in the filter at the top to drill down."
+        "Count of consensus-board prospects per school. Use the school "
+        "filter at top to drill in."
     )
-    # Top-5 per school for the avg-z calculation
-    sch = (filt.sort_values("composite_z", ascending=False)
-           .groupby("team", as_index=False)
-           .agg(prospects=("player_id", "count"),
-                top5_avg_z=("composite_z",
-                              lambda s: s.head(5).mean())))
-    sch["top5_avg_z"] = sch["top5_avg_z"].round(2)
-    sch = sch.sort_values(["top5_avg_z", "prospects"],
-                            ascending=[False, False]).head(50)
-    sch = sch.rename(columns={
-        "team": "School",
-        "prospects": "# eligible",
-        "top5_avg_z": "Top-5 avg composite z",
+    sch = (filt.groupby("school", as_index=False)
+           .agg(prospects=("player", "count"),
+                top_rank=("expert_rank", "min"),
+                avg_rank=("expert_rank", "mean")))
+    sch["avg_rank"] = sch["avg_rank"].round(1)
+    sch = sch.sort_values(["prospects", "top_rank"],
+                            ascending=[False, True]).rename(columns={
+        "school": "School",
+        "prospects": "# on board",
+        "top_rank": "Highest pick",
+        "avg_rank": "Avg pick",
     })
     st.dataframe(sch, use_container_width=True, hide_index=True)
 
-# 🏟 By Conference — same idea, conference scope
+# 🏟 By Conference
 with tab_conf:
-    st.markdown("### Conferences by 2027 prospect strength")
+    st.markdown("### Conferences by expert-board prospects")
     st.caption(
-        "Counts and average top-25-prospect composite z per conference. "
-        "A rough read on which conference is sending the most talent to "
-        "the 2027 draft."
+        "Conference is from our 2025-season parquet match. Prospects "
+        "who didn't match (true freshmen with no production yet) are "
+        "pooled as 'unmatched'."
     )
-    cnf = (filt.sort_values("composite_z", ascending=False)
-           .groupby("conference", as_index=False)
-           .agg(prospects=("player_id", "count"),
-                top25_avg_z=("composite_z",
-                              lambda s: s.head(25).mean())))
-    cnf["top25_avg_z"] = cnf["top25_avg_z"].round(2)
-    cnf = cnf.sort_values(["top25_avg_z", "prospects"],
-                            ascending=[False, False])
-    cnf = cnf.rename(columns={
+    cnf_pool = filt.copy()
+    cnf_pool["conference"] = cnf_pool["conference"].fillna("(unmatched)")
+    cnf = (cnf_pool.groupby("conference", as_index=False)
+           .agg(prospects=("player", "count"),
+                top_rank=("expert_rank", "min"),
+                avg_rank=("expert_rank", "mean")))
+    cnf["avg_rank"] = cnf["avg_rank"].round(1)
+    cnf = cnf.sort_values(["prospects", "top_rank"],
+                            ascending=[False, True]).rename(columns={
         "conference": "Conference",
-        "prospects": "# eligible",
-        "top25_avg_z": "Top-25 avg composite z",
+        "prospects": "# on board",
+        "top_rank": "Highest pick",
+        "avg_rank": "Avg pick",
     })
     st.dataframe(cnf, use_container_width=True, hide_index=True)
 
@@ -257,11 +258,10 @@ with tab_conf:
 # ── Footer ──────────────────────────────────────────────────────
 st.markdown("---")
 st.caption(
-    "Composite z-scores are the average of position-specific z-scores "
-    "(production stats z-scored against FBS peers, 2025 season). "
-    "Eligibility = recruit-year ≤ 2024 AND not already drafted; "
-    "players without recruiting data are included by default since "
-    "the dataset only covers ~36% of FBS rosters. "
-    "Data via [nflverse](https://github.com/nflverse) · "
+    "Expert board: hand-curated top-100 (April 2026). Composite z: our "
+    "z-score across 2025-season FBS production stats joined by name + "
+    "school (with a name-only fallback for transfer-portal moves). "
+    "Position keys: OT/IOL → OL · DL → DT · EDGE → DE. Data via "
+    "[nflverse](https://github.com/nflverse) · "
     "[CFBData](https://collegefootballdata.com)."
 )
