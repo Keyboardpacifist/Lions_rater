@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """Seed the 2027 NFL Draft consensus big board.
 
-Source: expert big board PDF (~Apr 2026, top 100). We treat this as
-the canonical board for the Draft page until we add scrapers that
-aggregate multiple sources.
+Source: Brett's curated big board (April 2026 — re-ordered from
+the original consensus PDF). We treat this as the canonical board
+for the Draft page until we add scrapers that aggregate multiple
+sources.
+
+The seed list contains 98 entries with 8 obvious row-paste
+duplicates from the source spreadsheet; this script dedupes by
+keeping the first occurrence (highest rank) and renumbers
+sequentially, yielding 90 unique prospects.
 
 Output: data/draft_2027_consensus.parquet
 
@@ -19,115 +25,110 @@ import pandas as pd
 REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "data" / "draft_2027_consensus.parquet"
 
-# (rank, player, board_position, school)
-# board_position is the position label on the expert board — we map
-# it to our internal position keys (DE / DT / OL / etc.) at load
-# time so the Draft page can filter by user-friendly position.
-BOARD = [
-    ( 1, "Arch Manning",          "QB",   "Texas"),
-    ( 2, "Dante Moore",           "QB",   "Oregon"),
-    ( 3, "Jeremiah Smith",        "WR",   "Ohio State"),
-    ( 4, "Colin Simmons",         "EDGE", "Texas"),
-    ( 5, "Julian Sayin",          "QB",   "Ohio State"),
-    ( 6, "Leonard Moore",         "CB",   "Notre Dame"),
-    ( 7, "Dylan Stewart",         "EDGE", "South Carolina"),
-    ( 8, "Cam Coleman",           "WR",   "Texas"),
-    ( 9, "Jordan Seaton",         "OT",   "LSU"),
-    (10, "Trevor Goosby",         "OT",   "Texas"),
-    (11, "Ellis Robinson IV",     "CB",   "Georgia"),
-    (12, "David Stone",           "DL",   "Oklahoma"),
-    (13, "Matayo Uiagalelei",     "EDGE", "Oregon"),
-    (14, "Darian Mensah",         "QB",   "Miami (FL)"),
-    (15, "Ryan Williams",         "WR",   "Alabama"),
-    (16, "KJ Bolden",             "S",    "Georgia"),
-    (17, "LaNorris Sellers",      "QB",   "South Carolina"),
-    (18, "Jamari Johnson",        "TE",   "Oregon"),
-    (19, "CJ Carr",               "QB",   "Notre Dame"),
-    (20, "A'Mauri Washington",    "DL",   "Oregon"),
-    (21, "Zabien Brown",          "CB",   "Alabama"),
-    (22, "Brendan Sorsby",        "QB",   "Texas Tech"),
-    (23, "Ahmad Hardy",           "RB",   "Missouri"),
-    (24, "Trey'Dez Green",        "TE",   "LSU"),
-    (25, "Quincy Rhodes Jr.",     "EDGE", "Arkansas"),
-    (26, "Cayden Green",          "OT",   "Missouri"),
-    (27, "Drew Mestemaker",       "QB",   "Oklahoma State"),
-    (28, "Ahmad Moten Sr.",       "DL",   "Miami (FL)"),
-    (29, "Nick Marsh",            "WR",   "Indiana"),
-    (30, "Kelley Jones",          "CB",   "Mississippi State"),
-    (31, "Kyngstonn Viliamu-Asa", "LB",   "Notre Dame"),
-    (32, "Kewan Lacy",            "RB",   "Mississippi"),
-    (33, "Austin Siereveld",      "OT",   "Ohio State"),
-    (34, "Koi Perich",            "S",    "Oregon"),
-    (35, "Carter Smith",          "OT",   "Indiana"),
-    (36, "Charlie Becker",        "WR",   "Indiana"),
-    (37, "Sammy Brown",           "LB",   "Clemson"),
-    (38, "Damon Wilson Jr.",      "EDGE", "Miami (FL)"),
-    (39, "Trinidad Chambliss",    "QB",   "Mississippi"),
-    (40, "William Echoles",       "DL",   "Mississippi"),
-    (41, "Mario Craver",          "WR",   "Texas A&M"),
-    (42, "Jayden Maiava",         "QB",   "USC"),
-    (43, "OJ Frederique Jr.",     "CB",   "Miami (FL)"),
-    (44, "DJ Lagway",             "QB",   "Baylor"),
-    (45, "Brauntae Johnson",      "S",    "Notre Dame"),
-    (46, "Dylan Raiola",          "QB",   "Oregon"),
-    (47, "Omarion Miller",        "WR",   "Arizona State"),
-    (48, "Anthony Smith",         "DL",   "Minnesota"),
-    (49, "Sam Leavitt",           "QB",   "LSU"),
-    (50, "Jordan Ross",           "DL",   "LSU"),
-    (51, "Chris Peal",            "CB",   "Syracuse"),
-    (52, "Princewill Umanmielen", "EDGE", "LSU"),
-    (53, "Jayden Jackson",        "DL",   "Oklahoma State"),
-    (54, "Rasheem Biles",         "LB",   "Texas"),
-    (55, "Ashton Hampton",        "CB",   "Clemson"),
-    (56, "Will Heldt",            "EDGE", "Clemson"),
-    (57, "Trevor Lauck",          "OT",   "Iowa"),
-    (58, "Yhonzae Pierre",        "EDGE", "Alabama"),
-    (59, "A.J. Holmes Jr",        "DL",   "Texas Tech"),
-    (60, "Nate Frazier",          "RB",   "Georgia"),
-    (61, "TJ Moore",              "WR",   "Clemson"),
-    (62, "Ty Benefield",          "S",    "LSU"),
-    (63, "Ryan Wingo",            "WR",   "Texas"),
-    (64, "Josh Hoover",           "QB",   "Indiana"),
-    (65, "John Henry Daley",      "EDGE", "Michigan"),
-    (66, "Bear Alexander",        "DL",   "Oregon"),
-    (67, "Blake Frazier",         "OT",   "Michigan"),
-    (68, "Iapani Laloulu",        "IOL",  "Oregon"),
-    (69, "Nyck Harbor",           "WR",   "South Carolina"),
-    (70, "Suntarine Perkins",     "LB",   "Mississippi"),
-    (71, "Evan Tengesdahl",       "IOL",  "Cincinnati"),
-    (72, "Kenyatta Jackson",      "EDGE", "Ohio State"),
-    (73, "Teitum Tuioti",         "EDGE", "Oregon"),
-    (74, "Brice Pollock",         "CB",   "Texas Tech"),
-    (75, "Justin Scott",          "DL",   "Miami (FL)"),
-    (76, "Marcus Neal Jr.",       "S",    "Penn State"),
-    (77, "Boubacar Traore",       "EDGE", "Notre Dame"),
-    (78, "Kade Pieper",           "IOL",  "Iowa"),
-    (79, "Anthonie Knapp",        "OT",   "Notre Dame"),
-    (80, "Bryant Wesco",          "WR",   "Clemson"),
-    (81, "Greg Johnson",          "IOL",  "Minnesota"),
-    (82, "Dashawn Spears",        "S",    "LSU"),
-    (83, "Drake Lindsey",         "QB",   "Minnesota"),
-    (84, "Mateen Ibirogba",       "DL",   "Texas Tech"),
-    (85, "Lance Heard",           "OT",   "Kentucky"),
-    (86, "Maraad Watson",         "DL",   "Texas"),
-    (87, "Jelani McDonald",       "S",    "Texas"),
-    (88, "Niki Prongos",          "OT",   "Stanford"),
-    (89, "Elijah Rushing",        "EDGE", "Oregon"),
-    (90, "Adonijah Green",        "DL",   "Louisville"),
-    (91, "Jacarrius Peak",        "OT",   "South Carolina"),
-    (92, "Mark Fletcher",         "RB",   "Miami (FL)"),
-    (93, "LJ McCray",             "EDGE", "Florida"),
-    (94, "Bray Hubbard",          "S",    "Alabama"),
-    (95, "Drew Bobo",             "IOL",  "Georgia"),
-    (96, "Ezomo Oratokhai",       "OT",   "Northwestern"),
-    (97, "Justice Haynes",        "RB",   "Georgia Tech"),
-    (98, "Terrance Carter",       "TE",   "Texas Tech"),
-    (99, "Jyaire Hill",           "CB",   "Michigan"),
+# Brett's curated order (raw, with duplicates — script dedupes below).
+# Format: (player, board_position, school)
+BOARD_RAW = [
+    ("Jeremiah Smith",         "WR",   "Ohio State"),
+    ("Dante Moore",            "QB",   "Oregon"),
+    ("Colin Simmons",          "EDGE", "Texas"),
+    ("Leonard Moore",          "CB",   "Notre Dame"),
+    ("Dylan Stewart",          "EDGE", "South Carolina"),
+    ("Drew Mestemaker",        "QB",   "Oklahoma State"),
+    ("Cam Coleman",            "WR",   "Texas"),
+    ("Jordan Seaton",          "OT",   "LSU"),
+    ("David Stone",            "DL",   "Oklahoma"),
+    ("Trevor Goosby",          "OT",   "Texas"),
+    ("Ellis Robinson IV",      "CB",   "Georgia"),
+    ("LaNorris Sellers",       "QB",   "South Carolina"),
+    ("Ahmad Moten Sr.",        "DL",   "Miami (FL)"),
+    ("Zabien Brown",           "CB",   "Alabama"),
+    ("Charlie Becker",         "WR",   "Indiana"),
+    ("Sammy Brown",            "LB",   "Clemson"),
+    ("Damon Wilson Jr.",       "EDGE", "Miami (FL)"),
+    ("Kelley Jones",           "CB",   "Mississippi State"),
+    ("Kewan Lacy",             "RB",   "Mississippi"),
+    ("Kyngstonn Viliamu-Asa",  "LB",   "Notre Dame"),
+    ("KJ Bolden",              "S",    "Georgia"),
+    ("Anthony Smith",          "DL",   "Minnesota"),
+    ("Jamari Johnson",         "TE",   "Oregon"),
+    ("A'Mauri Washington",     "DL",   "Oregon"),
+    ("Jacarrius Peak",         "OT",   "South Carolina"),
+    ("Zabien Brown",           "CB",   "Alabama"),           # dup
+    ("Matayo Uiagalelei",      "EDGE", "Oregon"),
+    ("Koi Perich",             "S",    "Oregon"),
+    ("Anthony Smith",          "DL",   "Minnesota"),         # dup
+    ("Kelley Jones",           "CB",   "Mississippi State"), # dup
+    ("Quincy Rhodes Jr.",      "EDGE", "Arkansas"),
+    ("Darian Mensah",          "QB",   "Miami (FL)"),
+    ("Ryan Williams",          "WR",   "Alabama"),
+    ("Ryan Wingo",             "WR",   "Texas"),
+    ("Boubacar Traore",        "EDGE", "Notre Dame"),
+    ("Trey'Dez Green",         "TE",   "LSU"),
+    ("CJ Carr",                "QB",   "Notre Dame"),
+    ("Nick Marsh",             "WR",   "Indiana"),
+    ("Cayden Green",           "OT",   "Missouri"),
+    ("Julian Sayin",           "QB",   "Ohio State"),
+    ("Ahmad Hardy",            "RB",   "Missouri"),
+    ("OJ Frederique Jr.",      "CB",   "Miami (FL)"),
+    ("William Echoles",        "DL",   "Mississippi"),
+    ("Mario Craver",           "WR",   "Texas A&M"),
+    ("Jayden Maiava",          "QB",   "USC"),
+    ("Austin Siereveld",       "OT",   "Ohio State"),
+    ("Kade Pieper",            "IOL",  "Iowa"),
+    ("Justin Scott",           "DL",   "Miami (FL)"),
+    ("Suntarine Perkins",      "LB",   "Mississippi"),
+    ("Yhonzae Pierre",         "EDGE", "Alabama"),
+    ("DJ Lagway",              "QB",   "Baylor"),
+    ("Brauntae Johnson",       "S",    "Notre Dame"),
+    ("TJ Moore",               "WR",   "Clemson"),
+    ("Omarion Miller",         "WR",   "Arizona State"),
+    ("Rasheem Biles",          "LB",   "Texas"),
+    ("Sam Leavitt",            "QB",   "LSU"),
+    ("Nate Frazier",           "RB",   "Georgia"),
+    ("Chris Peal",             "CB",   "Syracuse"),
+    ("Princewill Umanmielen",  "EDGE", "LSU"),
+    ("Jayden Jackson",         "DL",   "Oklahoma State"),
+    ("Rasheem Biles",          "LB",   "Texas"),             # dup
+    ("Ashton Hampton",         "CB",   "Clemson"),
+    ("Will Heldt",             "EDGE", "Clemson"),
+    ("Trevor Lauck",           "OT",   "Iowa"),
+    ("Brendan Sorsby",         "QB",   "Texas Tech"),
+    ("Carter Smith",           "OT",   "Indiana"),
+    ("Nyck Harbor",            "WR",   "South Carolina"),
+    ("Josh Hoover",            "QB",   "Indiana"),
+    ("Brice Pollock",          "CB",   "Texas Tech"),
+    ("Lance Heard",            "OT",   "Kentucky"),
+    ("Iapani Laloulu",         "IOL",  "Oregon"),
+    ("John Henry Daley",       "EDGE", "Michigan"),
+    ("Trinidad Chambliss",     "QB",   "Mississippi"),
+    ("Blake Frazier",          "OT",   "Michigan"),
+    ("Teitum Tuioti",          "EDGE", "Oregon"),
+    ("Justice Haynes",         "RB",   "Georgia Tech"),
+    ("Drake Lindsey",          "QB",   "Minnesota"),
+    ("Mateen Ibirogba",        "DL",   "Texas Tech"),
+    ("Kenyatta Jackson",       "EDGE", "Ohio State"),
+    ("Maraad Watson",          "DL",   "Texas"),
+    ("Adonijah Green",         "DL",   "Louisville"),
+    ("Marcus Neal Jr.",        "S",    "Penn State"),
+    ("Elijah Rushing",         "EDGE", "Oregon"),
+    ("Bray Hubbard",           "S",    "Alabama"),
+    ("Ty Benefield",           "S",    "LSU"),
+    ("LJ McCray",              "EDGE", "Florida"),
+    ("Ezomo Oratokhai",        "OT",   "Northwestern"),
+    ("A.J. Holmes Jr",         "DL",   "Texas Tech"),
+    ("Maraad Watson",          "DL",   "Texas"),             # dup
+    ("Ezomo Oratokhai",        "OT",   "Northwestern"),      # dup
+    ("Jelani McDonald",        "S",    "Texas"),
+    ("Terrance Carter",        "TE",   "Texas Tech"),
+    ("Jyaire Hill",            "CB",   "Michigan"),
+    ("Drake Lindsey",          "QB",   "Minnesota"),         # dup
+    ("Mark Fletcher",          "RB",   "Miami (FL)"),
+    ("Jelani McDonald",        "S",    "Texas"),             # dup
+    ("Niki Prongos",           "OT",   "Stanford"),
+    ("Drew Bobo",              "IOL",  "Georgia"),
 ]
 
 # Map the expert board's position labels to our internal position keys.
-# Used to make filters / per-position grouping match the rest of the
-# College mode.
 _POS_NORM = {
     "QB":   "QB",
     "RB":   "RB",
@@ -144,8 +145,15 @@ _POS_NORM = {
 
 
 def main() -> None:
+    seen: set[tuple[str, str]] = set()
     rows = []
-    for rank, player, board_pos, school in BOARD:
+    rank = 0
+    for player, board_pos, school in BOARD_RAW:
+        key = (player.lower(), school.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        rank += 1
         rows.append({
             "expert_rank": rank,
             "player": player,
@@ -156,7 +164,9 @@ def main() -> None:
     df = pd.DataFrame(rows)
     OUT.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(OUT, index=False)
-    print(f"✓ wrote {OUT.relative_to(REPO)} ({len(df)} rows)")
+    print(f"✓ wrote {OUT.relative_to(REPO)}")
+    print(f"  raw entries: {len(BOARD_RAW)} · unique: {len(df)} "
+          f"(deduped {len(BOARD_RAW) - len(df)})")
     print(f"  positions: {df['position'].value_counts().to_dict()}")
 
 
