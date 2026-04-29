@@ -427,8 +427,11 @@ with tab_stats:
             </div>
         </div>
     </div>
-    <div style="margin-top: 16px; font-size: 14px; line-height: 1.5; opacity: 0.95;">
-        {c["reason"]}
+    <div style="margin-top: 16px; font-size: 13px; line-height: 1.5; opacity: 0.95;">
+        <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;
+             opacity:0.7;margin-bottom:4px;">WHY SIMILAR</div>
+        <div>{c["reason"]}</div>
+        {f'<div style="font-size:10px;font-weight:800;letter-spacing:1.5px;opacity:0.7;margin:10px 0 4px 0;">WHERE THEY DIVERGE</div><div>{c["divergence"].replace("Where they diverge: ", "")}</div>' if c.get("divergence") else ''}
     </div>
 </div>
 """,

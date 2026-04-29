@@ -140,17 +140,114 @@ def find_team_comps(team: str, season: int, *,
     sims.sort(key=lambda x: x[0], reverse=True)
     top = sims[:n]
 
-    # Build narrative for each
+    # Build narrative for each — why similar AND where they diverge
     out = []
     for sim, t, s, comp_vec in top:
         reason = _build_comp_reason(target, comp_vec, stat_cols)
+        divergence = _build_comp_divergence(
+            target, comp_vec, stat_cols,
+            target_label=f"{team} {season}",
+            comp_label=f"{s} {t}",
+        )
         out.append({
             "team": t,
             "season": s,
             "similarity": sim,
             "reason": reason,
+            "divergence": divergence,
         })
     return out
+
+
+# When listing differences we want to mention the trait + the side that
+# owned it. Map z-stat to a noun phrase that fits both directions.
+_DIVERGENCE_PHRASES = {
+    "off_rush_epa_per_play_z":      "ground game",
+    "off_pass_epa_per_play_z":      "passing attack",
+    "off_explosive_rate_z":         "explosive-play rate",
+    "off_red_zone_td_rate_z":       "red zone finishing",
+    "off_third_down_conv_rate_z":   "3rd-down conversion",
+    "off_giveaway_rate_z":          "ball security",
+    "points_per_game_z":            "scoring volume",
+    "def_epa_per_play_z":           "overall defense",
+    "def_pass_epa_allowed_z":       "pass defense",
+    "def_rush_epa_allowed_z":       "run defense",
+    "def_takeaway_rate_z":          "takeaway production",
+    "def_pressure_rate_z":          "pass rush",
+    "def_sack_rate_z":              "sack production",
+    "points_allowed_per_game_z":    "scoring defense",
+    "fourth_q_off_epa_z":           "4th-quarter offense",
+    "fourth_q_def_epa_z":           "4th-quarter defense",
+}
+
+
+def _z_descriptor(z: float) -> str:
+    """Plain-English level for a z-score."""
+    if z >= 1.5:   return "elite"
+    if z >= 0.7:   return "above-average"
+    if z >= -0.7:  return "average"
+    if z >= -1.5:  return "below-average"
+    return "poor"
+
+
+def _build_comp_divergence(target: np.ndarray, comp: np.ndarray,
+                              stat_cols: list[str],
+                              target_label: str,
+                              comp_label: str) -> str:
+    """Identify the 2-3 stats where the two team-seasons diverge most
+    (large |z-delta|) AND at least one side hits elite/poor levels.
+    Returns a fan-readable "where they diverge" sentence."""
+    df = load_team_seasons()
+    available = [c for c in stat_cols if c in df.columns]
+    if len(available) != len(target):
+        return ""
+
+    candidates = []  # (abs_delta, stat, target_z, comp_z)
+    for i, stat in enumerate(available):
+        if stat not in _DIVERGENCE_PHRASES:
+            continue
+        if np.isnan(target[i]) or np.isnan(comp[i]):
+            continue
+        delta = float(target[i]) - float(comp[i])
+        # Require ≥1 full descriptor-tier of difference (z gap ≥ 1.0)
+        # so we don't surface "elite vs above-average" as divergence
+        if abs(delta) < 1.0:
+            continue
+        # Skip unless the descriptors actually land in different tiers —
+        # that's what makes the difference fan-readable.
+        if _z_descriptor(target[i]) == _z_descriptor(comp[i]):
+            continue
+        # And require at least one side to be notable (≥ "above-average"
+        # or ≤ "below-average") — otherwise it's noise around the mean.
+        if abs(target[i]) < 0.7 and abs(comp[i]) < 0.7:
+            continue
+        candidates.append((abs(delta), stat, float(target[i]),
+                            float(comp[i])))
+
+    if not candidates:
+        return ""
+    candidates.sort(reverse=True)
+    top = candidates[:3]
+
+    fragments = []
+    for _, stat, tz, cz in top:
+        phrase = _DIVERGENCE_PHRASES.get(stat, stat.replace("_z", "")
+                                                  .replace("_", " "))
+        if tz > cz:
+            # Target had it, comp didn't
+            fragments.append(
+                f"**{target_label}**'s {phrase} was {_z_descriptor(tz)} "
+                f"({_z_descriptor(cz)} for {comp_label})"
+            )
+        else:
+            fragments.append(
+                f"**{comp_label}**'s {phrase} was {_z_descriptor(cz)} "
+                f"({_z_descriptor(tz)} for {target_label})"
+            )
+
+    if len(fragments) == 1:
+        return f"Where they diverge: {fragments[0]}."
+    return "Where they diverge: " + "; ".join(fragments) + "."
 
 
 def _build_comp_reason(target: np.ndarray, comp: np.ndarray,
