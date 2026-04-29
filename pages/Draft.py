@@ -19,6 +19,7 @@ from lib_draft_2027 import (
     load_2027_prospects,
     load_consensus_board,
 )
+from lib_draft_stats import render_prospect_stats
 from lib_shared import inject_css
 
 st.set_page_config(
@@ -196,9 +197,6 @@ def _render_prospect_row(rank_label: str, r: pd.Series,
                         f"{s['pct']}th pctl ({sign}{s['z']:.2f}σ)"
                     )
             if weaknesses:
-                # Frame the section based on whether any are real
-                # concerns (z ≤ -0.5) vs just relative-low areas in
-                # an otherwise strong profile.
                 has_real_weakness = any(w["z"] <= -0.5 for w in weaknesses)
                 has_below_avg = any(w["z"] < 0 for w in weaknesses)
                 if has_real_weakness:
@@ -219,6 +217,18 @@ def _render_prospect_row(rank_label: str, r: pd.Series,
                         f"- **{w['label']}** — "
                         f"{w['pct']}th pctl ({sign}{w['z']:.2f}σ)"
                     )
+
+            # Season-by-season + career stats — mix of counting +
+            # advanced for the position. Pulls from the player's
+            # full career in our parquets.
+            st.markdown("---")
+            st.markdown("**📊 Season + Career Stats**")
+            if pd.notna(r.get("player_id")):
+                render_prospect_stats(
+                    str(r["player_id"]), r["position"]
+                )
+            else:
+                st.caption("_Career stats unavailable (no parquet match)._")
 
             st.markdown("---")
             st.markdown("**🎯 Top 5 Statistical Comps**")
