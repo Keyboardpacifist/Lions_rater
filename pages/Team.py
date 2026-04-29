@@ -144,6 +144,10 @@ hero_html = (
 )
 st.markdown(hero_html, unsafe_allow_html=True)
 
+# ── Top summary strip — record · SOS · EPA composites ────────
+from lib_team_header_strip import render_team_header_strip
+render_team_header_strip(team, int(season), row)
+
 # ── Contention timeline ribbon ───────────────────────────────
 timeline = compute_team_timeline(team)
 timeline_html = render_team_timeline_html(timeline,
