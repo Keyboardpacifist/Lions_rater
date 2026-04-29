@@ -102,11 +102,21 @@ _POS_FILES = {
     "OL": "college_ol_roster.parquet",
 }
 
+# CFBD-advanced parquets carry the EPA + usage stats that the
+# all_seasons primary parquets don't. Per-(player_id, season) join.
+_CFBD_ADV_FILES = {
+    "QB": "college_qb_cfbd_advanced.parquet",
+    "WR": "college_wr_cfbd_advanced.parquet",
+    "TE": "college_te_cfbd_advanced.parquet",
+    "RB": "college_rb_cfbd_advanced.parquet",
+}
+
 
 @st.cache_data(show_spinner=False)
 def get_prospect_seasons(player_id: str, position: str) -> pd.DataFrame:
     """Return all season-rows for the prospect across their career,
-    sorted oldest → newest. Empty if not found."""
+    sorted oldest → newest. Merges in the EPA/usage advanced parquet
+    for skill positions. Empty if not found."""
     if not player_id:
         return pd.DataFrame()
     if position in _POS_FILES:
@@ -121,7 +131,23 @@ def get_prospect_seasons(player_id: str, position: str) -> pd.DataFrame:
     if "player_id" not in df.columns:
         return pd.DataFrame()
     df["player_id"] = df["player_id"].astype(str)
-    rows = df[df["player_id"] == str(player_id)]
+    rows = df[df["player_id"] == str(player_id)].copy()
+
+    # Merge the CFBD-advanced parquet for EPA + usage stats.
+    if position in _CFBD_ADV_FILES:
+        adv_path = _COLLEGE / _CFBD_ADV_FILES[position]
+        if adv_path.exists():
+            adv = pd.read_parquet(adv_path)
+            adv["player_id"] = adv["player_id"].astype(str)
+            adv_cols = [c for c in adv.columns
+                         if c.startswith("epa_") or c.startswith("usage_")]
+            if adv_cols:
+                rows = rows.merge(
+                    adv[["player_id", "season"] + adv_cols],
+                    on=["player_id", "season"], how="left",
+                    suffixes=("", "_adv"),
+                )
+
     return rows.sort_values("season").reset_index(drop=True)
 
 
