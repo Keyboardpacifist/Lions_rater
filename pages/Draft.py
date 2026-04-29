@@ -196,18 +196,29 @@ def _render_prospect_row(rank_label: str, r: pd.Series,
                         f"{s['pct']}th pctl ({sign}{s['z']:.2f}σ)"
                     )
             if weaknesses:
-                st.markdown("**📉 Statistical Weaknesses**")
+                # Frame the section based on whether any are real
+                # concerns (z ≤ -0.5) vs just relative-low areas in
+                # an otherwise strong profile.
+                has_real_weakness = any(w["z"] <= -0.5 for w in weaknesses)
+                has_below_avg = any(w["z"] < 0 for w in weaknesses)
+                if has_real_weakness:
+                    st.markdown("**📉 Statistical Weaknesses**")
+                elif has_below_avg:
+                    st.markdown(
+                        "**📉 Lower-Ranked Metrics** "
+                        "_— at or below average_"
+                    )
+                else:
+                    st.markdown(
+                        "**📉 Profile Gaps** "
+                        "_— weakest areas, but still above league average_"
+                    )
                 for w in weaknesses:
                     sign = "+" if w["z"] >= 0 else ""
                     st.markdown(
                         f"- **{w['label']}** — "
                         f"{w['pct']}th pctl ({sign}{w['z']:.2f}σ)"
                     )
-            if not strengths and not weaknesses:
-                st.caption(
-                    "_No notable statistical strengths or weaknesses "
-                    "in our model — well-rounded profile._"
-                )
 
             st.markdown("---")
             st.markdown("**🎯 Top 5 Statistical Comps**")

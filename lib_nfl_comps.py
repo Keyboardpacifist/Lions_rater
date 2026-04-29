@@ -295,10 +295,12 @@ def get_stat_profile(prospect_row: pd.Series, position: str) -> dict:
     # Strengths — top 3 with z ≥ 1
     strengths = sorted([i for i in items if i["z"] >= 1.0],
                           key=lambda x: -x["z"])[:3]
-    # Concerns — bottom 3 with z ≤ -0.5
-    concerns = sorted([i for i in items if i["z"] <= -0.5],
-                         key=lambda x: x["z"])[:3]
-    return {"strengths": strengths, "concerns": concerns}
+    # Bottom 3 stats — ALWAYS shown. The page decides framing:
+    # 'Statistical Weaknesses' if any are below -0.5σ, else
+    # 'Profile Gaps' (lowest stats in an above-average profile —
+    # still useful info, frames honestly that nothing is bad).
+    bottom = sorted(items, key=lambda x: x["z"])[:3]
+    return {"strengths": strengths, "concerns": bottom}
 
 
 def lookup_prospect_row(player_name: str, school: str,
