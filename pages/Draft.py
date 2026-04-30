@@ -259,14 +259,50 @@ tab_board, tab_pos, tab_school, tab_conf = st.tabs([
     "🏟 By Conference",
 ])
 
-# 📋 Big Board — expert rank order
+# 📋 Big Board — expert rank order, paginated 50 per page
 with tab_board:
     if filt.empty:
         st.info("No prospects match your filters.")
     else:
-        for _, r in filt.sort_values("expert_rank").iterrows():
+        sorted_df = filt.sort_values("expert_rank").reset_index(drop=True)
+
+        PAGE_SIZE = 50
+        total = len(sorted_df)
+        pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+
+        # Reset to page 1 when filters change so we don't land on
+        # an empty page after narrowing.
+        filter_sig = (pos_filter, school_filter, total)
+        if st.session_state.get("draft_filter_sig") != filter_sig:
+            st.session_state.draft_page = 1
+            st.session_state.draft_filter_sig = filter_sig
+        selected_page = min(st.session_state.get("draft_page", 1), pages)
+
+        def _render_page_nav(key_prefix: str) -> None:
+            if pages <= 1:
+                return
+            cols = st.columns(pages)
+            for i in range(pages):
+                start_rank = i * PAGE_SIZE + 1
+                end_rank = min((i + 1) * PAGE_SIZE, total)
+                label = f"{start_rank}–{end_rank}"
+                kind = "primary" if (i + 1) == selected_page else "secondary"
+                if cols[i].button(label, key=f"{key_prefix}_page_{i+1}",
+                                    type=kind, use_container_width=True):
+                    st.session_state.draft_page = i + 1
+                    st.rerun()
+
+        _render_page_nav("top")
+
+        start_idx = (selected_page - 1) * PAGE_SIZE
+        end_idx = start_idx + PAGE_SIZE
+        page_slice = sorted_df.iloc[start_idx:end_idx]
+        for _, r in page_slice.iterrows():
             _render_prospect_row(f"{int(r['expert_rank'])}", r, "bb")
             st.divider()
+
+        # Repeat nav at the bottom so users don't have to scroll back up.
+        _render_page_nav("bot")
 
 # 🎯 By Position — grouped by normalized position
 with tab_pos:
