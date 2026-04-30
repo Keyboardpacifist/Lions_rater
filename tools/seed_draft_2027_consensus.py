@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Seed the 2027 NFL Draft consensus big board.
 
-Source: Brett's curated big board (April 2026, returned-to-list edits
-on 2026-04-29 to re-add 8 of the 9 prospects originally cut). We treat
-this as the canonical board for the Draft page until we add scrapers
-that aggregate multiple sources.
+Source: Brett's curated 99 (locked at ranks 1-99) + PFSN's 485-name
+big board (Apr 2026) for ranks 100+. The PFSN entries that overlap
+our 99 are deduped; remaining new names get appended, shuffled
+within 30-spot buckets, then trimmed to 400 total via differential
+deletion at ranks 350-449 (cut twice as many from 400-449 as from
+350-399; cut all rank ≥ 450).
 
-To re-rank: edit BOARD below in your desired order and re-run. The
-script auto-renumbers and dedupes by (player, school) just in case.
+To re-rank: edit BOARD or PFSN_RAW below and re-run. The script
+auto-renumbers and dedupes by (player, school).
 
 Output: data/draft_2027_consensus.parquet
 
@@ -16,6 +18,7 @@ Run:
 """
 from __future__ import annotations
 
+import random
 from pathlib import Path
 
 import pandas as pd
@@ -127,32 +130,616 @@ BOARD = [
     ("Drew Bobo",              "IOL",  "Georgia"),
 ]
 
+# PFSN top-485 big board (April 2026). Used to expand the board past
+# our curated 99 — only NEW names get appended at rank 100+.
+PFSN_RAW: list[tuple[str, str, str]] = [
+    ("Jeremiah Smith",         "WR",   "Ohio State"),
+    ("Leonard Moore",          "CB",   "Notre Dame"),
+    ("Dante Moore",            "QB",   "Oregon"),
+    ("Dylan Stewart",          "EDGE", "South Carolina"),
+    ("Cam Coleman",            "WR",   "Texas"),
+    ("Colin Simmons",          "EDGE", "Texas"),
+    ("Arch Manning",           "QB",   "Texas"),
+    ("Jordan Seaton",          "OT",   "LSU"),
+    ("David Stone",            "DT",   "Oklahoma"),
+    ("Trevor Goosby",          "OT",   "Texas"),
+    ("Omarion Miller",         "WR",   "Arizona State"),
+    ("KJ Bolden",              "S",    "Georgia"),
+    ("Jamari Johnson",         "TE",   "Oregon"),
+    ("Ahmad Moten",            "NT",   "Miami (FL)"),
+    ("Zabien Brown",           "CB",   "Alabama"),
+    ("Tae Johnson",            "S",    "Notre Dame"),
+    ("Mario Craver",           "WR",   "Texas A&M"),
+    ("Quincy Rhodes Jr.",      "EDGE", "Arkansas"),
+    ("Austin Siereveld",       "OL",   "Ohio State"),
+    ("Kenyatta Jackson Jr.",   "EDGE", "Ohio State"),
+    ("Charlie Becker",         "WR",   "Indiana"),
+    ("Blake Frazier",          "OT",   "Michigan"),
+    ("Drew Mestemaker",        "QB",   "Oklahoma State"),
+    ("Kewan Lacy",             "RB",   "Ole Miss"),
+    ("A'Mauri Washington",     "NT",   "Oregon"),
+    ("Matayo Uiagalelei",      "EDGE", "Oregon"),
+    ("Ashton Hampton",         "CB",   "Clemson"),
+    ("Ellis Robinson IV",      "CB",   "Georgia"),
+    ("Kade Pieper",            "C",    "Iowa"),
+    ("Anthonie Knapp",         "OT",   "Notre Dame"),
+    ("Sammy Brown",            "LB",   "Clemson"),
+    ("Mateen Ibirogba",        "DT",   "Texas Tech"),
+    ("Ahmad Hardy",            "RB",   "Missouri"),
+    ("Princewill Umanmielen",  "EDGE", "Ole Miss"),
+    ("Cayden Green",           "OL",   "Missouri"),
+    ("Jelani McDonald",        "S",    "Texas"),
+    ("Trey'Dez Green",         "TE",   "LSU"),
+    ("Iapani Laloulu",         "C",    "Oregon"),
+    ("Bear Alexander",         "DT",   "Oregon"),
+    ("Darian Mensah",          "QB",   "Miami (FL)"),
+    ("Wyatt Young",            "WR",   "Oklahoma State"),
+    ("Xavier Scott",           "NB",   "Illinois"),
+    ("Nick Marsh",             "WR",   "Indiana"),
+    ("Ryan Wingo",             "WR",   "Texas"),
+    ("Brandon Baker",          "OL",   "Texas"),
+    ("Braelin Moore",          "C",    "LSU"),
+    ("LJ Martin",              "RB",   "BYU"),
+    ("Peter Clarke",           "TE",   "Temple"),
+    ("Rasheem Biles",          "LB",   "Texas"),
+    ("Brendan Sorsby",         "QB",   "Texas Tech"),
+    ("Samson Okunlola",        "OG",   "Miami (FL)"),
+    ("Mario Landino",          "DT",   "Indiana"),
+    ("Bray Hubbard",           "S",    "Alabama"),
+    ("Taylor Wein",            "EDGE", "Oklahoma"),
+    ("Greg Johnson",           "OL",   "Minnesota"),
+    ("Eric Singleton Jr.",     "WR",   "Florida"),
+    ("Brice Pollock",          "CB",   "Texas Tech"),
+    ("Raleek Brown",           "RB",   "Texas"),
+    ("Isaac Brown",            "RB",   "Louisville"),
+    ("Will Heldt",             "EDGE", "Clemson"),
+    ("Eli Bowen",              "CB",   "Oklahoma"),
+    ("Clev Lubin",             "EDGE", "Louisville"),
+    ("Anthony Smith",          "EDGE", "Minnesota"),
+    ("Ryan Coleman-Williams",  "WR",   "Alabama"),
+    ("Christian Alliegro",     "LB",   "Ohio State"),
+    ("PJ Williams",            "OT",   "SMU"),
+    ("T.J. Moore",             "WR",   "Clemson"),
+    ("William Echoles",        "DT",   "Ole Miss"),
+    ("Cole Sullivan",          "LB",   "Oklahoma"),
+    ("Yhonzae Pierre",         "EDGE", "Alabama"),
+    ("Lance Heard",            "OT",   "Kentucky"),
+    ("Niki Prongos",           "OT",   "Stanford"),
+    ("Chris Cole",             "LB",   "Georgia"),
+    ("Elijah Green",           "CB",   "Tulsa"),
+    ("Teitum Tuioti",          "EDGE", "Oregon"),
+    ("Kelley Jones",           "CB",   "Mississippi State"),
+    ("Tao Johnson",            "S",    "UCLA"),
+    ("Anto Saka",              "EDGE", "Texas A&M"),
+    ("Kip Lewis",              "LB",   "Oklahoma"),
+    ("Trinidad Chambliss",     "QB",   "Ole Miss"),
+    ("Jamari Sharpe",          "CB",   "Indiana"),
+    ("Zach Lutmer",            "NB",   "Iowa"),
+    ("Justice Haynes",         "RB",   "Georgia Tech"),
+    ("Alani Noa",              "OG",   "USC"),
+    ("Ben Roberts",            "LB",   "Texas Tech"),
+    ("PJ Woodland",            "CB",   "LSU"),
+    ("Kyngstonn Viliami-Asa",  "LB",   "Notre Dame"),
+    ("Terry Moore",            "S",    "Ohio State"),
+    ("Bryce Thornton",         "S",    "Florida"),
+    ("Jayden Maiava",          "QB",   "USC"),
+    ("DJ McKinney",            "CB",   "Notre Dame"),
+    ("Benjamin Brahmer",       "TE",   "Penn State"),
+    ("Trevor Lauck",           "OT",   "Iowa"),
+    ("Amare Ferrell",          "S",    "Indiana"),
+    ("Xavier Atkins",          "LB",   "Auburn"),
+    ("Whit Weeks",             "LB",   "LSU"),
+    ("Ezra Christensen",       "DT",   "Colorado"),
+    ("A.J. Holmes Jr.",        "DT",   "Texas Tech"),
+    ("Toby Anene",             "EDGE", "Colorado"),
+    ("Kayin Lee",              "CB",   "Tennessee"),
+    ("Xavier Chaplin",         "OT",   "Florida State"),
+    ("DJ Vonnahme",            "TE",   "Iowa"),
+    ("Carter Smith",           "OT",   "Indiana"),
+    ("Jayden Bellamy",         "CB",   "UCF"),
+    ("Earl Little Jr.",        "NB",   "Ohio State"),
+    ("Jermaine Mathews Jr.",   "CB",   "Ohio State"),
+    ("Evan Johnson",           "CB",   "BYU"),
+    ("Peyton Bowen",           "S",    "Oklahoma"),
+    ("Tyrique Tucker",         "NT",   "Indiana"),
+    ("Marcus Neal",            "S",    "Penn State"),
+    ("Keon Sabb",              "S",    "Alabama"),
+    ("Ian Strong",             "WR",   "California"),
+    ("Koi Perich",             "S",    "Oregon"),
+    ("Anthony Donkoh",         "OL",   "Penn State"),
+    ("Jontez Williams",        "CB",   "USC"),
+    ("Julian Sayin",           "QB",   "Ohio State"),
+    ("Jayden Virgin-Morgan",   "EDGE", "Boise State"),
+    ("Cooper Barkate",         "WR",   "Miami (FL)"),
+    ("LaNorris Sellers",       "QB",   "South Carolina"),
+    ("Mike Matthews",          "WR",   "Tennessee"),
+    ("Damon Wilson II",        "EDGE", "Missouri"),
+    ("Davaughn Patterson",     "S",    "Wake Forest"),
+    ("Hollywood Smothers",     "RB",   "Alabama"),
+    ("Drew Azzopardi",         "OT",   "Washington"),
+    ("Junior Sherrill",        "WR",   "Vanderbilt"),
+    ("John Henry Daley",       "EDGE", "Michigan"),
+    ("Braylon Staley",         "WR",   "Tennessee"),
+    ("Tre Wisner",             "RB",   "Florida State"),
+    ("Tyree Adams",            "OT",   "Texas A&M"),
+    ("Santana Hopper",         "DT",   "Colorado"),
+    ("Antwan Raymond",         "RB",   "Rutgers"),
+    ("Byrum Brown",            "QB",   "Auburn"),
+    ("Christian Gray",         "CB",   "Notre Dame"),
+    ("Dorian Thomas",          "TE",   "California"),
+    ("Malachi Breland",        "OG",   "Arkansas"),
+    ("Nyziah Hunter",          "WR",   "Nebraska"),
+    ("Cam Cook",               "RB",   "West Virginia"),
+    ("Frederick Williams",     "OT",   "California"),
+    ("Kenny Johnson",          "WR",   "Texas Tech"),
+    ("Knijeah Harris",         "OL",   "Florida"),
+    ("Josh Hoover",            "QB",   "Indiana"),
+    ("Myles Graham",           "LB",   "Florida"),
+    ("Jayce Brown",            "WR",   "LSU"),
+    ("Suntarine Perkins",      "LB",   "Ole Miss"),
+    ("Ty Benefield",           "S",    "LSU"),
+    ("Waymond Jordan",         "RB",   "USC"),
+    ("Brody Foley",            "TE",   "Louisville"),
+    ("DJ Barksdale",           "NB",   "UCLA"),
+    ("Bryant Wesco Jr.",       "WR",   "Clemson"),
+    ("Amare Campbell",         "LB",   "Tennessee"),
+    ("Desmeal Leigh",          "OT",   "Youngstown State"),
+    ("Kemari Copeland",        "DT",   "Virginia Tech"),
+    ("Griffin Wilde",          "WR",   "Northwestern"),
+    ("Francis Brewu",          "DT",   "Notre Dame"),
+    ("James Smith",            "DT",   "Alabama"),
+    ("Raylen Wilson",          "LB",   "Georgia"),
+    ("Keanu Tanuvasa",         "DT",   "BYU"),
+    ("Adon Shuler",            "S",    "Notre Dame"),
+    ("Ben Murawski",           "OT",   "Michigan State"),
+    ("Bruce Mitchell",         "C",    "BYU"),
+    ("Aidan Chiles",           "QB",   "Northwestern"),
+    ("Paul Oyewale",           "EDGE", "TCU"),
+    ("Joe Brunner",            "OG",   "Indiana"),
+    ("Maraad Watson",          "NT",   "Texas"),
+    ("Ja'son Prevard",         "CB",   "Kansas State"),
+    ("JoJo Johnson",           "CB",   "Texas Tech"),
+    ("Luke Montgomery",        "OG",   "Ohio State"),
+    ("Melkart Abou-Jaoude",    "EDGE", "North Carolina"),
+    ("Isaiah Sategna III",     "WR",   "Oklahoma"),
+    ("Coleton Price",          "C",    "Kentucky"),
+    ("Nate Frazier",           "RB",   "Georgia"),
+    ("Dezz Ricks",             "CB",   "Texas A&M"),
+    ("Chris Corbo",            "TE",   "Georgia Tech"),
+    ("Terrance Carter Jr.",    "TE",   "Texas Tech"),
+    ("A.J. Harris",            "CB",   "Indiana"),
+    ("CJ Bailey",              "QB",   "NC State"),
+    ("Jordan Hall",            "NT",   "Georgia"),
+    ("Wayshawn Parker",        "RB",   "Utah"),
+    ("Kerry Brown",            "S",    "Minnesota"),
+    ("Duce Robinson",          "WR",   "Florida State"),
+    ("Antonio Watts",          "LB",   "Louisville"),
+    ("Andrew Sprague",         "OT",   "Michigan"),
+    ("McKale Boley",           "OL",   "Virginia"),
+    ("Dallas Afalava",         "DT",   "Wake Forest"),
+    ("Jayden Jackson",         "NT",   "Oklahoma"),
+    ("Adam Trick",             "EDGE", "Texas Tech"),
+    ("Devin McCuin",           "WR",   "Ohio State"),
+    ("Alex McLaughlin",        "S",    "Washington"),
+    ("Wilkin Formby",          "OL",   "Texas A&M"),
+    ("Micahi Danzy",           "WR",   "Florida State"),
+    ("Nyckoles Harbor",        "WR",   "South Carolina"),
+    ("Jimarion McCrimon",      "OT",   "NC State"),
+    ("Garrett Oakley",         "TE",   "Kansas State"),
+    ("J'Mond Tapp",            "EDGE", "Memphis"),
+    ("KJ Duff",                "WR",   "Rutgers"),
+    ("Demond Williams",        "QB",   "Washington"),
+    ("Ja'bril Rawls",          "CB",   "Florida State"),
+    ("CJ Carr",                "QB",   "Notre Dame"),
+    ("Hero Kanu",              "DT",   "Texas"),
+    ("Ty Bryant",              "S",    "Kentucky"),
+    ("Sam Leavitt",            "QB",   "LSU"),
+    ("Owen Heinecke",          "LB",   "Oklahoma"),
+    ("Edrees Farooq",          "S",    "Tennessee"),
+    ("Jared Richardson",       "WR",   "Duke"),
+    ("Carson Hinzman",         "C",    "Ohio State"),
+    ("Bryson Washington",      "RB",   "Auburn"),
+    ("Eddy Pierre-Louis",      "OG",   "Oklahoma"),
+    ("Fluff Bothwell",         "RB",   "Mississippi State"),
+    ("Earnest Greene III",     "OT",   "Georgia"),
+    ("Stephiylan Green",       "DT",   "LSU"),
+    ("Drew Bobo",              "C",    "Georgia"),
+    ("Jadan Baugh",            "RB",   "Florida"),
+    ("Shadre Hurst",           "OL",   "Houston"),
+    ("Dylan Lonergan",         "QB",   "Rutgers"),
+    ("Sheridan Wilson",        "C",    "Texas Tech"),
+    ("Smith Snowden",          "NB",   "Michigan"),
+    ("Jaden Greathouse",       "WR",   "Notre Dame"),
+    ("Isaac Smith",            "S",    "Mississippi State"),
+    ("DeSean Bishop",          "RB",   "Tennessee"),
+    ("Jahiem Johnson",         "CB",   "Arkansas"),
+    ("Wendell Gregory",        "EDGE", "Oklahoma State"),
+    ("Jyaire Hill",            "CB",   "Michigan"),
+    ("Dontay Joyner",          "CB",   "Maryland"),
+    ("John Mateer",            "QB",   "Oklahoma"),
+    ("Ikenna Ezeogu",          "DT",   "Penn State"),
+    ("Lyndon Cooper",          "C",    "Vanderbilt"),
+    ("Cade Uluave",            "LB",   "BYU"),
+    ("Mark Fletcher Jr.",      "RB",   "Miami (FL)"),
+    ("Nico Iamaleava",         "QB",   "UCLA"),
+    ("Dave Iuli",              "OG",   "Oregon"),
+    ("Arion Carter",           "LB",   "Tennessee"),
+    ("Markis Deal",            "NT",   "TCU"),
+    ("Que'Sean Brown",         "WR",   "Virginia Tech"),
+    ("Zion Tracy",             "NB",   "Penn State"),
+    ("Eryx Daugherty",         "OG",   "Louisville"),
+    ("John Curry",             "LB",   "Texas Tech"),
+    ("Luke Reynolds",          "TE",   "Virginia Tech"),
+    ("Xavier Lucas",           "CB",   "Miami (FL)"),
+    ("Amare Thomas",           "WR",   "Houston"),
+    ("Miles Capers",           "EDGE", "Vanderbilt"),
+    ("Trey White",             "EDGE", "Texas Tech"),
+    ("Isaiah Glasker",         "LB",   "BYU"),
+    ("Emmett Mosley V",        "WR",   "Texas"),
+    ("Kameryn Crawford",       "EDGE", "USC"),
+    ("Austin Romaine",         "LB",   "Texas Tech"),
+    ("Tobi Osunsanmi",         "EDGE", "Indiana"),
+    ("TJ Metcalf",             "NB",   "Tennessee"),
+    ("Michael Masunas",        "TE",   "Texas"),
+    ("CJ Fite",                "DT",   "Arizona State"),
+    ("Alvin Ebosele",          "OT",   "Houston"),
+    ("Cam Edwards",            "RB",   "Michigan State"),
+    ("Kamari Moulton",         "RB",   "Iowa"),
+    ("Isaiah Horton",          "WR",   "Texas A&M"),
+    ("Williams Nwaneri",       "EDGE", "Nebraska"),
+    ("Jordan Marshall",        "RB",   "Michigan"),
+    ("Luke Lindenmeyer",       "TE",   "Nebraska"),
+    ("Qua Russaw",             "LB",   "Alabama"),
+    ("Johntay Cook",           "WR",   "Ole Miss"),
+    ("Andrew Marshall",        "CB",   "Nebraska"),
+    ("Lawson Luckie",          "TE",   "Georgia"),
+    ("OJ Frederique Jr.",      "CB",   "Miami (FL)"),
+    ("Kendrick Raphael",       "RB",   "SMU"),
+    ("Dashawn Spears",         "NB",   "LSU"),
+    ("Sonny Makasini",         "OG",   "BYU"),
+    ("Elija Lofton",           "TE",   "Miami (FL)"),
+    ("Boubacar Traore",        "EDGE", "Notre Dame"),
+    ("Caleb Herring",          "EDGE", "South Carolina"),
+    ("Owen Long",              "LB",   "Arizona State"),
+    ("Ethan Davis",            "TE",   "Tennessee"),
+    ("Adepoju Adebawore",      "EDGE", "Oklahoma"),
+    ("Jayven Richardson",      "OT",   "Colorado"),
+    ("Brett Norfleet",         "TE",   "Missouri"),
+    ("BJ Williams",            "OG",   "Pittsburgh"),
+    ("DJ Lagway",              "QB",   "Baylor"),
+    ("Howard Sampson",         "OT",   "Texas Tech"),
+    ("Mikey Munn",             "CB",   "Rutgers"),
+    ("Wendell Moe Jr.",        "OG",   "Tennessee"),
+    ("Tomiwa Durojaiye",       "DT",   "South Carolina"),
+    ("Tony Rojas",             "LB",   "Penn State"),
+    ("Leon Bell",              "OT",   "Colorado"),
+    ("Katin Houser",           "QB",   "Illinois"),
+    ("Tavion Gadson",          "DT",   "Kentucky"),
+    ("MJ Cannon",              "CB",   "Cincinnati"),
+    ("Brendan Bett",           "DT",   "Florida"),
+    ("Edric Hill",             "DT",   "Alabama"),
+    ("Jalen Thompson",         "EDGE", "Arizona State"),
+    ("DJ Hicks",               "DT",   "Texas A&M"),
+    ("Conner Weigman",         "QB",   "Houston"),
+    ("Cam Vaughn",             "WR",   "Miami (FL)"),
+    ("Zeke Berry",             "CB",   "Michigan"),
+    ("Daniel Wingate",         "LB",   "Maryland"),
+    ("Bryant Williams",        "OT",   "Arkansas"),
+    ("Dominick McKinley",      "DT",   "LSU"),
+    ("Javon Tracy",            "WR",   "Minnesota"),
+    ("Gabriel Brownlow-Dindy", "NT",   "South Carolina"),
+    ("Kam Robinson",           "LB",   "Virginia"),
+    ("Reed Harris",            "WR",   "Arizona State"),
+    ("King Mack",              "S",    "NC State"),
+    ("Drayk Bowen",            "LB",   "Notre Dame"),
+    ("Jamari Lyons",           "NT",   "Florida"),
+    ("Jamel Johnson",          "S",    "TCU"),
+    ("Drake Lindsey",          "QB",   "Minnesota"),
+    ("Malachi Hosley",         "RB",   "Georgia Tech"),
+    ("Qua Moss",               "S",    "Tennessee"),
+    ("Joenel Aguero",          "S",    "Ole Miss"),
+    ("Liona Lefau",            "LB",   "Colorado"),
+    ("Jake Renfro",            "C",    "Illinois"),
+    ("Alex Honig",             "TE",   "Northwestern"),
+    ("Kalen Carroll",          "CB",   "TCU"),
+    ("Nick Krahe",             "OT",   "West Virginia"),
+    ("Dominick Giudice",       "C",    "Missouri"),
+    ("Jaden Craig",            "QB",   "TCU"),
+    ("Tayon Holloway",         "CB",   "Louisville"),
+    ("Darius Taylor",          "RB",   "Minnesota"),
+    ("Noah Fifita",            "QB",   "Arizona"),
+    ("CJ Mims",                "NT",   "Texas A&M"),
+    ("DeJuan Williams",        "RB",   "Maryland"),
+    ("Danny Scudero",          "WR",   "Colorado"),
+    ("Joshua Burnham",         "EDGE", "Indiana"),
+    ("Keshaun Singleton",      "WR",   "Auburn"),
+    ("Chiddi Obiazor",         "EDGE", "Indiana"),
+    ("Jordan Dwyer",           "WR",   "TCU"),
+    ("Mi'Quise Humphrey-Grace","DT",   "Kentucky"),
+    ("Ory Williams",           "OT",   "Tennessee"),
+    ("Jordan Hall",            "LB",   "Michigan State"),
+    ("Brandon Nicholson",      "CB",   "Stanford"),
+    ("Robert Woodyard Jr.",    "LB",   "Missouri"),
+    ("Cruce Brookins",         "S",    "Pittsburgh"),
+    ("Daymion Sanford",        "LB",   "Texas A&M"),
+    ("Kahlil House",           "OT",   "Stanford"),
+    ("Ryan Henderson",         "EDGE", "Texas A&M"),
+    ("Jay Crawford",           "CB",   "Ole Miss"),
+    ("DeAndre Moore Jr.",      "WR",   "Colorado"),
+    ("Ashton Stamps",          "CB",   "Arizona State"),
+    ("Ryan Baer",              "OT",   "Pittsburgh"),
+    ("Chris Bracy",            "S",    "Memphis"),
+    ("TJ Bush Jr.",            "EDGE", "Minnesota"),
+    ("Raion Strader",          "CB",   "Pittsburgh"),
+    ("Calvin Clements",        "OT",   "Kansas"),
+    ("Eddrick Houston",        "DT",   "Ohio State"),
+    ("Malcolm Hartzog Jr.",    "S",    "Arizona"),
+    ("Boo Carter",             "NB",   "Colorado"),
+    ("Joshua Bates",           "C",    "SMU"),
+    ("Keaton Thomas",          "LB",   "Ole Miss"),
+    ("Khalil Barnes",          "S",    "Clemson"),
+    ("Montavious Cunningham",  "OG",   "Virginia Tech"),
+    ("Tamarcus Cooley",        "S",    "LSU"),
+    ("Carson Hansen",          "RB",   "Penn State"),
+    ("Clayton Smith",          "EDGE", "Arizona State"),
+    ("Jaylen McClain",         "S",    "Ohio State"),
+    ("Eli Finley",             "TE",   "Louisiana Tech"),
+    ("Kooper Ebel",            "LB",   "Penn State"),
+    ("Jalen Mayo",             "CB",   "Houston"),
+    ("Dylan Edwards",          "RB",   "Kansas"),
+    ("Evan Link",              "OG",   "Michigan"),
+    ("Wayne Knight",           "RB",   "UCLA"),
+    ("David Ndukwe",           "OT",   "Syracuse"),
+    ("Branden Strozier",       "CB",   "Clemson"),
+    ("Randon Fonetenette",     "S",    "Colorado"),
+    ("Steve Angeli",           "QB",   "Syracuse"),
+    ("J'Koby Williams",        "RB",   "Texas Tech"),
+    ("Jaylen Sneed",           "LB",   "Notre Dame"),
+    ("CharMar Brown",          "RB",   "Miami (FL)"),
+    ("Justin Eaglin",          "CB",   "Colorado"),
+    ("Elijah Pritchett",       "OT",   "Nebraska"),
+    ("Elliot Washington II",   "CB",   "Clemson"),
+    ("Patrick Kutas",          "OG",   "Ole Miss"),
+    ("Javan Robinson",         "CB",   "Wisconsin"),
+    ("Ashlynd Barker",         "S",    "Florida State"),
+    ("Kolt Dieterich",         "OT",   "Washington"),
+    ("Cam Chadwick Jr.",       "CB",   "Virginia Tech"),
+    ("Chris Marable Jr.",      "DT",   "Boston College"),
+    ("Sean FitzSimmons",       "DT",   "Pittsburgh"),
+    ("Arlis Boardingham",      "TE",   "Auburn"),
+    ("Malik Blocton",          "DT",   "LSU"),
+    ("Nathan Efobi",           "OG",   "Michigan"),
+    ("Keona Davis",            "DT",   "Miami (FL)"),
+    ("Jahiem Lawson",          "EDGE", "Clemson"),
+    ("Jordan Castell",         "S",    "Kentucky"),
+    ("Jason Onye",             "DT",   "Notre Dame"),
+    ("Theo Melin Ohrstrom",    "TE",   "SMU"),
+    ("Abu Sama III",           "RB",   "Wisconsin"),
+    ("Quinten Joyner",         "RB",   "Texas Tech"),
+    ("Dante Lovett",           "CB",   "UCLA"),
+    ("Dylan Labarbera",        "EDGE", "Nevada"),
+    ("Michael Bennett",        "OT",   "Oregon"),
+    ("Jacob Finley",           "CB",   "Cincinnati"),
+    ("Rueben Owens II",        "RB",   "Texas A&M"),
+    ("Gunner Stockton",        "QB",   "Georgia"),
+    ("Melvin Siani",           "OT",   "Texas"),
+    ("Gabe Harris Jr.",        "EDGE", "Georgia"),
+    ("Joe Cotton",             "OT",   "Cincinnati"),
+    ("Cayden Lee",             "WR",   "Missouri"),
+    ("Daniel Hill",            "RB",   "Alabama"),
+    ("Jordan Williams",        "OL",   "UCLA"),
+    ("Nathan Robinson",        "DT",   "Tennessee"),
+    ("Jaylon Braxton",         "CB",   "Ole Miss"),
+    ("Paul Mubenga",           "OG",   "Nebraska"),
+    ("Jimmy Scott",            "EDGE", "Pittsburgh"),
+    ("K.D. Hutchinson",        "WR",   "Western Kentucky"),
+    ("Jordy Lowery",           "CB",   "Florida"),
+    ("Jahiem White",           "RB",   "North Texas"),
+    ("Tellek Lockette",        "OG",   "Maryland"),
+    ("Sharif Denson",          "NB",   "Ole Miss"),
+    ("Jacob Ponton",           "OT",   "Texas Tech"),
+    ("Jalen Moss",             "WR",   "Arizona State"),
+    ("Caleb Goodie",           "WR",   "Missouri"),
+    ("Nolan Latulippe",        "OT",   "Cincinnati"),
+    ("Tegra Tshabola",         "OG",   "Kentucky"),
+    ("Armani Winfield",        "WR",   "South Florida"),
+    ("Rahtrel Perry",          "OT",   "Maryland"),
+    ("Chris Marshall",         "WR",   "Arkansas"),
+    ("Charles Jagusah",        "OL",   "Notre Dame"),
+    ("Isaiah Crosby",          "S",    "California"),
+    ("Mohamed Toure",          "LB",   "Miami (FL)"),
+    ("Jah-Marien Latham",      "DT",   "Alabama"),
+    ("Javonnie Gibson",        "WR",   "Cincinnati"),
+    ("James Williams",         "EDGE", "Florida State"),
+    ("CJ Campbell Jr.",        "RB",   "Duke"),
+    ("Elo Modozie",            "EDGE", "Purdue"),
+    ("JC French IV",           "QB",   "Cincinnati"),
+    ("Chrishon McCray",        "WR",   "Michigan State"),
+    ("Rocco Becht",            "QB",   "Penn State"),
+    ("CJ Baxter",              "RB",   "Kentucky"),
+    ("Troy Pikes",             "DT",   "South Carolina"),
+    ("Khmori House",           "LB",   "Arkansas"),
+    ("Audavion Collins",       "CB",   "Penn State"),
+    ("Eugene Wilson III",      "WR",   "LSU"),
+    ("Judge Collier",          "CB",   "South Carolina"),
+    ("Walker Eget",            "QB",   "Duke"),
+    ("Nitro Tuggle",           "WR",   "South Carolina"),
+    ("Kevin Jennings",         "QB",   "SMU"),
+    ("Brandon Inniss",         "WR",   "Ohio State"),
+    ("Rod Moore",              "S",    "Michigan"),
+    ("Marcel Reed",            "QB",   "Texas A&M"),
+    ("Cam Calhoun",            "NB",   "Ohio State"),
+    ("Koby Young",             "WR",   "Houston"),
+    ("Benji Gosnell",          "TE",   "Virginia Tech"),
+    ("Ellis Ellis Jr.",        "CB",   "Memphis"),
+    ("Racin Delgatty",         "C",    "Alabama"),
+    ("Nico Brown",             "WR",   "Stanford"),
+    ("Malachi Henry",          "WR",   "Cincinnati"),
+    ("Landon Chambers",        "RB",   "UCF"),
+    ("Reed Swanson",           "WR",   "Boston College"),
+    ("Marquis Gillis",         "RB",   "Arizona State"),
+    ("Sean Allison",           "LB",   "Rutgers"),
+    ("Kahmari Brown",          "EDGE", "Iowa"),
+    ("Cooper Blomstrom",       "LB",   "Arizona"),
+    ("GianCarlo Rufo",         "LB",   "USC"),
+    ("MJ Moultrie II",         "CB",   "Louisiana Tech"),
+    ("Ty Bartrum",             "S",    "UCF"),
+    ("Brice Stevenson",        "DT",   "Iowa"),
+    ("Derrick Brown Jr.",      "DT",   "Oregon"),
+    ("Jake Anderson",          "DT",   "Wisconsin"),
+    ("Mason Humphrey",         "WR",   "North Carolina"),
+    ("Carmelo O'Neal",         "S",    "Alabama"),
+    ("Josh Derry",             "WR",   "UCF"),
+    ("Jareb Ramos",            "DT",   "Iowa State"),
+    ("Micah Harper",           "NB",   "Iowa State"),
+    ("Evan Chieca",            "TE",   "Florida"),
+    ("Nathaniel Staehling",    "LB",   "Michigan"),
+    ("Trent Fraley",           "C",    "Michigan State"),
+    ("Bisi Owens",             "WR",   "Purdue"),
+    ("Nathan Levicki",         "TE",   "Western Michigan"),
+    ("Peyton Seelmann",        "LB",   "North Carolina"),
+    ("Jason Oliver",           "CB",   "San Diego State"),
+    ("Carsten Mamaril",        "NB",   "San Diego State"),
+    ("Tre Moore",              "LB",   "Purdue"),
+    ("Chimdia Nwaiwu",         "OL",   "Florida State"),
+    ("Jaylon Domingeaux",      "WR",   "Wisconsin"),
+    ("Ryan Schwendeman",       "TE",   "Wisconsin"),
+    ("Shane Carr",             "WR",   "Kentucky"),
+    ("Joshua Dye",             "RB",   "Ole Miss"),
+    ("Bradlee Jones",          "CB",   "Rutgers"),
+    ("Carter Moses",           "TE",   "Kansas"),
+    ("Balansama Kamara",       "EDGE", "Colorado"),
+    ("Jai'Lun Hampton",        "OT",   "NC State"),
+    ("Keyshawn Johnson",       "EDGE", "Syracuse"),
+    ("Montae Pate",            "CB",   "Northwestern"),
+    ("Keahnist Thompson",      "EDGE", "Michigan State"),
+    ("Noah Bennee",            "TE",   "Utah"),
+    ("Matt Herron",            "DT",   "Wake Forest"),
+    ("Kyeaure Magloire",       "CB",   "Arkansas"),
+    ("Malik Knight",           "WR",   "Pittsburgh"),
+    ("Christian Pierce",       "NB",   "Michigan"),
+]
+
+
 # Map the expert board's position labels to our internal position keys.
 _POS_NORM = {
     "QB":   "QB",
     "RB":   "RB",
     "WR":   "WR",
     "TE":   "TE",
+    # Offensive line variants
     "OT":   "OL",
     "IOL":  "OL",
+    "OL":   "OL",
+    "OG":   "OL",
+    "C":    "OL",
+    # Defensive line variants
     "DL":   "DT",
+    "DT":   "DT",
+    "NT":   "DT",
+    # Edge / DE
+    "DE":   "DE",
     "EDGE": "DE",
+    # LB / Backers
     "LB":   "LB",
+    "ILB":  "LB",
+    "OLB":  "LB",
+    # Secondary
     "CB":   "CB",
+    "NB":   "CB",   # nickelback → primarily a corner variant
     "S":    "S",
+    "DB":   "S",    # generic DB → safety
 }
 
 
+# School-name aliases for dedup / matching.
+_SCHOOL_ALIASES = {
+    "ole miss": "mississippi",
+    "miss":     "mississippi",
+    "miss state": "mississippi state",
+    "usc":      "southern california",
+    "byu":      "brigham young",
+    "miami":    "miami (fl)",
+}
+
+
+def _norm_name(s: str) -> str:
+    s = s.lower().strip().replace(".", "").replace("'", "").replace("-", " ")
+    for suf in (" jr", " sr", " ii", " iii", " iv", " v"):
+        if s.endswith(suf):
+            s = s[: -len(suf)]
+    return " ".join(s.split())
+
+
+def _norm_school(s: str) -> str:
+    s = s.lower().strip().replace("&", "and").replace("'", "")
+    s = " ".join(s.split())
+    return _SCHOOL_ALIASES.get(s, s)
+
+
 def main() -> None:
+    rng = random.Random(42)
+
+    # Step 1: dedupe BOARD itself (defensive — should already be clean).
     seen: set[tuple[str, str]] = set()
-    rows = []
-    rank = 0
+    final: list[tuple[str, str, str]] = []
     for player, board_pos, school in BOARD:
-        key = (player.lower(), school.lower())
+        key = (_norm_name(player), _norm_school(school))
         if key in seen:
             continue
         seen.add(key)
-        rank += 1
+        final.append((player, board_pos, school))
+
+    n_curated = len(final)
+
+    # Step 2: append PFSN entries that aren't already in our curated 99.
+    n_pfsn_added = 0
+    for player, board_pos, school in PFSN_RAW:
+        key = (_norm_name(player), _norm_school(school))
+        if key in seen:
+            continue
+        seen.add(key)
+        final.append((player, board_pos, school))
+        n_pfsn_added += 1
+
+    # Step 3: shuffle within 30-spot buckets starting at index 99
+    # (i.e. ranks 100-129, 130-159, 160-189, ...).
+    bucket_size = 30
+    i = n_curated
+    while i < len(final):
+        end = min(i + bucket_size, len(final))
+        chunk = final[i:end]
+        rng.shuffle(chunk)
+        final[i:end] = chunk
+        i = end
+
+    # Step 4: differential trim to 400.
+    #   Safe pool:   ranks 1-349   (indices 0-348)   → keep all
+    #   At-risk A:   ranks 350-399 (indices 349-398) → cut 16, keep 34
+    #   At-risk B:   ranks 400-449 (indices 399-448) → cut 33, keep 17
+    #   Tail:        ranks 450+    (indices 449+)    → cut all
+    # Net: 349 + 34 + 17 = 400, and cut ratio between A and B is 33/16 ≈ 2:1.
+    if len(final) > 449:
+        final = final[:449]
+    if len(final) > 400:
+        safe = final[:349]
+        bucket_a = final[349:399] if len(final) > 349 else []
+        bucket_b = final[399:449] if len(final) > 399 else []
+
+        # Within-bucket random keep; rng is seeded so deterministic.
+        idx_a = list(range(len(bucket_a)))
+        idx_b = list(range(len(bucket_b)))
+        rng.shuffle(idx_a)
+        rng.shuffle(idx_b)
+        keep_a = sorted(idx_a[:34])  # preserve relative order
+        keep_b = sorted(idx_b[:17])
+        kept_a = [bucket_a[k] for k in keep_a]
+        kept_b = [bucket_b[k] for k in keep_b]
+        final = safe + kept_a + kept_b
+
+    # Step 5: write parquet with renumbered ranks.
+    rows = []
+    for rank, (player, board_pos, school) in enumerate(final, start=1):
         rows.append({
             "expert_rank": rank,
             "player": player,
@@ -164,6 +751,7 @@ def main() -> None:
     OUT.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(OUT, index=False)
     print(f"✓ wrote {OUT.relative_to(REPO)} · {len(df)} prospects")
+    print(f"  curated 99: {n_curated} · PFSN added: {n_pfsn_added}")
     print(f"  positions: {df['position'].value_counts().to_dict()}")
 
 
