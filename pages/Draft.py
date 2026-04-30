@@ -22,6 +22,78 @@ from lib_draft_2027 import (
 from lib_draft_stats import render_prospect_stats
 from lib_shared import inject_css
 
+
+def _fmt(v, fmt: str = "{:.0f}") -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "—"
+    try:
+        return fmt.format(v)
+    except (ValueError, TypeError):
+        return str(v)
+
+
+# stat_specs format expected by lib_shared.render_player_card:
+#   list of (col_name, fmt_str, LABEL)
+# render_player_card reads col_name from view_row and applies fmt_str.
+_PROSPECT_STAT_SPECS: dict[str, list[tuple[str, str, str]]] = {
+    "QB": [
+        ("completion_pct",     "{:.1%}",  "Comp %"),
+        ("pass_tds",           "{:.0f}",  "Pass TDs"),
+        ("int_rate",           "{:.1%}",  "INT rate"),
+        ("yards_per_attempt",  "{:.1f}",  "Y/Att"),
+        ("rush_yards_total",   "{:.0f}",  "Rush yds"),
+    ],
+    "WR": [
+        ("receptions_total",   "{:.0f}",  "Rec"),
+        ("rec_yards_total",    "{:.0f}",  "Rec yds"),
+        ("rec_tds_total",      "{:.0f}",  "TD"),
+        ("yards_per_rec",      "{:.1f}",  "Y/R"),
+    ],
+    "TE": [
+        ("receptions_total",   "{:.0f}",  "Rec"),
+        ("rec_yards_total",    "{:.0f}",  "Rec yds"),
+        ("rec_tds_total",      "{:.0f}",  "TD"),
+        ("yards_per_rec",      "{:.1f}",  "Y/R"),
+    ],
+    "RB": [
+        ("carries_total",      "{:.0f}",  "Carries"),
+        ("rush_yards_total",   "{:.0f}",  "Rush yds"),
+        ("rush_tds_total",     "{:.0f}",  "TD"),
+        ("yards_per_carry",    "{:.1f}",  "YPC"),
+        ("receptions_total",   "{:.0f}",  "Rec"),
+    ],
+    "CB": [
+        ("tackles_per_game",       "{:.1f}", "Tkl/G"),
+        ("int_per_game",           "{:.2f}", "INT/G"),
+        ("pd_per_game",            "{:.1f}", "PD/G"),
+        ("solo_tackles_per_game",  "{:.1f}", "Solo/G"),
+    ],
+    "S": [
+        ("tackles_per_game",       "{:.1f}", "Tkl/G"),
+        ("int_per_game",           "{:.2f}", "INT/G"),
+        ("pd_per_game",            "{:.1f}", "PD/G"),
+        ("solo_tackles_per_game",  "{:.1f}", "Solo/G"),
+    ],
+    "LB": [
+        ("tackles_per_game",       "{:.1f}", "Tkl/G"),
+        ("tfl_per_game",           "{:.1f}", "TFL/G"),
+        ("sacks_per_game",         "{:.1f}", "Sk/G"),
+        ("solo_tackles_per_game",  "{:.1f}", "Solo/G"),
+    ],
+    "DE": [
+        ("sacks_per_game",         "{:.1f}", "Sk/G"),
+        ("tfl_per_game",           "{:.1f}", "TFL/G"),
+        ("qb_hurries_per_game",    "{:.1f}", "Hur/G"),
+        ("tackles_per_game",       "{:.1f}", "Tkl/G"),
+    ],
+    "DT": [
+        ("sacks_per_game",         "{:.1f}", "Sk/G"),
+        ("tfl_per_game",           "{:.1f}", "TFL/G"),
+        ("tackles_per_game",       "{:.1f}", "Tkl/G"),
+        ("solo_tackles_per_game",  "{:.1f}", "Solo/G"),
+    ],
+}
+
 st.set_page_config(
     page_title="2027 NFL Draft",
     page_icon="🏈",
@@ -266,11 +338,12 @@ def _render_prospect_row(rank_label: str, r: pd.Series,
         else:
             st.caption("_profile pending_")
 
-    # ── Auto-generated player blurb ────────────────────────────────
+    # ── Trading card (HTML banner) ─────────────────────────────────
     if pd.notna(r.get("player_id")):
         try:
             from lib_player_blurb import generate_blurb
             from lib_nfl_comps import lookup_prospect_row
+            from lib_shared import college_theme, render_player_card
             prow = lookup_prospect_row(r["player"], r["school"],
                                           r["position"])
             if prow is not None:
@@ -281,8 +354,23 @@ def _render_prospect_row(rank_label: str, r: pd.Series,
                     "school": r["school"],
                     "player": r["player"],
                 })
-                blurb = generate_blurb(full_row, board, r["position"],
+                blurb = generate_blurb(full_row, board,
+                                          r["position"],
                                           mode="prospect")
+                theme = college_theme(r["school"])
+                render_player_card(
+                    player_name=r["player"],
+                    position_label=r["position"],
+                    season_str=f"{r['school']} · 2025",
+                    score=r.get("composite_z"),
+                    stat_specs=_PROSPECT_STAT_SPECS.get(
+                        r["position"].upper(), []),
+                    view_row=full_row,
+                    team_label=r["school"],
+                    primary_color=theme.get("primary"),
+                    secondary_color=theme.get("secondary"),
+                    logo_url=theme.get("logo") or "",
+                )
                 if blurb:
                     st.markdown(f"_{blurb}_")
         except Exception:

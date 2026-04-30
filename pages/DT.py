@@ -504,8 +504,6 @@ if len(season_stints) > 1:
 # ── Unified Season picker — drives stat bar + bundle table + radar ──
 player_career = all_dts_full[all_dts_full["player_id"] == player.get("player_id")] if "player_id" in all_dts_full.columns else all_dts_full[0:0]
 
-st.markdown(f"### {selected}")
-
 _yr = render_player_year_picker(
     career_df=player_career,
     default_season=selected_season,
@@ -522,6 +520,15 @@ if total_weight > 0:
                        if pd.notna(view_row.get(z)))
 else:
     _view_score = float("nan")
+
+from lib_shared import render_nfl_player_banner
+render_nfl_player_banner(
+    position="dt", player_name=selected, view_row=view_row,
+    score=_view_score,
+    season_str=_yr.get("season_str") or f"Season {selected_season}",
+    player_career=player_career,
+    is_career_view=(year_choice == "Career"),
+)
 
 DT_STAT_SPECS = [
     ("def_tackles_for_loss", "{:.1f}", "TFL"),

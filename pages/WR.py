@@ -522,6 +522,15 @@ if total_weight > 0:
 else:
     _view_score = float("nan")
 
+from lib_shared import render_nfl_player_banner
+render_nfl_player_banner(
+    position="wr", player_name=selected, view_row=view_row,
+    score=_view_score,
+    season_str=_yr.get("season_str") or f"Season {selected_season}",
+    player_career=player_career,
+    is_career_view=(year_choice == "Career"),
+)
+
 # Per-position stat specs for the trading-card stat tiles.
 WR_STAT_SPECS = [
     ("receptions", "{:.0f}", "Rec"),

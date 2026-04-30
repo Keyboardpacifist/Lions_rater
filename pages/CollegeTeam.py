@@ -323,44 +323,127 @@ _roster = _college_roster_top(team, int(season))
 if not _roster:
     st.info("No roster data for this team-season yet.")
 else:
-    st.caption("Click any player to open their full profile in College mode.")
+    st.caption("Click any card to open the full College mode profile.")
+
+    from lib_shared import college_theme, render_player_card
+
+    # Per-position stat tiles for the card. Each entry is
+    # (col, fmt, label) — render_player_card reads col from view_row.
+    _ROSTER_STAT_SPECS: dict[str, list[tuple[str, str, str]]] = {
+        "QB":  [("pass_yards", "{:.0f}", "Pass yds"),
+                ("pass_tds",   "{:.0f}", "TD"),
+                ("pass_ints",  "{:.0f}", "INT"),
+                ("pass_ypa",   "{:.1f}", "Y/Att"),
+                ("pass_pct",   "{:.1%}",  "Comp%")],
+        "WR":  [("receptions", "{:.0f}", "Rec"),
+                ("rec_yards",  "{:.0f}", "Rec yds"),
+                ("rec_tds",    "{:.0f}", "TD"),
+                ("rec_ypr",    "{:.1f}", "Y/R")],
+        "TE":  [("receptions", "{:.0f}", "Rec"),
+                ("rec_yards",  "{:.0f}", "Rec yds"),
+                ("rec_tds",    "{:.0f}", "TD"),
+                ("rec_ypr",    "{:.1f}", "Y/R")],
+        "RB":  [("rush_carries", "{:.0f}", "Car"),
+                ("rush_yards",   "{:.0f}", "Rush yds"),
+                ("rush_tds",     "{:.0f}", "TD"),
+                ("rush_ypc",     "{:.1f}", "YPC"),
+                ("receptions",   "{:.0f}", "Rec")],
+        "OL":  [],
+        "Defense": [("tackles_total",     "{:.0f}", "Tkl"),
+                    ("tfl",                "{:.1f}", "TFL"),
+                    ("sacks",              "{:.1f}", "Sk"),
+                    ("interceptions",      "{:.0f}", "INT"),
+                    ("passes_deflected",   "{:.0f}", "PD")],
+    }
+
+    @st.cache_data(show_spinner=False)
+    def _roster_row_for(team_arg: str, season_arg: int,
+                          fname: str, name: str) -> dict | None:
+        """Pull the full row for one player from the position parquet
+        — needed to feed render_player_card with the raw stat
+        columns it formats into tile values."""
+        path = DATA / fname
+        if not path.exists():
+            return None
+        df = pl.read_parquet(path).to_pandas()
+        if "team" not in df.columns or "season" not in df.columns:
+            return None
+        for name_col in ("player_name", "name", "athlete", "player"):
+            if name_col in df.columns:
+                break
+        else:
+            return None
+        m = df[(df["team"] == team_arg) & (df["season"] == season_arg)
+               & (df[name_col] == name)]
+        if m.empty:
+            return None
+        return dict(m.iloc[0])
+
+    _theme = college_theme(team)
+
     pos_keys = list(_roster.keys())
-    for i in range(0, len(pos_keys), 3):
-        row_keys = pos_keys[i:i + 3]
-        cols = st.columns(3)
-        for col, pk in zip(cols, row_keys):
-            with col:
-                st.markdown(
-                    f"""
-<div style="font-size: 11px; font-weight: 800; letter-spacing: 1.5px;
-             opacity: 0.55; margin: 4px 0 4px 4px;">
+    # One position per row — full-width banner cards are wide; placing
+    # 3 across crowded the stat tiles. Keep top-3 stacked under each
+    # position label.
+    for pk in pos_keys:
+        st.markdown(
+            f"""
+<div style="font-size: 13px; font-weight: 800; letter-spacing: 1.5px;
+             opacity: 0.65; margin: 16px 0 6px 4px;">
     {pk.upper()}
 </div>
 """,
-                    unsafe_allow_html=True,
+            unsafe_allow_html=True,
+        )
+        # Find the file for this position group
+        fname = next((f for label, f in _ROSTER_SOURCES
+                       if label == pk), None)
+        stat_specs = _ROSTER_STAT_SPECS.get(pk, [])
+        for r in _roster[pk]:
+            full_row = (_roster_row_for(team, int(season), fname,
+                                            r["name"]) if fname else None)
+            view_row = pd.Series(full_row) if full_row else pd.Series()
+            render_player_card(
+                player_name=r["name"],
+                position_label=r["cm_pos"],
+                season_str=f"{team} · {int(season)}",
+                score=r["score"],
+                stat_specs=stat_specs,
+                view_row=view_row,
+                team_label=team,
+                primary_color=_theme.get("primary"),
+                secondary_color=_theme.get("secondary"),
+                logo_url=_theme.get("logo") or "",
+            )
+            btn_key = f"roster_{team}_{season}_{pk}_{r['name']}"
+            if st.button("Open profile  →", key=btn_key,
+                            use_container_width=True):
+                st.session_state["college_school_v2"] = team
+                st.session_state["college_season_landing"] = int(season)
+                st.session_state["college_position_top"] = r["cm_pos"]
+                st.session_state["expand_college_player"] = r["name"]
+                st.session_state[f"lb_selected_{r['cm_pos']}"] = r["name"]
+                st.session_state["mode_toggle"] = "College"
+                # Match app.py's _filter_ctx tuple exactly — its
+                # auto-clear wipes lb_selected markers when prev_ctx
+                # != cur_ctx, so the conference field has to use
+                # the same default label app.py computes.
+                st.session_state["_college_filter_ctx"] = (
+                    team, "🏈 All conferences",
+                    int(season), r["cm_pos"],
                 )
-                for r in _roster[pk]:
-                    sign = "+" if r["score"] >= 0 else ""
-                    label = f"{r['name']}  ·  {sign}{r['score']:.2f}"
-                    btn_key = f"roster_{team}_{season}_{pk}_{r['name']}"
-                    if st.button(label, key=btn_key,
-                                   use_container_width=True):
-                        # Push session state so College mode opens with
-                        # this player's detail expanded — same handler
-                        # that the College search bar uses.
-                        st.session_state["college_school_v2"] = team
-                        st.session_state["college_season_landing"] = int(season)
-                        st.session_state["college_position_top"] = r["cm_pos"]
-                        st.session_state["expand_college_player"] = r["name"]
-                        st.session_state[f"lb_selected_{r['cm_pos']}"] = r["name"]
-                        st.session_state["mode_toggle"] = "College"
-                        # Match the auto-clear ctx the landing page checks
-                        # against — without this, College mode wipes the
-                        # expand marker on first render.
-                        st.session_state["_college_filter_ctx"] = (
-                            team, None, int(season), r["cm_pos"],
-                        )
-                        st.switch_page("app.py")
+                st.session_state["college_conference"] = (
+                    "🏈 All conferences")
+                # Force-detail token — app.py applies this AFTER all
+                # auto-clears so the marker survives any state-wipe
+                # logic. Survives one navigation, then gets popped.
+                st.session_state["_force_college_detail"] = {
+                    "school": team,
+                    "season": int(season),
+                    "position": r["cm_pos"],
+                    "player": r["name"],
+                }
+                st.switch_page("app.py")
 
 # ── Click-through to existing College mode leaderboards ───────
 st.markdown("---")

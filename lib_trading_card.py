@@ -250,22 +250,35 @@ def _draw_hero(img: Image.Image, draw: ImageDraw.ImageDraw, *,
     headshot_box_y = HEADER_BOTTOM + 40
     headshot_box_w = 460
     headshot_box_h = HERO_BOTTOM - HEADER_BOTTOM - 80
-    if headshot is not None:
-        # Letterbox-fit the headshot in the box
-        ratio = min(headshot_box_w / headshot.size[0],
-                    headshot_box_h / headshot.size[1])
-        new_w = int(headshot.size[0] * ratio)
-        new_h = int(headshot.size[1] * ratio)
-        resized = headshot.resize((new_w, new_h), Image.LANCZOS)
+
+    def _paste_letterboxed(im: Image.Image) -> None:
+        ratio = min(headshot_box_w / im.size[0],
+                     headshot_box_h / im.size[1])
+        new_w = int(im.size[0] * ratio)
+        new_h = int(im.size[1] * ratio)
+        resized = im.resize((new_w, new_h), Image.LANCZOS)
         paste_x = headshot_box_x + (headshot_box_w - new_w) // 2
         paste_y = headshot_box_y + (headshot_box_h - new_h) // 2
-        img.paste(resized, (paste_x, paste_y), resized)
+        # Use the resized image as its own alpha mask if RGBA so PNG
+        # transparency comes through cleanly.
+        mask = resized if resized.mode == "RGBA" else None
+        img.paste(resized, (paste_x, paste_y), mask)
+
+    if headshot is not None:
+        _paste_letterboxed(headshot)
     else:
-        # Placeholder dot
-        cx = headshot_box_x + headshot_box_w // 2
-        cy = headshot_box_y + headshot_box_h // 2
-        draw.ellipse((cx - 80, cy - 80, cx + 80, cy + 80),
-                      fill=(220, 224, 230))
+        # No NFL headshot — try the team logo / college helmet from
+        # the theme. Falls back to a soft gray dot when nothing's
+        # available (e.g. an unknown school).
+        logo = _fetch_image(theme.get("logo") or None,
+                              f"{player_id_for_cache}_logo")
+        if logo is not None:
+            _paste_letterboxed(logo)
+        else:
+            cx = headshot_box_x + headshot_box_w // 2
+            cy = headshot_box_y + headshot_box_h // 2
+            draw.ellipse((cx - 80, cy - 80, cx + 80, cy + 80),
+                          fill=(220, 224, 230))
 
     # ── Score banner on right half ──
     banner_x = headshot_box_x + headshot_box_w + 30
@@ -642,6 +655,145 @@ def render_card_download_button(*,
                         st.success("Saved! Find it in the Gallery page.")
                         st.session_state[f"{key_prefix}_card_save_form"] = False
                         st.rerun()
+
+
+def _build_prospect_png(*, prospect_name, position, school, score,
+                          score_label, pct_label, narrative,
+                          key_stats_tuple, primary, secondary, logo_url):
+    """Pure-PIL build of the prospect card PNG. Pulled out so we can
+    wrap it in @st.cache_data for the board-level render path."""
+    return build_player_card_png(
+        player_name=prospect_name,
+        position_label=position,
+        season_str="2027 Draft Class",
+        score=score,
+        score_label=score_label,
+        pct_label=pct_label,
+        narrative=narrative,
+        key_stats=list(key_stats_tuple),
+        headshot_url=None,
+        player_id_for_cache=f"prospect_{prospect_name}",
+        # `abbr` must be unique per school — _fetch_image uses it as
+        # the disk-cache key for the helmet logo. Without it every
+        # prospect's helmet collides on the same cached file.
+        theme={"abbr": school, "name": school,
+                "primary": primary, "secondary": secondary,
+                "logo": logo_url},
+        preset_name=None,
+    )
+
+
+def _cached_prospect_png(**kwargs):
+    """Streamlit-cached wrapper. The decorator is applied lazily so
+    importing this module without a streamlit runtime still works."""
+    try:
+        import streamlit as st
+        cached = getattr(_cached_prospect_png, "_impl", None)
+        if cached is None:
+            cached = st.cache_data(show_spinner=False)(
+                _build_prospect_png)
+            _cached_prospect_png._impl = cached
+        return cached(**kwargs)
+    except Exception:
+        return _build_prospect_png(**kwargs)
+
+
+def render_prospect_card(*,
+                            prospect_name: str,
+                            position: str,
+                            school: str,
+                            composite_z: float | None,
+                            narrative: str | None,
+                            key_stats: list[tuple[str, str]],
+                            key_prefix: str = "prospect_card") -> None:
+    """Trading-card surface for a 2027 draft prospect. Same aesthetic
+    as the NFL card but uses school colors, skips the NFL roster /
+    headshot lookup (we don't have a college roster source yet) and
+    skips the gallery-save flow (no slider preset to attach)."""
+    import streamlit as st
+    import pandas as pd
+    from scipy.stats import norm
+    from lib_shared import college_theme
+
+    theme = college_theme(school)
+    if composite_z is None or pd.isna(composite_z):
+        score_label = "—"
+        pct_label = "—"
+    else:
+        sign = "+" if composite_z >= 0 else ""
+        score_label = f"{sign}{composite_z:.2f}"
+        pct_label = f"{int(norm.cdf(composite_z) * 100)}th"
+
+    # Cache the PIL-built PNG so the Draft board doesn't rebuild 50
+    # cards on every filter change. Cache key includes everything that
+    # affects the rendered pixels.
+    png_bytes = _cached_prospect_png(
+        prospect_name=prospect_name, position=position, school=school,
+        score=composite_z, score_label=score_label, pct_label=pct_label,
+        narrative=narrative or "",
+        key_stats_tuple=tuple(tuple(t) for t in key_stats),
+        primary=theme.get("primary", ""),
+        secondary=theme.get("secondary", ""),
+        logo_url=theme.get("logo", ""),
+    )
+
+    safe_name = "".join(c for c in prospect_name
+                          if c.isalnum() or c in " -_").strip()
+    safe_name = safe_name.replace(" ", "_") or "prospect"
+    filename = f"{safe_name}_2027.png"
+
+    import base64
+    primary = theme.get("primary", "#1F2A44")
+    secondary = theme.get("secondary", "#0B1730")
+    b64 = base64.b64encode(png_bytes).decode("ascii")
+
+    # Inline styles only — class-based rules collide when multiple
+    # prospect banners render on the same page (CSS late-wins, so all
+    # banners would adopt the last prospect's colors and you'd see a
+    # color-strobe as expanders open).
+    banner_style = (
+        f"background: linear-gradient(135deg, {primary} 0%, "
+        f"{secondary} 100%); border-radius: 18px; "
+        f"margin: 0 0 12px 0; box-shadow: 0 6px 18px rgba(0,0,0,0.18); "
+        f"padding: 24px 20px; display: flex; align-items: center; "
+        f"justify-content: center;"
+    )
+    center_style = (
+        "flex: 0 0 auto; max-width: 640px; width: 100%;"
+    )
+    img_style = (
+        "width: 100%; border-radius: 12px; "
+        "box-shadow: 0 12px 32px rgba(0,0,0,0.45); display: block;"
+    )
+    cap_style = (
+        "color: rgba(255,255,255,0.85); font-size: 13px; "
+        "font-weight: 500; letter-spacing: 0.3px; text-align: center; "
+        "margin-top: 10px;"
+    )
+    st.markdown(
+        f"""
+<div style="{banner_style}">
+    <div style="{center_style}">
+        <img src="data:image/png;base64,{b64}" style="{img_style}"
+             alt="{prospect_name} 2027 prospect card"/>
+        <div style="{cap_style}">{prospect_name} · {school}
+            · 2027 Draft Class</div>
+    </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    _spacer_l, _btn, _spacer_r = st.columns([1, 2, 1])
+    with _btn:
+        st.download_button(
+            label="🃏  Download card",
+            data=png_bytes,
+            file_name=filename,
+            mime="image/png",
+            key=f"{key_prefix}_dl",
+            use_container_width=True,
+        )
 
 
 def build_player_card_png(*,
