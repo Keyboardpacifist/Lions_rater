@@ -123,7 +123,7 @@ _STATS_DISPLAY = {
         ("TFL",       "tfl",                 "{:.0f}",   "sum"),
         ("Sacks",     "sacks",               "{:.1f}",   "sum"),
         ("Hurries",   "qb_hurries",          "{:.0f}",   "sum"),
-        ("PD",        "passes_deflected",    "{:.0f}",   "sum"),
+        ("PBU",       "passes_deflected",    "{:.0f}",   "sum"),
         ("INT",       "interceptions",       "{:.0f}",   "sum"),
         ("Sk/G",      "sacks_per_game",      "{:.2f}",   "mean"),
         # pressure_rate in CFBD parquet is actually

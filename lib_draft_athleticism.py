@@ -148,7 +148,7 @@ _LABELS = {
     "qb_hurries_per_game_z":   "Hurries/g (get-off)",
     "pressure_rate_z":         "Pressures per game",
     "solo_tackles_per_game_z": "Solo tackles/g (range)",
-    "pd_per_game_z":           "PD/g (coverage athleticism)",
+    "pd_per_game_z":           "PBU/g (coverage athleticism)",
     "int_per_game_z":          "INT/g (anticipation + closing)",
 }
 

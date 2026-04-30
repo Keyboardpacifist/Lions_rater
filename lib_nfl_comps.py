@@ -308,7 +308,7 @@ _STAT_LABELS = {
     "sacks_per_game_z":      "Pass-rush production",
     "tfl_per_game_z":        "Backfield disruption (TFL)",
     "qb_hurries_per_game_z": "Pressure generation",
-    "pd_per_game_z":         "Coverage / passes deflected",
+    "pd_per_game_z":         "Coverage / pass break-ups (PBU)",
     "int_per_game_z":        "Ball-hawk (INT rate)",
     "solo_tackles_per_game_z": "Solo-tackle volume",
     "pressure_rate_z":       "Pressures per game",
