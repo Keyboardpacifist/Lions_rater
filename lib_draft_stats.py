@@ -10,10 +10,28 @@ stays readable inside the expander.
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+
+
+def _z_to_pctl(z) -> int | None:
+    if z is None or pd.isna(z):
+        return None
+    z_clip = max(-3.0, min(3.0, float(z)))
+    pct = round(50.0 + 50.0 * math.erf(z_clip / math.sqrt(2)))
+    return min(99, max(1, pct))
+
+
+# Stats whose row should be followed by a national-percentile column.
+# Key = stat label as it appears in _STATS_DISPLAY; value = the
+# corresponding z-col on the per-season row to convert to percentile.
+_PCTL_NEXT_TO = {
+    "Sacks":       "sacks_per_game_z",
+    "Pressures/G": "pressure_rate_z",
+}
 
 _DATA = Path(__file__).resolve().parent / "data"
 _COLLEGE = _DATA / "college"
@@ -191,16 +209,26 @@ def render_prospect_stats(player_id: str, position: str) -> None:
         for label, col, fmt, _agg_kind in spec:
             v = s.get(col)
             row[label] = fmt.format(v) if pd.notna(v) else "—"
+            # Insert national-percentile column immediately after
+            # any stat that has a partner z-col mapped.
+            z_col = _PCTL_NEXT_TO.get(label)
+            if z_col:
+                pct = _z_to_pctl(s.get(z_col))
+                row[f"{label} pctl"] = f"{pct}th" if pct else "—"
         rows.append(row)
 
-    # Career row (counting = sum, rates = mean, longs = max)
+    # Career row (counting = sum, rates = mean, longs = max).
+    # Percentile columns left blank since we'd need a career-summed
+    # cohort distribution to z-score against, which we don't have.
     career = {"Season": "Career", "School": "—"}
     for label, col, fmt, agg in spec:
         if agg is None or col not in seasons.columns:
             career[label] = "—"
-            continue
-        v = _agg(seasons[col], agg)
-        career[label] = fmt.format(v) if v is not None else "—"
+        else:
+            v = _agg(seasons[col], agg)
+            career[label] = fmt.format(v) if v is not None else "—"
+        if label in _PCTL_NEXT_TO:
+            career[f"{label} pctl"] = "—"
     rows.append(career)
 
     if position == "OL":
