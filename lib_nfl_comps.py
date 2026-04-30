@@ -369,18 +369,25 @@ def get_stat_profile(prospect_row: pd.Series, position: str) -> dict:
 
 @st.cache_data(show_spinner=False)
 def _recruiting_lookup() -> pd.DataFrame:
-    """Recruiting fields keyed by player_id. Cached once."""
+    """Recruiting parquet, normalized for lookup. Cached once.
+    Note: player_id has collisions (multiple recruits sharing the
+    same id), so we match on name + school primarily."""
     path = _COLLEGE / "college_recruiting.parquet"
     if not path.exists():
         return pd.DataFrame()
     df = pd.read_parquet(path)
-    keep = [c for c in ("player_id", "stars", "ranking", "rating",
+    keep = [c for c in ("player_id", "name", "school", "position",
+                          "stars", "ranking", "rating",
                           "height", "weight", "city", "state",
                           "recruit_year")
              if c in df.columns]
     out = df[keep].copy()
     if "player_id" in out.columns:
         out["player_id"] = out["player_id"].astype(str)
+    if "name" in out.columns:
+        out["_n"] = out["name"].astype(str).str.lower().str.strip()
+    if "school" in out.columns:
+        out["_s"] = out["school"].astype(str).str.lower().str.strip()
     return out
 
 
@@ -413,19 +420,31 @@ def lookup_prospect_row(player_name: str, school: str,
         return None
     row = match.iloc[0].copy()
 
-    # Merge in recruiting fields by player_id so the athleticism
-    # scorer has stars / rating / height / weight available. Don't
-    # overwrite values already on the row — OL roster parquet has
-    # listed (current) height/weight that's more accurate than the
-    # HS-era recruiting numbers.
+    # Merge in recruiting fields. We match on NAME + SCHOOL because
+    # player_id has collisions (e.g. Will Smith Jr. and Jeremiah
+    # Smith share player_id 5079720 at Ohio State, which previously
+    # made Smith inherit Will's 4-star DL profile). Falls back to
+    # name-only with most recent recruit_year for transfer-portal
+    # cases. Doesn't overwrite values already on the row.
     rec = _recruiting_lookup()
-    if not rec.empty and "player_id" in row.index:
-        pid = str(row["player_id"])
-        rec_match = rec[rec["player_id"] == pid]
-        if not rec_match.empty:
-            for c in rec_match.columns:
-                if c == "player_id":
+    if not rec.empty:
+        norm_name = player_name.lower().strip()
+        norm_school = school.lower().strip()
+        cands = rec[rec["_n"] == norm_name]
+        if not cands.empty:
+            school_match = cands[cands["_s"] == norm_school]
+            if not school_match.empty:
+                rec_match = school_match.iloc[0]
+            else:
+                # Transfer or school-name mismatch — take most
+                # recent recruit_year for that name.
+                rec_match = (cands.sort_values("recruit_year",
+                                                  ascending=False)
+                                  .iloc[0])
+            for c in rec.columns:
+                if c in ("player_id", "_n", "_s", "name",
+                          "school", "position"):
                     continue
                 if c not in row.index or pd.isna(row.get(c)):
-                    row[c] = rec_match.iloc[0][c]
+                    row[c] = rec_match[c]
     return row
