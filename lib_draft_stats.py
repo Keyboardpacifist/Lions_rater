@@ -26,11 +26,42 @@ def _z_to_pctl(z) -> int | None:
 
 
 # Stats whose row should be followed by a national-percentile column.
-# Key = stat label as it appears in _STATS_DISPLAY; value = the
-# corresponding z-col on the per-season row to convert to percentile.
-_PCTL_NEXT_TO = {
-    "Sacks":       "sacks_per_game_z",
-    "Pressures/G": "pressure_rate_z",
+# Key = raw column name (so per-position labels like "Yds" don't
+# collide); value = the z-col on the per-season row.
+_PCTL_BY_COL = {
+    # QB
+    "completion_pct":      "completion_pct_z",
+    "pass_yards":          "pass_yards_z",
+    "pass_tds":            "pass_tds_z",
+    "yards_per_attempt":   "yards_per_attempt_z",
+    "rush_yards_total":    "rush_yards_total_z",
+    # Skill (WR / TE)
+    "receptions":          "receptions_total_z",
+    "rec_yards":           "rec_yards_total_z",
+    "yards_per_rec":       "yards_per_rec_z",
+    "rec_tds":             "rec_tds_total_z",
+    # RB
+    "rush_carries":        "carries_total_z",
+    "rush_yards":          "rush_yards_total_z",
+    "yards_per_carry":     "yards_per_carry_z",
+    "rush_tds":            "rush_tds_total_z",
+    # CFBD-advanced (skill positions)
+    "epa_per_play_avg":    "epa_per_play_avg_z",
+    "epa_per_pass_avg":    "epa_per_pass_avg_z",
+    "epa_third_down_avg":  "epa_third_down_avg_z",
+    "usage_pass":          "usage_pass_z",
+    "usage_overall":       "usage_overall_z",
+    "usage_third_down":    "usage_third_down_z",
+    # Defense
+    "tackles_total":       "tackles_per_game_z",
+    "tackles_solo":        "solo_tackles_per_game_z",
+    "tfl":                 "tfl_per_game_z",
+    "sacks":               "sacks_per_game_z",
+    "qb_hurries":          "qb_hurries_per_game_z",
+    "passes_deflected":    "pd_per_game_z",
+    "interceptions":       "int_per_game_z",
+    "sacks_per_game":      "sacks_per_game_z",
+    "pressure_rate":       "pressure_rate_z",
 }
 
 _DATA = Path(__file__).resolve().parent / "data"
@@ -211,7 +242,7 @@ def render_prospect_stats(player_id: str, position: str) -> None:
             row[label] = fmt.format(v) if pd.notna(v) else "—"
             # Insert national-percentile column immediately after
             # any stat that has a partner z-col mapped.
-            z_col = _PCTL_NEXT_TO.get(label)
+            z_col = _PCTL_BY_COL.get(col)
             if z_col:
                 pct = _z_to_pctl(s.get(z_col))
                 row[f"{label} pctl"] = f"{pct}th" if pct else "—"
@@ -227,7 +258,7 @@ def render_prospect_stats(player_id: str, position: str) -> None:
         else:
             v = _agg(seasons[col], agg)
             career[label] = fmt.format(v) if v is not None else "—"
-        if label in _PCTL_NEXT_TO:
+        if col in _PCTL_BY_COL:
             career[f"{label} pctl"] = "—"
     rows.append(career)
 
