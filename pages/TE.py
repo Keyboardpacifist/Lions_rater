@@ -454,19 +454,8 @@ def _safe_fmt(v, fmt="{:.0f}"):
     try: return fmt.format(v)
     except: return str(v)
 
-_card_narrative = None
-try:
-    from lib_field_viz import build_wr_narrative
-    from lib_splits import _load_targeted_plays, _load_wr_route_peer_pools
-    tp = _load_targeted_plays()
-    if tp is not None and player.get("player_id"):
-        pf_career = tp[tp["player_id"] == player.get("player_id")]
-        if not pf_career.empty:
-            _card_narrative = build_wr_narrative(
-                pf_career, peer_pools=_load_wr_route_peer_pools(),
-            )
-except Exception:
-    _card_narrative = None
+from lib_player_blurb import make_card_narrative
+_card_narrative = make_card_narrative(view_row, all_tes_full, "te")
 
 _card_stats = [
     ("Targets", _safe_fmt(view_row.get("targets")),

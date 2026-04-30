@@ -592,16 +592,8 @@ def _safe_fmt(v, fmt="{:.0f}"):
     try: return fmt.format(v)
     except: return str(v)
 
-_card_narrative = None
-try:
-    from lib_field_viz import build_position_narrative
-    _season_pool = all_lbs_full[all_lbs_full["season_year"] == selected_season]
-    _card_narrative = build_position_narrative(
-        player_row=view_row, peer_pool=_season_pool,
-        stat_labels=stat_labels, position_label="linebackers",
-    )
-except Exception:
-    _card_narrative = None
+from lib_player_blurb import make_card_narrative
+_card_narrative = make_card_narrative(view_row, all_lbs_full, "lb")
 
 _card_stats = [
     ("Tackles", _safe_fmt(view_row.get("def_tackles")),

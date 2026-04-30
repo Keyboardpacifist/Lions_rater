@@ -898,21 +898,9 @@ def _safe_format(val, fmt: str = "{:.0f}") -> str:
     except (ValueError, TypeError):
         return str(val)
 
-# Build the narrative for the card (same engine the page panel uses).
-_card_narrative = None
-try:
-    from lib_field_viz import build_rb_narrative
-    from lib_splits import _classify_gap, _load_rusher_plays, _load_rb_peer_pools
-    rp_full = _load_rusher_plays()
-    if rp_full is not None and player.get("player_id"):
-        pf_career = rp_full[rp_full["player_id"] == player.get("player_id")].copy()
-        if not pf_career.empty:
-            pf_career["gap_code"] = pf_career.apply(_classify_gap, axis=1)
-            _card_narrative = build_rb_narrative(
-                pf_career, peer_pools=_load_rb_peer_pools(),
-            )
-except Exception:
-    _card_narrative = None
+# Trading-card narrative — use the unified blurb engine.
+from lib_player_blurb import make_card_narrative
+_card_narrative = make_card_narrative(view_row, all_rbs_full, "rb")
 
 # 4 headline stats for the card stats row.
 _card_stats = [

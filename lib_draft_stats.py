@@ -25,6 +25,47 @@ def _z_to_pctl(z) -> int | None:
     return min(99, max(1, pct))
 
 
+@st.cache_data(show_spinner=False)
+def _penalties_lookup() -> dict:
+    """Per-(player_lower, school_lower, season) → penalty count, from
+    tools/build_college_penalties.py output. Empty when not yet built.
+
+    We also build the per-season cohort distribution of penalty
+    counts so each prospect's count gets a 'penalty rate' percentile
+    that's directional (high count = low percentile = bad)."""
+    path = _COLLEGE.parent / "draft_college_penalties.parquet"
+    if not path.exists():
+        return {}
+    df = pd.read_parquet(path)
+    # Per-season cohort: distribution of penalty counts across all
+    # players who appeared in penalty events that season. Used to
+    # z-score each prospect's count in-cohort.
+    cohort_stats = {}
+    for yr in df["season"].unique():
+        season_df = df[df["season"] == yr]
+        if season_df.empty:
+            continue
+        mu = season_df["penalties"].mean()
+        sd = season_df["penalties"].std() or 1.0
+        cohort_stats[int(yr)] = (mu, sd)
+
+    out: dict = {}
+    for _, r in df.iterrows():
+        season = int(r["season"])
+        mu, sd = cohort_stats.get(season, (0.0, 1.0))
+        # Higher penalties = WORSE → invert sign so positive z = good.
+        z = -((float(r["penalties"]) - mu) / sd) if sd else 0.0
+        key = (str(r["player"]).lower(),
+               str(r["school"]).lower(),
+               season)
+        out[key] = {
+            "penalties": int(r["penalties"]),
+            "pen_yards": int(r["pen_yards"]),
+            "z": z,
+        }
+    return out
+
+
 # Stats whose row should be followed by a national-percentile column.
 # Key = raw column name (so per-position labels like "Yds" don't
 # collide); value = the z-col on the per-season row.
@@ -123,7 +164,7 @@ _STATS_DISPLAY = {
         ("TFL",       "tfl",                 "{:.0f}",   "sum"),
         ("Sacks",     "sacks",               "{:.1f}",   "sum"),
         ("Hurries",   "qb_hurries",          "{:.0f}",   "sum"),
-        ("PBU",       "passes_deflected",    "{:.0f}",   "sum"),
+        ("PD",        "passes_deflected",    "{:.0f}",   "sum"),
         ("INT",       "interceptions",       "{:.0f}",   "sum"),
         ("Sk/G",      "sacks_per_game",      "{:.2f}",   "mean"),
         # pressure_rate in CFBD parquet is actually
@@ -230,8 +271,11 @@ def render_prospect_stats(player_id: str, position: str) -> None:
         )
         return
 
+    pen_lookup = _penalties_lookup()
+
     # Per-season rows
     rows = []
+    career_pen = 0
     for _, s in seasons.iterrows():
         row = {
             "Season": int(s["season"]) if pd.notna(s.get("season")) else "—",
@@ -240,17 +284,35 @@ def render_prospect_stats(player_id: str, position: str) -> None:
         for label, col, fmt, _agg_kind in spec:
             v = s.get(col)
             row[label] = fmt.format(v) if pd.notna(v) else "—"
-            # Insert national-percentile column immediately after
-            # any stat that has a partner z-col mapped.
             z_col = _PCTL_BY_COL.get(col)
             if z_col:
                 pct = _z_to_pctl(s.get(z_col))
                 row[f"{label} pctl"] = f"{pct}th" if pct else "—"
+
+        # Penalty count + pctl, looked up from the separately-built
+        # CFBD-pbp pipeline. Only renders when the parquet exists.
+        if pen_lookup:
+            player_name = s.get("player") or s.get("player_name") or ""
+            team = s.get("team") or ""
+            season = (int(s["season"])
+                      if pd.notna(s.get("season")) else None)
+            pen_key = (str(player_name).lower(),
+                        str(team).lower(),
+                        season)
+            pen = pen_lookup.get(pen_key)
+            if pen:
+                row["Pen"] = str(pen["penalties"])
+                row["Pen pctl"] = (
+                    f"{_z_to_pctl(pen['z'])}th"
+                    if _z_to_pctl(pen["z"]) else "—"
+                )
+                career_pen += pen["penalties"]
+            else:
+                row["Pen"] = "0"
+                row["Pen pctl"] = "—"
         rows.append(row)
 
-    # Career row (counting = sum, rates = mean, longs = max).
-    # Percentile columns left blank since we'd need a career-summed
-    # cohort distribution to z-score against, which we don't have.
+    # Career row
     career = {"Season": "Career", "School": "—"}
     for label, col, fmt, agg in spec:
         if agg is None or col not in seasons.columns:
@@ -260,6 +322,9 @@ def render_prospect_stats(player_id: str, position: str) -> None:
             career[label] = fmt.format(v) if v is not None else "—"
         if col in _PCTL_BY_COL:
             career[f"{label} pctl"] = "—"
+    if pen_lookup:
+        career["Pen"] = str(career_pen) if career_pen else "—"
+        career["Pen pctl"] = "—"
     rows.append(career)
 
     if position == "OL":

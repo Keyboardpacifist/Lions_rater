@@ -266,6 +266,28 @@ def _render_prospect_row(rank_label: str, r: pd.Series,
         else:
             st.caption("_profile pending_")
 
+    # ── Auto-generated player blurb ────────────────────────────────
+    if pd.notna(r.get("player_id")):
+        try:
+            from lib_player_blurb import generate_blurb
+            from lib_nfl_comps import lookup_prospect_row
+            prow = lookup_prospect_row(r["player"], r["school"],
+                                          r["position"])
+            if prow is not None:
+                full_row = pd.Series({
+                    **prow.to_dict(),
+                    "expert_rank": r["expert_rank"],
+                    "composite_z": r.get("composite_z"),
+                    "school": r["school"],
+                    "player": r["player"],
+                })
+                blurb = generate_blurb(full_row, board, r["position"],
+                                          mode="prospect")
+                if blurb:
+                    st.markdown(f"_{blurb}_")
+        except Exception:
+            pass
+
     # ── Inline season + career stats (always visible) ────────────
     # Brett's call: don't make fans click an expander to see basic
     # stats. Strengths/Weaknesses + Comps stay in the expander since
