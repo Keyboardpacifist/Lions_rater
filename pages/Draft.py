@@ -113,11 +113,12 @@ def _open_college_profile(team: str, season: int, position: str,
 
 def _render_prospect_row(rank_label: str, r: pd.Series,
                             key_prefix: str) -> None:
-    cols = st.columns([0.7, 5, 1.6, 1.4, 1.4])
+    cols = st.columns([1.1, 5, 1.6, 1.4, 1.4])
     with cols[0]:
         st.markdown(
             f"<div style='font-size:1.4rem;font-weight:800;color:#1e3a8a;"
-            f"padding-top:6px;line-height:1.1;'>{rank_label}</div>",
+            f"padding-top:6px;line-height:1.1;white-space:nowrap;'>"
+            f"{rank_label}</div>",
             unsafe_allow_html=True,
         )
     with cols[1]:
