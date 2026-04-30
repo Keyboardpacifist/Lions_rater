@@ -323,8 +323,8 @@ with tab_pos:
         ):
             for i, (_, r) in enumerate(pos_df.iterrows(), start=1):
                 rank_html = (
-                    f"#{i}<br><span style='font-size:0.7rem;color:#888;"
-                    f"font-weight:500;'>(overall #{int(r['expert_rank'])})"
+                    f"#{i} <span style='font-size:0.75rem;color:#888;"
+                    f"font-weight:500;'>(OVR: {int(r['expert_rank'])})"
                     f"</span>"
                 )
                 _render_prospect_row(rank_html, r, f"pos_{pos}")

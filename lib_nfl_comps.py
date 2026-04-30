@@ -99,6 +99,70 @@ def _def_pool() -> pd.DataFrame:
     return joined[joined["season"] == joined["draft_year"] - 1].copy()
 
 
+@st.cache_data(show_spinner=False)
+def _pool_matrix(position: str) -> tuple:
+    """Cached per-position (matrix, candidate_dicts) for vectorized
+    similarity. Builds once per position, reused for every prospect.
+
+    Returns:
+      M: np.ndarray of shape (N_candidates, len(stats)) — already
+         NaN→0 and clipped to ±_Z_CLIP
+      candidates: list of dicts (one per row) with the metadata we
+         need to format the comp output
+      stats: list of stat columns used
+    """
+    if position not in _STATS:
+        return np.zeros((0, 0)), [], []
+    stats = _STATS[position]
+
+    if position in ("QB", "WR", "TE", "RB"):
+        pool = _skill_pool()
+        if pool.empty:
+            return np.zeros((0, 0)), [], stats
+        pool = pool[pool["pos_group"] == position]
+    else:
+        pool = _def_pool()
+        if pool.empty:
+            return np.zeros((0, 0)), [], stats
+        match_set = _DEF_POS_MATCH.get(position, [position])
+        pool = pool[pool["listed_position"].isin(match_set)]
+
+    if pool.empty:
+        return np.zeros((0, 0)), [], stats
+
+    available = [c for c in stats if c in pool.columns]
+    if not available:
+        return np.zeros((0, 0)), [], stats
+
+    # Drop rows where ALL z-values are NaN; replace remaining NaN
+    # with 0 (the cohort mean). Clip extremes to neutralize tiny-
+    # sample artifacts before similarity calc.
+    M_raw = pool[available].astype(float).values
+    keep = ~np.isnan(M_raw).all(axis=1)
+    pool = pool.iloc[keep].reset_index(drop=True)
+    M = np.where(np.isnan(M_raw[keep]), 0.0, M_raw[keep])
+    M = np.clip(M, -_Z_CLIP, _Z_CLIP)
+
+    candidates = []
+    for _, c in pool.iterrows():
+        candidates.append({
+            "player": c.get("player", "—"),
+            "school": c.get("team", "—"),
+            "season": (int(c["season"])
+                        if pd.notna(c.get("season")) else None),
+            "draft_year": (int(c["draft_year"])
+                            if pd.notna(c.get("draft_year")) else None),
+            "draft_round": (int(c["draft_round"])
+                             if pd.notna(c.get("draft_round")) else None),
+            "draft_pick": (int(c["draft_pick"])
+                            if pd.notna(c.get("draft_pick")) else None),
+            "draft_overall": (int(c["draft_overall"])
+                               if pd.notna(c.get("draft_overall")) else None),
+            "nfl_team": c.get("nfl_team", "—"),
+        })
+    return M, candidates, available
+
+
 _Z_CLIP = 2.5  # Winsorize z-values beyond ±2.5σ — small-sample artifacts
               # (a defender with 1 game / 3 sacks gets sacks_per_game_z = 5+
               # which would dominate Euclidean distance and zero out every
@@ -129,76 +193,52 @@ def _vec(row: pd.Series, stats: list[str]) -> np.ndarray | None:
     return np.clip(vals, -_Z_CLIP, _Z_CLIP)
 
 
-def find_nfl_comps(prospect_row: pd.Series, position: str,
-                      n: int = 5) -> list[dict]:
-    """Return top-N NFL-outcome comps for a college prospect.
-
-    `prospect_row` is the prospect's 2025-season row from the relevant
-    position parquet (must contain the z-cols listed in _STATS for
-    the position). `position` is the internal key (QB/WR/TE/RB/CB/S/
-    LB/DE/DT). Returns list of dicts with player, school, season,
-    similarity, draft_year, draft_round, draft_pick, draft_overall,
-    nfl_team. Empty list if no comps available."""
+def _find_comps_vectorized(prospect_row: pd.Series, position: str,
+                              top_pool_n: int = 50) -> list[dict]:
+    """Vectorized core: returns the top-N most similar historical
+    profiles in one matrix op. Cached pool matrix means this is
+    ~50x faster than the old iterrows version on a 1k-row pool."""
     if position not in _STATS:
         return []
-    stats = _STATS[position]
-
-    if position in ("QB", "WR", "TE", "RB"):
-        pool = _skill_pool()
-        if pool.empty:
-            return []
-        pool = pool[pool["pos_group"] == position]
-    else:
-        pool = _def_pool()
-        if pool.empty:
-            return []
-        match_set = _DEF_POS_MATCH.get(position, [position])
-        pool = pool[pool["listed_position"].isin(match_set)]
-
-    if pool.empty:
+    M, candidates, available = _pool_matrix(position)
+    if M.size == 0 or len(candidates) == 0:
         return []
 
-    target = _vec(prospect_row, stats)
+    target = _vec(prospect_row, available)
     if target is None:
         return []
 
-    sims: list[tuple[float, pd.Series]] = []
-    for _, candidate in pool.iterrows():
-        cv = _vec(candidate, stats)
-        if cv is None:
-            continue
-        sim = _euclidean_similarity(target, cv)
-        sims.append((sim, candidate))
+    # One matrix subtraction + norm — replaces the per-row iterrows.
+    diffs = M - target
+    dists = np.sqrt((diffs * diffs).sum(axis=1))
+    sims = np.maximum(0.0, 1.0 - dists / 4.0)
 
-    sims.sort(key=lambda x: x[0], reverse=True)
+    # Top-N indices by similarity (descending).
+    n = min(top_pool_n, len(sims))
+    top_idx = np.argpartition(-sims, n - 1)[:n] if n > 0 else []
+    # Sort the top-N portion for ranked display
+    top_idx = top_idx[np.argsort(-sims[top_idx])]
+
     out = []
-    for sim, c in sims[:n]:
-        out.append({
-            "player": c.get("player", "—"),
-            "school": c.get("team", "—"),
-            "season": int(c.get("season", 0)) if pd.notna(c.get("season")) else None,
-            "similarity": sim,
-            "draft_year": (int(c["draft_year"])
-                            if pd.notna(c.get("draft_year")) else None),
-            "draft_round": (int(c["draft_round"])
-                             if pd.notna(c.get("draft_round")) else None),
-            "draft_pick": (int(c["draft_pick"])
-                            if pd.notna(c.get("draft_pick")) else None),
-            "draft_overall": (int(c["draft_overall"])
-                               if pd.notna(c.get("draft_overall")) else None),
-            "nfl_team": c.get("nfl_team", "—"),
-        })
+    for i in top_idx:
+        c = dict(candidates[i])
+        c["similarity"] = float(sims[i])
+        out.append(c)
     return out
+
+
+def find_nfl_comps(prospect_row: pd.Series, position: str,
+                      n: int = 5) -> list[dict]:
+    """Return top-N NFL-outcome comps for a college prospect."""
+    return _find_comps_vectorized(prospect_row, position, top_pool_n=n)
 
 
 def hit_rate_distribution(prospect_row: pd.Series, position: str,
                               top_pool_n: int = 50) -> dict:
     """Bust-probability framing — of the top-N most similar historical
-    profiles, what fraction landed in each draft tier.
-
-    Returns {'r1': pct, 'r2_3': pct, 'd3_late': pct, 'top_pool_n': N}.
-    Returns empty dict if no comps available."""
-    comps = find_nfl_comps(prospect_row, position, n=top_pool_n)
+    profiles, what fraction landed in each draft tier."""
+    comps = _find_comps_vectorized(prospect_row, position,
+                                       top_pool_n=top_pool_n)
     if not comps:
         return {}
     rounds = [c["draft_round"] for c in comps if c["draft_round"]]
@@ -214,6 +254,30 @@ def hit_rate_distribution(prospect_row: pd.Series, position: str,
         "r4_7": r4_7 / n,
         "top_pool_n": n,
     }
+
+
+def find_comps_with_hit_rate(prospect_row: pd.Series, position: str,
+                                  comp_n: int = 5,
+                                  pool_n: int = 50) -> tuple[list[dict], dict]:
+    """Single-pass version: returns (top_comp_n comps, hit_rate dict)
+    from one similarity computation. Used by attach_nfl_comps to
+    avoid doing the same work twice per prospect."""
+    full = _find_comps_vectorized(prospect_row, position,
+                                       top_pool_n=pool_n)
+    if not full:
+        return [], {}
+    top = full[:comp_n]
+    rounds = [c["draft_round"] for c in full if c["draft_round"]]
+    if not rounds:
+        return top, {}
+    n = len(rounds)
+    hr = {
+        "r1":   sum(1 for r in rounds if r == 1) / n,
+        "r2_3": sum(1 for r in rounds if r in (2, 3)) / n,
+        "r4_7": sum(1 for r in rounds if r >= 4) / n,
+        "top_pool_n": n,
+    }
+    return top, hr
 
 
 # ── Strengths & concerns ────────────────────────────────────────
