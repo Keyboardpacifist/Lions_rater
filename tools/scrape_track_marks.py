@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Scrape track & field marks + HS combine times for 2027 Draft prospects
-via Google Custom Search API.
+via Serper.dev's Google search API.
 
 Reads each prospect's name + state from our parquets, runs a handful
 of targeted queries per prospect (100m, 200m, long jump, high jump,
@@ -10,16 +10,16 @@ Raw snippet evidence stays in the output so the user can verify
 ambiguous matches.
 
 Setup:
-  GOOGLE_CSE_API_KEY   — Custom Search API key
-  GOOGLE_CSE_ID        — Programmable Search Engine ID (cx)
+  SERPER_API_KEY — from https://serper.dev dashboard
 
-Both can be set as env vars OR pulled from .streamlit/secrets.toml.
-Free tier covers 100 queries/day; beyond that, ~$5/1000 queries.
-At 5 queries per prospect × 400 prospects = 2,000 queries ≈ $5.
+Set as env var OR pulled from .streamlit/secrets.toml.
+Free tier: 2,500 queries on signup — covers our entire 2,400-query
+run at $0.
 
 Usage:
   python tools/scrape_track_marks.py             # all 400 prospects
   python tools/scrape_track_marks.py --top 50    # top 50 only
+  python tools/scrape_track_marks.py --top 3 --verbose   # smoke test
   python tools/scrape_track_marks.py --resume    # skip prospects
                                                   # already scraped
 """
@@ -42,14 +42,13 @@ RECRUITING = REPO / "data" / "college" / "college_recruiting.parquet"
 OUT = REPO / "data" / "draft_track_marks.parquet"
 SECRETS = REPO / ".streamlit" / "secrets.toml"
 
-CSE_ENDPOINT = "https://www.googleapis.com/customsearch/v1"
+SERPER_ENDPOINT = "https://google.serper.dev/search"
 
 
-def _load_credentials() -> tuple[str | None, str | None]:
-    api_key = os.environ.get("GOOGLE_CSE_API_KEY")
-    cse_id = os.environ.get("GOOGLE_CSE_ID")
-    if api_key and cse_id:
-        return api_key, cse_id
+def _load_credentials() -> str | None:
+    api_key = os.environ.get("SERPER_API_KEY")
+    if api_key:
+        return api_key
     if SECRETS.exists():
         try:
             import tomllib
@@ -57,74 +56,125 @@ def _load_credentials() -> tuple[str | None, str | None]:
             import tomli as tomllib  # py<3.11
         with open(SECRETS, "rb") as f:
             cfg = tomllib.load(f)
-        api_key = api_key or cfg.get("GOOGLE_CSE_API_KEY")
-        cse_id = cse_id or cfg.get("GOOGLE_CSE_ID")
-    return api_key, cse_id
+        api_key = cfg.get("SERPER_API_KEY")
+    return api_key
 
 
 # ── Pattern matchers ────────────────────────────────────────────
-# Search snippets are messy. Each pattern targets a specific event
-# and rejects values outside reasonable HS-elite ranges.
+# Snippets are noisy — we have to require the event label adjacent
+# to the number. The number BEFORE the label and the number AFTER
+# the label are both common phrasings:
+#   "ran 10.84 in the 100 meter"   — number before
+#   "100 Meter Dash, 11.46"        — number after
+#   "40 Yard Dash, 4.2 sec"        — number after
+# Window: 30 chars on each side of the event label.
 
-# 100m: 10.0–11.99 sec (anything faster is suspect; slower not relevant)
-RE_100M = re.compile(r"\b(1[01]\.\d{1,2})\b(?=\s*(?:sec|s\b|in\s+the\s+100|100m|100 meter))",
-                       re.IGNORECASE)
-RE_100M_LOOSE = re.compile(r"\b(1[01]\.\d{1,2})\b")
-
-# 200m: 20.0–23.99 sec
-RE_200M = re.compile(r"\b(2[0-3]\.\d{1,2})\b(?=\s*(?:sec|s\b|in\s+the\s+200|200m|200 meter))",
-                       re.IGNORECASE)
-RE_200M_LOOSE = re.compile(r"\b(2[0-3]\.\d{1,2})\b")
-
-# 40-yard dash: 4.2–5.4 sec
-RE_40YD = re.compile(r"\b(4\.\d{1,2}|5\.[0-3]\d?)\b(?=\s*(?:40|forty))",
-                       re.IGNORECASE)
-RE_40YD_LOOSE = re.compile(r"\b(4\.[2-9]\d?|5\.[0-3]\d?)\b")
-
-# Long jump: 18'00" to 26'11" — match feet'inches" or feet-inches or
-# decimal feet "23.5"
-RE_JUMP_FTIN = re.compile(
-    r"(\b\d{1,2})['’\-]\s*(\d{1,2})(?:[\"”]|\s*(?:in|inches))?",
-)
-RE_JUMP_DEC = re.compile(r"(\b\d{1,2}\.\d{1,2})\s*(?:ft|feet)\b",
-                            re.IGNORECASE)
+def _looks_doubled(s: str) -> bool:
+    """Reject suspicious digit-doubling patterns like '11.11' or
+    '22.22' that show up in tabular junk text from athletic.net."""
+    digits = s.replace(".", "")
+    return len(set(digits)) == 1
 
 
-def _parse_jump_inches(text: str, low_in: int, high_in: int) -> float | None:
-    """Try ft'in" then decimal-feet. Return inches if within range."""
-    for m in RE_JUMP_FTIN.finditer(text):
-        ft = int(m.group(1))
-        inches = int(m.group(2) or 0)
-        total = ft * 12 + inches
-        if low_in <= total <= high_in:
-            return float(total)
-    for m in RE_JUMP_DEC.finditer(text):
-        ft = float(m.group(1))
-        total = ft * 12
-        if low_in <= total <= high_in:
-            return float(total)
+def _name_in_window(text: str, match_start: int, match_end: int,
+                       name: str, window: int = 80) -> bool:
+    """Check that the player's name (or last-name only) appears within
+    `window` chars on either side of the captured match. Catches the
+    'wrong athlete in same list' false-positive."""
+    lo = max(0, match_start - window)
+    hi = min(len(text), match_end + window)
+    chunk = text[lo:hi].lower()
+    n = name.lower()
+    if n in chunk:
+        return True
+    last = name.split()[-1].lower()
+    if len(last) >= 4 and last in chunk:
+        return True
+    return False
+
+
+def _scan_event_time(text: str, name: str, label_re: str,
+                        low: float, high: float,
+                        digit_pat: str = r"\d{1,2}\.\d{1,2}") -> float | None:
+    """Find a time near the event label AND adjacent to the player's
+    name. Tries number-before-label first, then number-after-label."""
+    after = re.compile(
+        rf"(?:{label_re})\W{{0,12}}(?:dash|run)?\W{{0,8}}({digit_pat})",
+        re.IGNORECASE,
+    )
+    before = re.compile(
+        rf"({digit_pat})\W{{0,8}}(?:sec|s)?\W{{0,16}}(?:in\s+the\s+|at\s+the\s+)?(?:{label_re})",
+        re.IGNORECASE,
+    )
+    for pat in (after, before):
+        for m in pat.finditer(text):
+            raw = m.group(1)
+            if _looks_doubled(raw):
+                continue
+            try:
+                v = float(raw)
+            except ValueError:
+                continue
+            if not (low <= v <= high):
+                continue
+            if not _name_in_window(text, m.start(), m.end(), name):
+                continue
+            return v
     return None
 
 
-def _scan_time(text: str, strict_re, loose_re,
-                  low: float, high: float) -> float | None:
-    """Strict pattern (with 'sec/100m' nearby) takes precedence; loose
-    fallback only if strict missed. Time must fall within [low, high]."""
-    for m in strict_re.finditer(text):
-        try:
-            v = float(m.group(1))
-            if low <= v <= high:
-                return v
-        except ValueError:
-            pass
-    for m in loose_re.finditer(text):
-        try:
-            v = float(m.group(1))
-            if low <= v <= high:
-                return v
-        except ValueError:
-            pass
+_LABEL_100M = r"100\s*(?:m\b|meter(?:s)?|m\s*(?:dash|race)?\b)"
+_LABEL_200M = r"200\s*(?:m\b|meter(?:s)?|m\s*(?:dash|race)?\b)"
+_LABEL_40   = r"40[\s-]?(?:yard|yd|y\b)\s*(?:dash)?"
+
+# Jumps: "23'5\"", "23-5", "23.5 ft" — all in proximity to event label.
+_JUMP_FTIN = r"(\d{1,2})['’]\s*(\d{0,2})(?:[\"”]|\s*(?:in|inches))?"
+_JUMP_DEC  = r"(\d{1,2}\.\d{1,2})\s*(?:ft|feet)"
+
+
+def _scan_event_jump(text: str, name: str, label_re: str,
+                        low_in: int, high_in: int) -> float | None:
+    """Find a jump distance near the event label AND adjacent to the
+    player's name. Returns inches."""
+    pat_after = re.compile(
+        rf"(?:{label_re})\W{{0,12}}(?:cleared|jump|of)?\W{{0,8}}"
+        rf"(?:{_JUMP_FTIN}|{_JUMP_DEC})",
+        re.IGNORECASE,
+    )
+    pat_before = re.compile(
+        rf"(?:{_JUMP_FTIN}|{_JUMP_DEC})\W{{0,16}}(?:in\s+the\s+|at\s+the\s+)?"
+        rf"(?:{label_re})",
+        re.IGNORECASE,
+    )
+    for pat in (pat_after, pat_before):
+        for m in pat.finditer(text):
+            g = m.groups()
+            inches = None
+            if g[0] and g[0].strip().isdigit():
+                ft = int(g[0])
+                inch = int(g[1]) if g[1] and g[1].strip() else 0
+                if 0 <= inch < 12 or g[1] == "":
+                    inches = ft * 12 + (inch if inch < 12 else 0)
+            elif g[2]:
+                try:
+                    inches = float(g[2]) * 12
+                except ValueError:
+                    pass
+            if inches is None:
+                continue
+            if not (low_in <= inches <= high_in):
+                continue
+            if not _name_in_window(text, m.start(), m.end(), name):
+                continue
+            return float(inches)
     return None
+
+
+_LABEL_LJ = r"long\s*jump|\bLJ\b"
+_LABEL_HJ = r"high\s*jump|\bHJ\b"
+_LABEL_TJ = r"triple\s*jump|\bTJ\b"
+_LABEL_VERT = r"vertical(?:\s*jump)?"
+_LABEL_BROAD = r"broad(?:\s*jump)?|standing\s*broad"
 
 
 def _build_state_lookup() -> dict:
@@ -147,70 +197,127 @@ def _build_state_lookup() -> dict:
     return out
 
 
-def cse_search(query: str, api_key: str, cse_id: str,
-                  num: int = 5) -> list[dict]:
-    """Hit Google Custom Search API and return result items."""
-    params = {
-        "key": api_key, "cx": cse_id, "q": query,
-        "num": min(num, 10),
+def serper_search(query: str, api_key: str,
+                       num: int = 5) -> list[dict]:
+    """Hit Serper.dev API and return result items normalized to
+    {title, snippet, link}. Returns empty list on errors."""
+    headers = {
+        "X-API-KEY": api_key,
+        "Content-Type": "application/json",
     }
+    payload = {"q": query, "num": min(num, 10)}
     try:
-        resp = requests.get(CSE_ENDPOINT, params=params, timeout=15)
+        resp = requests.post(SERPER_ENDPOINT, headers=headers,
+                                json=payload, timeout=15)
         if resp.status_code != 200:
             return []
-        return resp.json().get("items", []) or []
+        data = resp.json()
+        # Serper returns 'organic' for the main results list
+        return data.get("organic", []) or []
     except Exception:
         return []
 
 
+def _is_likely_match(snippet_text: str, name: str,
+                          state: str | None, hs_city: str | None,
+                          hs_school: str | None,
+                          college_school: str | None) -> bool:
+    """Strong identity check: require an actual disambiguator beyond
+    the player's name. State alone is too coarse (multiple players
+    named 'Jeremiah Smith' from FL exist). Accept the snippet only
+    if it references the player's HS school, HS city, or — most
+    useful for current college prospects — their COLLEGE school."""
+    s = snippet_text.lower()
+    if name.lower() not in s:
+        return False
+    if hs_school and len(hs_school) >= 4 and hs_school.lower() in s:
+        return True
+    if hs_city and len(hs_city) >= 4 and hs_city.lower() in s:
+        return True
+    if college_school and len(college_school) >= 3:
+        cs = college_school.lower()
+        # Allow nicknames: Ole Miss = Mississippi, etc.
+        if cs in s:
+            return True
+        if cs == "mississippi" and "ole miss" in s:
+            return True
+        if cs == "ole miss" and "mississippi" in s:
+            return True
+    return False
+
+
 def scrape_prospect(name: str, state: str | None,
-                       api_key: str, cse_id: str) -> dict:
-    """Run targeted queries for one prospect; parse snippets for marks."""
+                       hs_city: str | None, hs_school: str | None,
+                       college_school: str | None,
+                       api_key: str) -> dict:
+    """Run targeted queries for one prospect; parse snippets for marks
+    only when the surrounding text confirms the right athlete (via
+    HS city / HS school / college school match)."""
     state_str = f' "{state}"' if state else ""
 
-    # Per-event queries. We add the state filter to disambiguate names.
     queries = {
-        "time_100m":      f'"{name}"{state_str} 100m track',
-        "time_200m":      f'"{name}"{state_str} 200m track',
+        "time_100m":      f'"{name}"{state_str} "100 meter" track',
+        "time_200m":      f'"{name}"{state_str} "200 meter" track',
         "long_jump_in":   f'"{name}"{state_str} "long jump"',
         "high_jump_in":   f'"{name}"{state_str} "high jump"',
         "triple_jump_in": f'"{name}"{state_str} "triple jump"',
-        "forty_time":     f'"{name}"{state_str} "40-yard dash"',
+        "forty_time":     f'"{name}"{state_str} "40 yard dash"',
+        "vertical_in":    f'"{name}"{state_str} "vertical jump"',
+        "broad_jump_in":  f'"{name}"{state_str} "broad jump"',
     }
 
     found = {}
     evidence = {}
     for field, q in queries.items():
-        items = cse_search(q, api_key, cse_id, num=5)
-        # Concatenate snippet+title from top results — increases hit rate
-        text = " ".join(
-            (it.get("title", "") + " " + it.get("snippet", ""))
-            for it in items
-        )
-        if field == "time_100m":
-            v = _scan_time(text, RE_100M, RE_100M_LOOSE, 10.0, 12.0)
-        elif field == "time_200m":
-            v = _scan_time(text, RE_200M, RE_200M_LOOSE, 20.0, 24.0)
-        elif field == "forty_time":
-            v = _scan_time(text, RE_40YD, RE_40YD_LOOSE, 4.2, 5.4)
-        elif field == "long_jump_in":
-            v = _parse_jump_inches(text, 216, 320)  # 18'-26'8"
-        elif field == "high_jump_in":
-            v = _parse_jump_inches(text, 60, 90)    # 5'-7'6"
-        elif field == "triple_jump_in":
-            v = _parse_jump_inches(text, 420, 600)  # 35'-50'
-        else:
-            v = None
+        items = serper_search(q, api_key, num=5)
+        if not items:
+            continue
+        # Verify each result individually + scan only the SNIPPET body
+        # (not title) so we don't trust a match whose only Smith
+        # reference is in the headline of an article that talks about
+        # a different player by paragraph 2.
+        v = None
+        winning_item = None
+        for it in items:
+            full = f"{it.get('title', '')} {it.get('snippet', '')}"
+            if not _is_likely_match(full, name, state, hs_city,
+                                       hs_school, college_school):
+                continue
+            snippet = it.get("snippet", "") or ""
+            if name.lower() not in snippet.lower():
+                # Snippet doesn't even mention our player — skip
+                # parsing values from it.
+                continue
+            if field == "time_100m":
+                v = _scan_event_time(snippet, name, _LABEL_100M,
+                                            10.0, 12.0)
+            elif field == "time_200m":
+                v = _scan_event_time(snippet, name, _LABEL_200M,
+                                            20.0, 24.0)
+            elif field == "forty_time":
+                v = _scan_event_time(snippet, name, _LABEL_40, 4.2, 5.4,
+                                            digit_pat=r"\d\.\d{1,2}")
+            elif field == "long_jump_in":
+                v = _scan_event_jump(snippet, name, _LABEL_LJ, 216, 320)
+            elif field == "high_jump_in":
+                v = _scan_event_jump(snippet, name, _LABEL_HJ, 60, 90)
+            elif field == "triple_jump_in":
+                v = _scan_event_jump(snippet, name, _LABEL_TJ, 420, 600)
+            elif field == "vertical_in":
+                v = _scan_event_jump(snippet, name, _LABEL_VERT, 24, 50)
+            elif field == "broad_jump_in":
+                v = _scan_event_jump(snippet, name, _LABEL_BROAD, 96, 160)
+            if v is not None:
+                winning_item = it
+                break
+
         if v is not None:
             found[field] = v
-            # Save the first ~3 snippets that contained the value's
-            # vicinity so the user can verify
-            evidence[field] = [
-                {"title": it.get("title", ""),
-                 "snippet": it.get("snippet", "")[:200],
-                 "url": it.get("link", "")}
-                for it in items[:3]
-            ]
+            evidence[field] = [{
+                "title": winning_item.get("title", ""),
+                "snippet": (winning_item.get("snippet", "") or "")[:240],
+                "url": winning_item.get("link", ""),
+            }]
     return {"marks": found, "evidence": evidence}
 
 
@@ -224,10 +331,10 @@ def main() -> None:
                           help="Seconds between API calls")
     args = parser.parse_args()
 
-    api_key, cse_id = _load_credentials()
-    if not api_key or not cse_id:
-        print("ERROR: GOOGLE_CSE_API_KEY and GOOGLE_CSE_ID must be set "
-              "(env vars or .streamlit/secrets.toml).")
+    api_key = _load_credentials()
+    if not api_key:
+        print("ERROR: SERPER_API_KEY must be set (env var or "
+              ".streamlit/secrets.toml).")
         sys.exit(1)
 
     if not CONSENSUS.exists():
@@ -253,9 +360,14 @@ def main() -> None:
             continue
         info = state_lookup.get(name, {})
         state = info.get("state")
-        print(f"[{i}/{len(consensus)}] {name} ({state or '?'}) ...",
+        hs_city = info.get("city")
+        hs_school = info.get("hs_school")
+        college_school = getattr(p, "school", None)  # consensus row
+        print(f"[{i}/{len(consensus)}] {name} ({state or '?'}, "
+              f"{college_school or '?'}) ...",
               end=" ", flush=True)
-        result = scrape_prospect(name, state, api_key, cse_id)
+        result = scrape_prospect(name, state, hs_city, hs_school,
+                                       college_school, api_key)
         marks = result["marks"]
         evidence = result["evidence"]
         rows.append({
@@ -267,6 +379,8 @@ def main() -> None:
             "high_jump_in":   marks.get("high_jump_in"),
             "triple_jump_in": marks.get("triple_jump_in"),
             "forty_time":     marks.get("forty_time"),
+            "vertical_in":    marks.get("vertical_in"),
+            "broad_jump_in":  marks.get("broad_jump_in"),
             "evidence_json":  json.dumps(evidence),
             "scraped_at":     pd.Timestamp.utcnow().isoformat(),
         })
@@ -296,7 +410,8 @@ def main() -> None:
     n_with_marks = sum(
         any(pd.notna(new_df.loc[i, c])
             for c in ("time_100m", "time_200m", "long_jump_in",
-                       "high_jump_in", "triple_jump_in", "forty_time"))
+                       "high_jump_in", "triple_jump_in", "forty_time",
+                       "vertical_in", "broad_jump_in"))
         for i in new_df.index
     )
     print(f"\n✓ wrote {OUT.relative_to(REPO)}")
