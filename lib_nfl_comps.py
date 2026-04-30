@@ -367,10 +367,29 @@ def get_stat_profile(prospect_row: pd.Series, position: str) -> dict:
     return {"strengths": strengths, "concerns": bottom}
 
 
+@st.cache_data(show_spinner=False)
+def _recruiting_lookup() -> pd.DataFrame:
+    """Recruiting fields keyed by player_id. Cached once."""
+    path = _COLLEGE / "college_recruiting.parquet"
+    if not path.exists():
+        return pd.DataFrame()
+    df = pd.read_parquet(path)
+    keep = [c for c in ("player_id", "stars", "ranking", "rating",
+                          "height", "weight", "city", "state",
+                          "recruit_year")
+             if c in df.columns]
+    out = df[keep].copy()
+    if "player_id" in out.columns:
+        out["player_id"] = out["player_id"].astype(str)
+    return out
+
+
 def lookup_prospect_row(player_name: str, school: str,
                             position: str) -> pd.Series | None:
-    """Find the prospect's 2025-season row in the relevant position
-    parquet. Used by the Draft page to feed find_nfl_comps."""
+    """Find the prospect's 2025-season row from the relevant position
+    parquet, with recruiting fields (stars, rating, height, weight)
+    merged in. Used by the Draft page to feed find_nfl_comps and the
+    athleticism scorers."""
     pos_files = {
         "QB": "college_qb_all_seasons.parquet",
         "WR": "college_wr_all_seasons.parquet",
@@ -379,23 +398,34 @@ def lookup_prospect_row(player_name: str, school: str,
     }
     if position in pos_files:
         path = _COLLEGE / pos_files[position]
-        if not path.exists():
-            return None
-        df = pd.read_parquet(path)
-        df = df[df["season"] == 2025]
-        # Try exact name+team first, then name-only (transfer-portal case)
-        match = df[(df["player"] == player_name) & (df["team"] == school)]
-        if match.empty:
-            match = df[df["player"] == player_name]
-        return match.iloc[0] if not match.empty else None
-    if position in ("CB", "S", "LB", "DE", "DT"):
+    elif position in ("CB", "S", "LB", "DE", "DT"):
         path = _COLLEGE / "college_def_all_seasons.parquet"
-        if not path.exists():
-            return None
-        df = pd.read_parquet(path)
-        df = df[df["season"] == 2025]
-        match = df[(df["player"] == player_name) & (df["team"] == school)]
-        if match.empty:
-            match = df[df["player"] == player_name]
-        return match.iloc[0] if not match.empty else None
-    return None
+    else:
+        return None
+    if not path.exists():
+        return None
+    df = pd.read_parquet(path)
+    df = df[df["season"] == 2025]
+    match = df[(df["player"] == player_name) & (df["team"] == school)]
+    if match.empty:
+        match = df[df["player"] == player_name]
+    if match.empty:
+        return None
+    row = match.iloc[0].copy()
+
+    # Merge in recruiting fields by player_id so the athleticism
+    # scorer has stars / rating / height / weight available. Don't
+    # overwrite values already on the row — OL roster parquet has
+    # listed (current) height/weight that's more accurate than the
+    # HS-era recruiting numbers.
+    rec = _recruiting_lookup()
+    if not rec.empty and "player_id" in row.index:
+        pid = str(row["player_id"])
+        rec_match = rec[rec["player_id"] == pid]
+        if not rec_match.empty:
+            for c in rec_match.columns:
+                if c == "player_id":
+                    continue
+                if c not in row.index or pd.isna(row.get(c)):
+                    row[c] = rec_match.iloc[0][c]
+    return row

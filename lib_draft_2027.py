@@ -115,6 +115,9 @@ def attach_nfl_comps(board_signature: tuple) -> pd.DataFrame:
     from lib_nfl_comps import (
         find_comps_with_hit_rate, get_stat_profile, lookup_prospect_row,
     )
+    from lib_draft_athleticism import (
+        compute_tested_score, compute_contextual_score, divergence_note,
+    )
     consensus = load_consensus_board()
     if consensus.empty:
         return pd.DataFrame()
@@ -134,6 +137,13 @@ def attach_nfl_comps(board_signature: tuple) -> pd.DataFrame:
                 "hit_rate_r4_7": None,
                 "strengths": [],
                 "concerns": [],
+                "tested_score": None,
+                "tested_components": {},
+                "tested_note": "No prospect data found.",
+                "contextual_score": None,
+                "contextual_components": {},
+                "contextual_note": "No prospect data found.",
+                "athletic_divergence": None,
             })
             continue
         # Single-pass: comps + hit-rate from one similarity computation
@@ -141,6 +151,8 @@ def attach_nfl_comps(board_signature: tuple) -> pd.DataFrame:
             prospect_row, r["position"], comp_n=5, pool_n=50,
         )
         profile = get_stat_profile(prospect_row, r["position"])
+        tested = compute_tested_score(prospect_row, r["position"])
+        contextual = compute_contextual_score(prospect_row, r["position"])
         top = None
         if comps:
             c0 = comps[0]
@@ -159,6 +171,15 @@ def attach_nfl_comps(board_signature: tuple) -> pd.DataFrame:
             "hit_rate_r4_7": hr.get("r4_7"),
             "strengths": profile["strengths"],
             "concerns": profile["concerns"],
+            "tested_score": tested.get("score"),
+            "tested_components": tested.get("components", {}),
+            "tested_note": tested.get("note"),
+            "contextual_score": contextual.get("score"),
+            "contextual_components": contextual.get("components", {}),
+            "contextual_note": contextual.get("note"),
+            "athletic_divergence": divergence_note(
+                tested.get("score"), contextual.get("score"),
+            ),
         })
     return pd.DataFrame(rows)
 

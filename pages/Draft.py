@@ -111,6 +111,83 @@ def _open_college_profile(team: str, season: int, position: str,
     st.switch_page("app.py")
 
 
+def _athletic_color(score) -> str:
+    """Color for the score badge — grey when missing, red→green ramp."""
+    if score is None or pd.isna(score):
+        return "#999999"
+    s = float(score)
+    if s >= 8.0:  return "#15803d"  # green
+    if s >= 6.5:  return "#65a30d"  # lime
+    if s >= 5.0:  return "#a16207"  # amber
+    if s >= 3.5:  return "#c2410c"  # orange
+    return "#b91c1c"  # red
+
+
+def _render_athletic_profile(r: pd.Series) -> None:
+    """Two-side panel: Tested score (left) + Contextual score (right)
+    with component breakdowns and divergence callout when meaningful."""
+    tested = r.get("tested_score")
+    contextual = r.get("contextual_score")
+    tested_components = r.get("tested_components") or {}
+    contextual_components = r.get("contextual_components") or {}
+    tested_note = r.get("tested_note")
+    contextual_note = r.get("contextual_note")
+    divergence = r.get("athletic_divergence")
+
+    # If neither side has data, skip the panel entirely.
+    if (tested is None or pd.isna(tested)) and (
+            contextual is None or pd.isna(contextual)):
+        return
+
+    cols = st.columns(2)
+    with cols[0]:
+        _render_athletic_block(
+            "🧪 Tested", tested, tested_components, tested_note,
+        )
+    with cols[1]:
+        _render_athletic_block(
+            "🏟 Contextual", contextual, contextual_components,
+            contextual_note,
+        )
+    if divergence:
+        st.caption(divergence)
+
+
+def _render_athletic_block(title: str, score, components: dict,
+                              note) -> None:
+    score_str = f"{score:.1f}/10" if (score is not None
+                                        and pd.notna(score)) else "—"
+    color = _athletic_color(score)
+    rows_html = ""
+    for label, val in components.items():
+        if isinstance(val, (list, tuple)) and len(val) == 2:
+            comp_score, comp_detail = val
+            rows_html += (
+                f"<div style='display:flex;justify-content:space-between;"
+                f"font-size:0.78rem;margin:2px 0;'>"
+                f"<span>{label}</span>"
+                f"<span style='color:#666;'>"
+                f"{comp_detail} · <b>{comp_score:.1f}</b></span></div>"
+            )
+    note_html = (f"<div style='font-size:0.7rem;color:#888;"
+                 f"margin-top:6px;font-style:italic;'>{note}</div>"
+                 if note else "")
+    st.markdown(
+        f"<div style='border:1px solid #e5e7eb;border-radius:8px;"
+        f"padding:10px 12px;background:#fafbfc;'>"
+        f"<div style='display:flex;justify-content:space-between;"
+        f"align-items:baseline;'>"
+        f"<div style='font-size:0.72rem;color:#888;text-transform:uppercase;"
+        f"letter-spacing:0.6px;font-weight:600;'>{title}</div>"
+        f"<div style='font-size:1.4rem;font-weight:800;color:{color};'>"
+        f"{score_str}</div></div>"
+        f"<div style='margin-top:6px;'>{rows_html}</div>"
+        f"{note_html}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _render_prospect_row(rank_label: str, r: pd.Series,
                             key_prefix: str) -> None:
     cols = st.columns([1.1, 5, 1.6, 1.4, 1.4])
@@ -182,6 +259,9 @@ def _render_prospect_row(rank_label: str, r: pd.Series,
     # those are interpretation, not raw data.
     if pd.notna(r.get("player_id")):
         render_prospect_stats(str(r["player_id"]), r["position"])
+
+    # ── Athletic profile (two-axis, always visible) ──────────────
+    _render_athletic_profile(r)
 
     # ── Expander: Strengths / Weaknesses / Comps / Hit-rate ───────
     comps = r.get("nfl_comps")
