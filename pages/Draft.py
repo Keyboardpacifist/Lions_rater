@@ -323,10 +323,15 @@ with tab_pos:
             expanded=(pos == "QB"),
         ):
             for i, (_, r) in enumerate(pos_df.iterrows(), start=1):
+                # &#35; instead of literal '#' so Streamlit's markdown
+                # parser doesn't treat the leading '#' as an h1 heading
+                # and break the line. white-space:nowrap on the parent
+                # div + a non-breaking space inside the span keep the
+                # whole "(OVR: N)" together.
                 rank_html = (
-                    f"#{i} <span style='font-size:0.75rem;color:#888;"
-                    f"font-weight:500;'>(OVR: {int(r['expert_rank'])})"
-                    f"</span>"
+                    f"&#35;{i}&nbsp;<span style='font-size:0.75rem;"
+                    f"color:#888;font-weight:500;'>"
+                    f"(OVR:&nbsp;{int(r['expert_rank'])})</span>"
                 )
                 _render_prospect_row(rank_html, r, f"pos_{pos}")
                 st.divider()
