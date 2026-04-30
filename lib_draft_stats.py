@@ -80,7 +80,7 @@ _STATS_DISPLAY = {
         # pressure_rate in CFBD parquet is actually
         # (sacks + hurries) / games — i.e. pressures-per-game, not a
         # percentage. Format as decimal, not %.
-        ("Press/G",   "pressure_rate",       "{:.2f}",   "mean"),
+        ("Pressures/G", "pressure_rate",     "{:.2f}",   "mean"),
     ],
     "CB": [], "S": [], "LB": [], "DE": [], "DT": [],  # filled below
     "OL": [
