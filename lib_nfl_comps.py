@@ -311,7 +311,7 @@ _STAT_LABELS = {
     "pd_per_game_z":         "Coverage / passes deflected",
     "int_per_game_z":        "Ball-hawk (INT rate)",
     "solo_tackles_per_game_z": "Solo-tackle volume",
-    "pressure_rate_z":       "Pressure-rate efficiency",
+    "pressure_rate_z":       "Pressures per game",
 }
 
 # Position-specific overrides where the same z-col means different

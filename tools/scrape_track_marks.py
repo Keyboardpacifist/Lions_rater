@@ -246,7 +246,26 @@ def _is_likely_match(snippet_text: str, name: str,
     return False
 
 
-def scrape_prospect(name: str, state: str | None,
+def _events_for_position(position: str) -> list[str]:
+    """Position-aware query plan — skip track events for prospects
+    whose position rarely produces track records, to stay under
+    Serper's 2,500 free-tier query budget."""
+    universal = ["forty_time", "vertical_in", "broad_jump_in"]
+    if position in ("WR", "CB", "S"):
+        return universal + ["time_100m", "time_200m",
+                              "long_jump_in", "high_jump_in",
+                              "triple_jump_in"]
+    if position == "RB":
+        return universal + ["time_100m", "time_200m", "long_jump_in"]
+    if position in ("QB", "LB", "DE"):
+        return universal + ["time_100m", "time_200m"]
+    if position == "TE":
+        return universal + ["long_jump_in"]
+    # DT, OL — linemen rarely run track; just HS combine measurables
+    return universal
+
+
+def scrape_prospect(name: str, position: str, state: str | None,
                        hs_city: str | None, hs_school: str | None,
                        college_school: str | None,
                        api_key: str) -> dict:
@@ -255,7 +274,7 @@ def scrape_prospect(name: str, state: str | None,
     HS city / HS school / college school match)."""
     state_str = f' "{state}"' if state else ""
 
-    queries = {
+    all_queries = {
         "time_100m":      f'"{name}"{state_str} "100 meter" track',
         "time_200m":      f'"{name}"{state_str} "200 meter" track',
         "long_jump_in":   f'"{name}"{state_str} "long jump"',
@@ -265,6 +284,8 @@ def scrape_prospect(name: str, state: str | None,
         "vertical_in":    f'"{name}"{state_str} "vertical jump"',
         "broad_jump_in":  f'"{name}"{state_str} "broad jump"',
     }
+    enabled = _events_for_position(position)
+    queries = {k: v for k, v in all_queries.items() if k in enabled}
 
     found = {}
     evidence = {}
@@ -295,7 +316,12 @@ def scrape_prospect(name: str, state: str | None,
                 v = _scan_event_time(snippet, name, _LABEL_200M,
                                             20.0, 24.0)
             elif field == "forty_time":
-                v = _scan_event_time(snippet, name, _LABEL_40, 4.2, 5.4,
+                # 4.30 floor — anything faster from HS bios (MaxPreps,
+                # Hudl, etc.) is almost certainly hand-timed or
+                # self-reported. Real laser-timed elite is ~4.29
+                # (Tyreek Hill at the NFL combine). Sub-4.3 from a
+                # HS profile is noise.
+                v = _scan_event_time(snippet, name, _LABEL_40, 4.30, 5.4,
                                             digit_pat=r"\d\.\d{1,2}")
             elif field == "long_jump_in":
                 v = _scan_event_jump(snippet, name, _LABEL_LJ, 216, 320)
@@ -329,6 +355,11 @@ def main() -> None:
                           help="Skip prospects already in output parquet")
     parser.add_argument("--sleep", type=float, default=0.3,
                           help="Seconds between API calls")
+    parser.add_argument("--budget", type=int, default=2400,
+                          help="Hard cap on Serper queries (free tier "
+                                "= 2500). Exits early when budget hit; "
+                                "remaining prospects get empty rows so "
+                                "the output covers all 400.")
     args = parser.parse_args()
 
     api_key = _load_credentials()
@@ -354,6 +385,8 @@ def main() -> None:
         print(f"Resume: {len(existing)} already scraped, skipping those.")
 
     rows = []
+    total_queries = 0
+    budget_hit = False
     for i, p in enumerate(consensus.itertuples(), start=1):
         name = p.player
         if not existing.empty and name in existing["player"].values:
@@ -362,12 +395,37 @@ def main() -> None:
         state = info.get("state")
         hs_city = info.get("city")
         hs_school = info.get("hs_school")
-        college_school = getattr(p, "school", None)  # consensus row
-        print(f"[{i}/{len(consensus)}] {name} ({state or '?'}, "
+        college_school = getattr(p, "school", None)
+        position = getattr(p, "position", "")
+
+        # Pre-count queries for this prospect; bail if it would push
+        # us over the free-tier budget.
+        planned_queries = len(_events_for_position(position))
+        if budget_hit or (total_queries + planned_queries > args.budget):
+            if not budget_hit:
+                print(f"\n⚠ Approaching free-tier budget "
+                      f"({total_queries}/{args.budget} used). Skipping "
+                      "remaining prospects — they'll get empty rows for "
+                      "manual fill-in.")
+                budget_hit = True
+            rows.append({
+                "player": name, "state": state,
+                "time_100m": None, "time_200m": None,
+                "long_jump_in": None, "high_jump_in": None,
+                "triple_jump_in": None, "forty_time": None,
+                "vertical_in": None, "broad_jump_in": None,
+                "evidence_json": "{}",
+                "scraped_at":   pd.Timestamp.utcnow().isoformat(),
+                "skipped_reason": "budget",
+            })
+            continue
+
+        print(f"[{i}/{len(consensus)}] {name} ({position}, {state or '?'}, "
               f"{college_school or '?'}) ...",
               end=" ", flush=True)
-        result = scrape_prospect(name, state, hs_city, hs_school,
-                                       college_school, api_key)
+        result = scrape_prospect(name, position, state, hs_city,
+                                       hs_school, college_school, api_key)
+        total_queries += planned_queries
         marks = result["marks"]
         evidence = result["evidence"]
         rows.append({
@@ -383,11 +441,12 @@ def main() -> None:
             "broad_jump_in":  marks.get("broad_jump_in"),
             "evidence_json":  json.dumps(evidence),
             "scraped_at":     pd.Timestamp.utcnow().isoformat(),
+            "skipped_reason": None,
         })
         if marks:
-            print(f"  found: {list(marks.keys())}")
+            print(f"  found: {list(marks.keys())}  [{total_queries}q]")
         else:
-            print("  no hits")
+            print(f"  no hits  [{total_queries}q]")
         time.sleep(args.sleep)
 
     if not rows:
@@ -407,6 +466,55 @@ def main() -> None:
     review_cols = [c for c in new_df.columns if c != "evidence_json"]
     new_df[review_cols].to_csv(csv_path, index=False)
 
+    # Excel sheet — same data, formatted with header + frozen row.
+    # Brett uses this for manual fill-ins on prospects we couldn't
+    # auto-populate.
+    xlsx_path = OUT.with_suffix(".xlsx")
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Track marks"
+        # Reorder columns: identity first, then events, then meta
+        col_order = [
+            "player", "state",
+            "time_100m", "time_200m",
+            "long_jump_in", "high_jump_in", "triple_jump_in",
+            "forty_time", "vertical_in", "broad_jump_in",
+            "skipped_reason", "scraped_at",
+        ]
+        col_order = [c for c in col_order if c in new_df.columns]
+        sheet_df = new_df[col_order]
+        header_fill = PatternFill("solid", fgColor="1E3A8A")
+        header_font = Font(color="FFFFFF", bold=True, size=11)
+        for col_idx, h in enumerate(col_order, 1):
+            cell = ws.cell(row=1, column=col_idx, value=h)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center")
+        for r_idx, row in enumerate(sheet_df.itertuples(index=False),
+                                       start=2):
+            for c_idx, val in enumerate(row, start=1):
+                cell = ws.cell(row=r_idx, column=c_idx,
+                                value=(None if pd.isna(val) else val))
+        widths = {"player": 26, "state": 7,
+                   "time_100m": 11, "time_200m": 11,
+                   "long_jump_in": 14, "high_jump_in": 14,
+                   "triple_jump_in": 16, "forty_time": 11,
+                   "vertical_in": 13, "broad_jump_in": 14,
+                   "skipped_reason": 14, "scraped_at": 28}
+        for c_idx, h in enumerate(col_order, 1):
+            ws.column_dimensions[get_column_letter(c_idx)].width = (
+                widths.get(h, 14)
+            )
+        ws.freeze_panes = "A2"
+        wb.save(xlsx_path)
+        xlsx_msg = f"  Excel:      {xlsx_path.relative_to(REPO)}\n"
+    except ImportError:
+        xlsx_msg = "  (openpyxl not installed — skipped Excel output)\n"
+
     n_with_marks = sum(
         any(pd.notna(new_df.loc[i, c])
             for c in ("time_100m", "time_200m", "long_jump_in",
@@ -414,10 +522,18 @@ def main() -> None:
                        "vertical_in", "broad_jump_in"))
         for i in new_df.index
     )
+    n_skipped = sum(
+        1 for i in new_df.index
+        if (new_df.loc[i].get("skipped_reason") == "budget"
+            if "skipped_reason" in new_df.columns else False)
+    )
     print(f"\n✓ wrote {OUT.relative_to(REPO)}")
-    print(f"  {len(new_df)} prospects, {n_with_marks} with at least one "
-          "track/combine mark")
+    print(f"  {len(new_df)} prospects · {n_with_marks} with at least "
+          "one mark · " + (f"{n_skipped} skipped due to budget"
+                             if n_skipped else "no budget skips"))
+    print(f"  Total queries this run: {total_queries}")
     print(f"  review CSV: {csv_path.relative_to(REPO)}")
+    print(xlsx_msg, end="")
 
 
 if __name__ == "__main__":

@@ -146,7 +146,7 @@ _LABELS = {
     "sacks_per_game_z":        "Sacks/g (burst + finish)",
     "tfl_per_game_z":          "TFL/g (closing speed)",
     "qb_hurries_per_game_z":   "Hurries/g (get-off)",
-    "pressure_rate_z":         "Pressure rate efficiency",
+    "pressure_rate_z":         "Pressures per game",
     "solo_tackles_per_game_z": "Solo tackles/g (range)",
     "pd_per_game_z":           "PD/g (coverage athleticism)",
     "int_per_game_z":          "INT/g (anticipation + closing)",

@@ -77,7 +77,10 @@ _STATS_DISPLAY = {
         ("PD",        "passes_deflected",    "{:.0f}",   "sum"),
         ("INT",       "interceptions",       "{:.0f}",   "sum"),
         ("Sk/G",      "sacks_per_game",      "{:.2f}",   "mean"),
-        ("Press%",    "pressure_rate",       "{:.1%}",   "mean"),
+        # pressure_rate in CFBD parquet is actually
+        # (sacks + hurries) / games — i.e. pressures-per-game, not a
+        # percentage. Format as decimal, not %.
+        ("Press/G",   "pressure_rate",       "{:.2f}",   "mean"),
     ],
     "CB": [], "S": [], "LB": [], "DE": [], "DT": [],  # filled below
     "OL": [
