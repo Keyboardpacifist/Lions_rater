@@ -116,7 +116,8 @@ def attach_nfl_comps(board_signature: tuple) -> pd.DataFrame:
         find_comps_with_hit_rate, get_stat_profile, lookup_prospect_row,
     )
     from lib_draft_athleticism import (
-        compute_tested_score, compute_contextual_score, divergence_note,
+        compute_pedigree_score, compute_tested_score,
+        compute_contextual_score, divergence_note,
     )
     consensus = load_consensus_board()
     if consensus.empty:
@@ -137,6 +138,9 @@ def attach_nfl_comps(board_signature: tuple) -> pd.DataFrame:
                 "hit_rate_r4_7": None,
                 "strengths": [],
                 "concerns": [],
+                "pedigree_score": None,
+                "pedigree_components": {},
+                "pedigree_note": "No prospect data found.",
                 "tested_score": None,
                 "tested_components": {},
                 "tested_note": "No prospect data found.",
@@ -151,6 +155,7 @@ def attach_nfl_comps(board_signature: tuple) -> pd.DataFrame:
             prospect_row, r["position"], comp_n=5, pool_n=50,
         )
         profile = get_stat_profile(prospect_row, r["position"])
+        pedigree = compute_pedigree_score(prospect_row, r["position"])
         tested = compute_tested_score(prospect_row, r["position"])
         contextual = compute_contextual_score(prospect_row, r["position"])
         top = None
@@ -171,6 +176,9 @@ def attach_nfl_comps(board_signature: tuple) -> pd.DataFrame:
             "hit_rate_r4_7": hr.get("r4_7"),
             "strengths": profile["strengths"],
             "concerns": profile["concerns"],
+            "pedigree_score": pedigree.get("score"),
+            "pedigree_components": pedigree.get("components", {}),
+            "pedigree_note": pedigree.get("note"),
             "tested_score": tested.get("score"),
             "tested_components": tested.get("components", {}),
             "tested_note": tested.get("note"),

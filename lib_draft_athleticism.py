@@ -135,12 +135,15 @@ def _hw_position_norms() -> dict:
     return norms
 
 
-def compute_tested_score(prospect_row: pd.Series, position: str) -> dict:
-    """Return {score (1-10 or None), components, has_data, note}.
-    Uses what we already have today: stars, 247 composite rating,
-    height/weight (recruit-era). Pro Day / Combine layers will
-    auto-flow in via lookup_prospect_row when those datasets refresh
-    in 2027."""
+def compute_pedigree_score(prospect_row: pd.Series,
+                              position: str) -> dict:
+    """Pedigree: recruiting-era *evaluation* — how scouts/services
+    rated this player at age 17. It's outside-source hype + scout
+    consensus, NOT a measure of physical traits.
+
+    Components: 247 composite stars · 247 composite rating · HS
+    national rank.
+    """
     components = {}
 
     star_score = _stars_to_score(prospect_row.get("stars"))
@@ -155,9 +158,49 @@ def compute_tested_score(prospect_row: pd.Series, position: str) -> dict:
             rating_score, f"{prospect_row['rating']:.4f}",
         )
 
-    # Height / weight tier — simple absolute thresholds per position.
-    # We have the values in recruiting parquet; for v1 use position-
-    # archetype thresholds rather than full cohort z-scoring.
+    ranking = prospect_row.get("ranking")
+    if pd.notna(ranking):
+        r = int(ranking)
+        if r <= 10:
+            rank_score = 10.0
+        elif r <= 30:
+            rank_score = 9.0
+        elif r <= 100:
+            rank_score = 7.5
+        elif r <= 250:
+            rank_score = 5.5
+        elif r <= 500:
+            rank_score = 4.0
+        else:
+            rank_score = 3.0
+        components["HS national rank"] = (rank_score, f"#{r}")
+
+    if not components:
+        return {
+            "score": None, "components": {}, "has_data": False,
+            "note": "No recruiting data available for this prospect.",
+        }
+    avg = sum(s for s, _ in components.values()) / len(components)
+    return {
+        "score": round(avg, 1), "components": components,
+        "has_data": True,
+        "note": "Recruiting-era evaluation only.",
+    }
+
+
+def compute_tested_score(prospect_row: pd.Series, position: str) -> dict:
+    """Tested: actual *measured* physical traits.
+
+    v1 carries height/weight scored against position archetype. The
+    v1.1 layer will add HS combine times (40, vertical, broad, bench,
+    shuttle, 3-cone), track & field marks (100m / 200m / long jump /
+    high jump / triple jump) via name+state web scrape, and Feldman
+    Freak List flags (current + prior years' lists since underclassmen
+    appear). v2 (Feb 2027) auto-adds NFL Combine + Pro Day from
+    nflverse.
+    """
+    components = {}
+
     h, w = prospect_row.get("height"), prospect_row.get("weight")
     if pd.notna(h) and pd.notna(w):
         try:
@@ -171,18 +214,21 @@ def compute_tested_score(prospect_row: pd.Series, position: str) -> dict:
         except (ValueError, TypeError):
             pass
 
+    # TODO v1.1: layer in track times, HS combine measurables,
+    # Feldman Freak List flags.
+
     if not components:
         return {
             "score": None, "components": {}, "has_data": False,
-            "note": "No tested data — Pro Day / Combine arrives "
-                     "Feb 2027.",
+            "note": ("No measured data yet — track times + HS combine "
+                     "scrape pending; NFL Combine / Pro Day Feb 2027."),
         }
     avg = sum(s for s, _ in components.values()) / len(components)
     return {
         "score": round(avg, 1), "components": components,
         "has_data": True,
-        "note": ("Recruit-era data only. Pro Day Feb 2027 will "
-                 "refine."),
+        "note": ("Size only (v1). Track / HS combine layer next; "
+                 "Combine + Pro Day Feb 2027."),
     }
 
 

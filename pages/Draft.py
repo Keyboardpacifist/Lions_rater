@@ -124,31 +124,44 @@ def _athletic_color(score) -> str:
 
 
 def _render_athletic_profile(r: pd.Series) -> None:
-    """Two-side panel: Tested score (left) + Contextual score (right)
-    with component breakdowns and divergence callout when meaningful."""
+    """Three-block panel:
+      📜 Pedigree    — recruit-era scout/hype evaluation
+      🧪 Tested      — measured physical traits (size for v1; track,
+                        HS combine, NFL Combine layers as data lands)
+      🏟 Contextual — on-field athletic markers from 2025 production
+    Plus a divergence callout when Tested vs Contextual diverges
+    meaningfully (only useful once Tested is fleshed out beyond H/W).
+    """
+    pedigree = r.get("pedigree_score")
     tested = r.get("tested_score")
     contextual = r.get("contextual_score")
-    tested_components = r.get("tested_components") or {}
-    contextual_components = r.get("contextual_components") or {}
-    tested_note = r.get("tested_note")
-    contextual_note = r.get("contextual_note")
-    divergence = r.get("athletic_divergence")
 
-    # If neither side has data, skip the panel entirely.
-    if (tested is None or pd.isna(tested)) and (
-            contextual is None or pd.isna(contextual)):
+    # If everything is missing, skip the panel entirely.
+    has_any = any(v is not None and not pd.isna(v)
+                    for v in (pedigree, tested, contextual))
+    if not has_any:
         return
 
-    cols = st.columns(2)
+    cols = st.columns(3)
     with cols[0]:
         _render_athletic_block(
-            "🧪 Tested", tested, tested_components, tested_note,
+            "📜 Pedigree", pedigree,
+            r.get("pedigree_components") or {},
+            r.get("pedigree_note"),
         )
     with cols[1]:
         _render_athletic_block(
-            "🏟 Contextual", contextual, contextual_components,
-            contextual_note,
+            "🧪 Tested", tested,
+            r.get("tested_components") or {},
+            r.get("tested_note"),
         )
+    with cols[2]:
+        _render_athletic_block(
+            "🏟 Contextual", contextual,
+            r.get("contextual_components") or {},
+            r.get("contextual_note"),
+        )
+    divergence = r.get("athletic_divergence")
     if divergence:
         st.caption(divergence)
 
