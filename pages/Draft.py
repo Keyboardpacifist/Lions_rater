@@ -113,11 +113,12 @@ def _open_college_profile(team: str, season: int, position: str,
 
 def _render_prospect_row(rank_label: str, r: pd.Series,
                             key_prefix: str) -> None:
-    cols = st.columns([0.7, 5, 1.6, 1.4, 1.4])
+    cols = st.columns([1.1, 5, 1.6, 1.4, 1.4])
     with cols[0]:
         st.markdown(
             f"<div style='font-size:1.4rem;font-weight:800;color:#1e3a8a;"
-            f"padding-top:6px;line-height:1.1;'>{rank_label}</div>",
+            f"padding-top:6px;line-height:1.1;white-space:nowrap;'>"
+            f"{rank_label}</div>",
             unsafe_allow_html=True,
         )
     with cols[1]:
@@ -322,10 +323,15 @@ with tab_pos:
             expanded=(pos == "QB"),
         ):
             for i, (_, r) in enumerate(pos_df.iterrows(), start=1):
+                # &#35; instead of literal '#' so Streamlit's markdown
+                # parser doesn't treat the leading '#' as an h1 heading
+                # and break the line. white-space:nowrap on the parent
+                # div + a non-breaking space inside the span keep the
+                # whole "(OVR: N)" together.
                 rank_html = (
-                    f"#{i}<br><span style='font-size:0.7rem;color:#888;"
-                    f"font-weight:500;'>(overall #{int(r['expert_rank'])})"
-                    f"</span>"
+                    f"&#35;{i}&nbsp;<span style='font-size:0.75rem;"
+                    f"color:#888;font-weight:500;'>"
+                    f"(OVR:&nbsp;{int(r['expert_rank'])})</span>"
                 )
                 _render_prospect_row(rank_html, r, f"pos_{pos}")
                 st.divider()

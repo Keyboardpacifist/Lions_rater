@@ -113,8 +113,7 @@ def attach_nfl_comps(board_signature: tuple) -> pd.DataFrame:
       hit_rate_r2_3  — pct in R2-3
     """
     from lib_nfl_comps import (
-        find_nfl_comps, get_stat_profile, hit_rate_distribution,
-        lookup_prospect_row,
+        find_comps_with_hit_rate, get_stat_profile, lookup_prospect_row,
     )
     consensus = load_consensus_board()
     if consensus.empty:
@@ -137,9 +136,10 @@ def attach_nfl_comps(board_signature: tuple) -> pd.DataFrame:
                 "concerns": [],
             })
             continue
-        comps = find_nfl_comps(prospect_row, r["position"], n=5)
-        hr = hit_rate_distribution(prospect_row, r["position"],
-                                       top_pool_n=50)
+        # Single-pass: comps + hit-rate from one similarity computation
+        comps, hr = find_comps_with_hit_rate(
+            prospect_row, r["position"], comp_n=5, pool_n=50,
+        )
         profile = get_stat_profile(prospect_row, r["position"])
         top = None
         if comps:
