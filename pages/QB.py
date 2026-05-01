@@ -526,6 +526,13 @@ render_nfl_player_banner(
     is_career_view=(year_choice == "Career"),
 )
 
+from lib_movement_panel import (
+    render_movement_panel, render_advanced_tracking,
+)
+_yr_for_panels = int(view_row.get("season_year", selected_season))
+render_advanced_tracking(selected, "qb", season=_yr_for_panels)
+render_movement_panel(selected, "qb", season=_yr_for_panels)
+
 QB_STAT_SPECS = [
     ("passing_yards", "{:.0f}", "Pass Yds"),
     ("passing_tds", "{:.0f}", "TD"),

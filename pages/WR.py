@@ -531,6 +531,13 @@ render_nfl_player_banner(
     is_career_view=(year_choice == "Career"),
 )
 
+from lib_movement_panel import (
+    render_movement_panel, render_advanced_tracking,
+)
+_yr_for_panels = int(view_row.get("season_year", selected_season))
+render_advanced_tracking(selected, "wr", season=_yr_for_panels)
+render_movement_panel(selected, "wr", season=_yr_for_panels)
+
 # Per-position stat specs for the trading-card stat tiles.
 WR_STAT_SPECS = [
     ("receptions", "{:.0f}", "Rec"),
