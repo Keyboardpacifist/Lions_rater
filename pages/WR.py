@@ -522,6 +522,22 @@ if total_weight > 0:
 else:
     _view_score = float("nan")
 
+from lib_shared import render_nfl_player_banner
+render_nfl_player_banner(
+    position="wr", player_name=selected, view_row=view_row,
+    score=_view_score,
+    season_str=_yr.get("season_str") or f"Season {selected_season}",
+    player_career=player_career,
+    is_career_view=(year_choice == "Career"),
+)
+
+from lib_movement_panel import (
+    render_movement_panel, render_advanced_tracking,
+)
+_yr_for_panels = int(view_row.get("season_year", selected_season))
+render_advanced_tracking(selected, "wr", season=_yr_for_panels)
+render_movement_panel(selected, "wr", season=_yr_for_panels)
+
 # Per-position stat specs for the trading-card stat tiles.
 WR_STAT_SPECS = [
     ("receptions", "{:.0f}", "Rec"),
@@ -548,19 +564,8 @@ def _safe_fmt(v, fmt="{:.0f}"):
     try: return fmt.format(v)
     except: return str(v)
 
-_card_narrative = None
-try:
-    from lib_field_viz import build_wr_narrative
-    from lib_splits import _load_targeted_plays, _load_wr_route_peer_pools
-    tp = _load_targeted_plays()
-    if tp is not None and player.get("player_id"):
-        pf_career = tp[tp["player_id"] == player.get("player_id")]
-        if not pf_career.empty:
-            _card_narrative = build_wr_narrative(
-                pf_career, peer_pools=_load_wr_route_peer_pools(),
-            )
-except Exception:
-    _card_narrative = None
+from lib_player_blurb import make_card_narrative
+_card_narrative = make_card_narrative(view_row, all_wrs_full, "wr")
 
 _card_stats = [
     ("Targets", _safe_fmt(view_row.get("targets")),

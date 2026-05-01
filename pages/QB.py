@@ -500,8 +500,6 @@ if len(season_stints) > 1:
 # ── Unified Season picker — drives stat bar + bundle table + radar ──
 player_career = all_qbs_full[all_qbs_full["player_id"] == player.get("player_id")]
 
-st.markdown(f"### {selected}")
-
 _yr = render_player_year_picker(
     career_df=player_career,
     default_season=selected_season,
@@ -518,6 +516,22 @@ if total_weight > 0:
                        if pd.notna(view_row.get(z)))
 else:
     _view_score = float("nan")
+
+from lib_shared import render_nfl_player_banner
+render_nfl_player_banner(
+    position="qb", player_name=selected, view_row=view_row,
+    score=_view_score,
+    season_str=_yr.get("season_str") or f"Season {selected_season}",
+    player_career=player_career,
+    is_career_view=(year_choice == "Career"),
+)
+
+from lib_movement_panel import (
+    render_movement_panel, render_advanced_tracking,
+)
+_yr_for_panels = int(view_row.get("season_year", selected_season))
+render_advanced_tracking(selected, "qb", season=_yr_for_panels)
+render_movement_panel(selected, "qb", season=_yr_for_panels)
 
 QB_STAT_SPECS = [
     ("passing_yards", "{:.0f}", "Pass Yds"),
@@ -546,16 +560,8 @@ def _safe_fmt(v, fmt="{:.0f}"):
     try: return fmt.format(v)
     except: return str(v)
 
-_card_narrative = None
-try:
-    from lib_field_viz import build_position_narrative
-    _season_pool = all_qbs_full[all_qbs_full["season_year"] == selected_season]
-    _card_narrative = build_position_narrative(
-        player_row=view_row, peer_pool=_season_pool,
-        stat_labels=stat_labels, position_label="quarterbacks",
-    )
-except Exception:
-    _card_narrative = None
+from lib_player_blurb import make_card_narrative
+_card_narrative = make_card_narrative(view_row, all_qbs_full, "qb")
 
 _card_stats = [
     ("Pass yds", _safe_fmt(view_row.get("passing_yards")),

@@ -299,6 +299,13 @@ def _render_phase_panel(title, stats_cfg, team_df, team, season, row):
         _render_stat_row(label, val, fmt, rank, total)
 
 
+_POS_KEY_PREFIX = {
+    "QB": "qb", "WR": "wr", "TE": "te", "RB": "rb", "OL": "ol",
+    "EDGE": "de", "DT": "dt", "LB": "lb", "CB": "cb", "S": "s",
+    "K": "k", "P": "p",
+}
+
+
 _ROSTER_SOURCES = [
     ("QB",  "league_qb_all_seasons.parquet",  None,                "pages/QB.py"),
     ("WR",  "league_wr_all_seasons.parquet",  ("position", "WR"),  "pages/WR.py"),
@@ -329,13 +336,21 @@ def _team_roster_top(team: str, season: int) -> dict:
             df = pl.read_parquet(path).to_pandas()
         except Exception:
             continue
-        team_col = "recent_team" if "recent_team" in df.columns else (
-            "team" if "team" in df.columns else None)
         season_col = "season_year" if "season_year" in df.columns else (
             "season" if "season" in df.columns else None)
-        if team_col is None or season_col is None:
+        if season_col is None:
             continue
-        sub = df[(df[team_col] == team) & (df[season_col] == season)]
+        # Prefer `recent_team`, but some parquets (CB/S 2025) leave
+        # it NaN and only populate `team`. Try recent_team first; if
+        # that returns nothing, fall back to `team`.
+        sub = pd.DataFrame()
+        for team_col in ("recent_team", "team"):
+            if team_col not in df.columns:
+                continue
+            sub = df[(df[team_col] == team)
+                      & (df[season_col] == season)]
+            if not sub.empty:
+                break
         if row_filter:
             col, val = row_filter
             if col in sub.columns:
@@ -772,6 +787,35 @@ with tab_roster:
                             label,
                             key=f"roster_{pk}_{r['pid'] or r['name']}",
                             use_container_width=True,
-                            help=f"Open {r['name']}'s {pk} page",
+                            help=f"Open {r['name']}'s page",
                         ):
+                            # Land directly on this player's detail
+                            # view, not the position leaderboard. We
+                            # set:
+                            #  1. the team/season filters
+                            #  2. the leaderboard's "selected player"
+                            #     marker (so it boots into detail mode)
+                            #  3. the leaderboard's filter-ctx key to
+                            #     match the new (team, season) — without
+                            #     this, the auto-clear in
+                            #     render_master_detail_leaderboard sees
+                            #     a context change and wipes the marker
+                            #     we just set.
+                            # Then we nuke the team/season widget keys
+                            # so the new page picks up our state
+                            # instead of any stale widget value.
+                            kp = _POS_KEY_PREFIX.get(pk, pk.lower())
+                            st.session_state["selected_team"] = team
+                            st.session_state["selected_season"] = int(season)
+                            st.session_state.pop(
+                                "team_selector_widget_v2", None)
+                            st.session_state.pop(
+                                "season_selector_widget", None)
+                            st.session_state[
+                                f"{kp}_selected_player_"
+                                f"{team}_{int(season)}"
+                            ] = r["name"]
+                            st.session_state[
+                                f"_{kp}_filter_ctx"
+                            ] = (str(team), int(season))
                             st.switch_page(r["page"])

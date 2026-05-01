@@ -10,10 +10,100 @@ stays readable inside the expander.
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+
+
+def _z_to_pctl(z) -> int | None:
+    if z is None or pd.isna(z):
+        return None
+    z_clip = max(-3.0, min(3.0, float(z)))
+    pct = round(50.0 + 50.0 * math.erf(z_clip / math.sqrt(2)))
+    return min(99, max(1, pct))
+
+
+@st.cache_data(show_spinner=False)
+def _penalties_lookup() -> dict:
+    """Per-(player_lower, school_lower, season) → penalty count, from
+    tools/build_college_penalties.py output. Empty when not yet built.
+
+    We also build the per-season cohort distribution of penalty
+    counts so each prospect's count gets a 'penalty rate' percentile
+    that's directional (high count = low percentile = bad)."""
+    path = _COLLEGE.parent / "draft_college_penalties.parquet"
+    if not path.exists():
+        return {}
+    df = pd.read_parquet(path)
+    # Per-season cohort: distribution of penalty counts across all
+    # players who appeared in penalty events that season. Used to
+    # z-score each prospect's count in-cohort.
+    cohort_stats = {}
+    for yr in df["season"].unique():
+        season_df = df[df["season"] == yr]
+        if season_df.empty:
+            continue
+        mu = season_df["penalties"].mean()
+        sd = season_df["penalties"].std() or 1.0
+        cohort_stats[int(yr)] = (mu, sd)
+
+    out: dict = {}
+    for _, r in df.iterrows():
+        season = int(r["season"])
+        mu, sd = cohort_stats.get(season, (0.0, 1.0))
+        # Higher penalties = WORSE → invert sign so positive z = good.
+        z = -((float(r["penalties"]) - mu) / sd) if sd else 0.0
+        key = (str(r["player"]).lower(),
+               str(r["school"]).lower(),
+               season)
+        out[key] = {
+            "penalties": int(r["penalties"]),
+            "pen_yards": int(r["pen_yards"]),
+            "z": z,
+        }
+    return out
+
+
+# Stats whose row should be followed by a national-percentile column.
+# Key = raw column name (so per-position labels like "Yds" don't
+# collide); value = the z-col on the per-season row.
+_PCTL_BY_COL = {
+    # QB
+    "completion_pct":      "completion_pct_z",
+    "pass_yards":          "pass_yards_z",
+    "pass_tds":            "pass_tds_z",
+    "yards_per_attempt":   "yards_per_attempt_z",
+    "rush_yards_total":    "rush_yards_total_z",
+    # Skill (WR / TE)
+    "receptions":          "receptions_total_z",
+    "rec_yards":           "rec_yards_total_z",
+    "yards_per_rec":       "yards_per_rec_z",
+    "rec_tds":             "rec_tds_total_z",
+    # RB
+    "rush_carries":        "carries_total_z",
+    "rush_yards":          "rush_yards_total_z",
+    "yards_per_carry":     "yards_per_carry_z",
+    "rush_tds":            "rush_tds_total_z",
+    # CFBD-advanced (skill positions)
+    "epa_per_play_avg":    "epa_per_play_avg_z",
+    "epa_per_pass_avg":    "epa_per_pass_avg_z",
+    "epa_third_down_avg":  "epa_third_down_avg_z",
+    "usage_pass":          "usage_pass_z",
+    "usage_overall":       "usage_overall_z",
+    "usage_third_down":    "usage_third_down_z",
+    # Defense
+    "tackles_total":       "tackles_per_game_z",
+    "tackles_solo":        "solo_tackles_per_game_z",
+    "tfl":                 "tfl_per_game_z",
+    "sacks":               "sacks_per_game_z",
+    "qb_hurries":          "qb_hurries_per_game_z",
+    "passes_deflected":    "pd_per_game_z",
+    "interceptions":       "int_per_game_z",
+    "sacks_per_game":      "sacks_per_game_z",
+    "pressure_rate":       "pressure_rate_z",
+}
 
 _DATA = Path(__file__).resolve().parent / "data"
 _COLLEGE = _DATA / "college"
@@ -77,7 +167,10 @@ _STATS_DISPLAY = {
         ("PD",        "passes_deflected",    "{:.0f}",   "sum"),
         ("INT",       "interceptions",       "{:.0f}",   "sum"),
         ("Sk/G",      "sacks_per_game",      "{:.2f}",   "mean"),
-        ("Press%",    "pressure_rate",       "{:.1%}",   "mean"),
+        # pressure_rate in CFBD parquet is actually
+        # (sacks + hurries) / games — i.e. pressures-per-game, not a
+        # percentage. Format as decimal, not %.
+        ("Pressures/G", "pressure_rate",     "{:.2f}",   "mean"),
     ],
     "CB": [], "S": [], "LB": [], "DE": [], "DT": [],  # filled below
     "OL": [
@@ -178,8 +271,11 @@ def render_prospect_stats(player_id: str, position: str) -> None:
         )
         return
 
+    pen_lookup = _penalties_lookup()
+
     # Per-season rows
     rows = []
+    career_pen = 0
     for _, s in seasons.iterrows():
         row = {
             "Season": int(s["season"]) if pd.notna(s.get("season")) else "—",
@@ -188,16 +284,47 @@ def render_prospect_stats(player_id: str, position: str) -> None:
         for label, col, fmt, _agg_kind in spec:
             v = s.get(col)
             row[label] = fmt.format(v) if pd.notna(v) else "—"
+            z_col = _PCTL_BY_COL.get(col)
+            if z_col:
+                pct = _z_to_pctl(s.get(z_col))
+                row[f"{label} pctl"] = f"{pct}th" if pct else "—"
+
+        # Penalty count + pctl, looked up from the separately-built
+        # CFBD-pbp pipeline. Only renders when the parquet exists.
+        if pen_lookup:
+            player_name = s.get("player") or s.get("player_name") or ""
+            team = s.get("team") or ""
+            season = (int(s["season"])
+                      if pd.notna(s.get("season")) else None)
+            pen_key = (str(player_name).lower(),
+                        str(team).lower(),
+                        season)
+            pen = pen_lookup.get(pen_key)
+            if pen:
+                row["Pen"] = str(pen["penalties"])
+                row["Pen pctl"] = (
+                    f"{_z_to_pctl(pen['z'])}th"
+                    if _z_to_pctl(pen["z"]) else "—"
+                )
+                career_pen += pen["penalties"]
+            else:
+                row["Pen"] = "0"
+                row["Pen pctl"] = "—"
         rows.append(row)
 
-    # Career row (counting = sum, rates = mean, longs = max)
+    # Career row
     career = {"Season": "Career", "School": "—"}
     for label, col, fmt, agg in spec:
         if agg is None or col not in seasons.columns:
             career[label] = "—"
-            continue
-        v = _agg(seasons[col], agg)
-        career[label] = fmt.format(v) if v is not None else "—"
+        else:
+            v = _agg(seasons[col], agg)
+            career[label] = fmt.format(v) if v is not None else "—"
+        if col in _PCTL_BY_COL:
+            career[f"{label} pctl"] = "—"
+    if pen_lookup:
+        career["Pen"] = str(career_pen) if career_pen else "—"
+        career["Pen pctl"] = "—"
     rows.append(career)
 
     if position == "OL":

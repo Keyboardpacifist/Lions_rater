@@ -246,8 +246,6 @@ player = ranked[ranked["player_name"] == selected].iloc[0]
 all_kickers = load_kicker_data()
 player_career = all_kickers[all_kickers["player_id"] == player.get("player_id")] if "player_id" in all_kickers.columns else all_kickers[0:0]
 
-st.markdown(f"### {selected}")
-
 _yr = render_player_year_picker(
     career_df=player_career,
     default_season=selected_season,
@@ -264,6 +262,15 @@ if total_weight > 0:
                        if pd.notna(view_row.get(z)))
 else:
     _view_score = float("nan")
+
+from lib_shared import render_nfl_player_banner
+render_nfl_player_banner(
+    position="k", player_name=selected, view_row=view_row,
+    score=_view_score,
+    season_str=_yr.get("season_str") or f"Season {selected_season}",
+    player_career=player_career,
+    is_career_view=(year_choice == "Career"),
+)
 
 K_STAT_SPECS = [
     ("fg_made", "{:.0f}", "FGM"),

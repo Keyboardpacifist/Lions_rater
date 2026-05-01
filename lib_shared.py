@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -1254,6 +1255,151 @@ def team_palette(theme: dict, n: int) -> list[str]:
     return palette
 
 
+_COLLEGE_COLORS: dict[str, tuple[str, str]] = {
+    # Authoritative-ish program colors. Sourced manually for the
+    # consensus board's most-represented schools. Falls back to a
+    # generic navy theme for anything missing.
+    "Alabama":          ("#9E1B32", "#FFFFFF"),
+    "Arizona":          ("#003366", "#CC0033"),
+    "Arizona State":    ("#8C1D40", "#FFC627"),
+    "Arkansas":         ("#9D2235", "#FFFFFF"),
+    "Auburn":           ("#0C2340", "#E87722"),
+    "Baylor":           ("#003015", "#FFB81C"),
+    "Boise State":      ("#0033A0", "#D64309"),
+    "BYU":              ("#002E5D", "#FFFFFF"),
+    "California":       ("#003262", "#FDB515"),
+    "Clemson":          ("#F66733", "#522D80"),
+    "Colorado":         ("#CFB87C", "#000000"),
+    "Duke":             ("#003087", "#FFFFFF"),
+    "Florida":          ("#0021A5", "#FA4616"),
+    "Florida State":    ("#782F40", "#CEB888"),
+    "Georgia":          ("#BA0C2F", "#000000"),
+    "Georgia Tech":     ("#B3A369", "#003057"),
+    "Houston":          ("#C8102E", "#76777B"),
+    "Illinois":         ("#13294B", "#E84A27"),
+    "Indiana":          ("#990000", "#FFFFFF"),
+    "Iowa":             ("#000000", "#FFCD00"),
+    "Iowa State":       ("#C8102E", "#F1BE48"),
+    "Kansas":           ("#0051BA", "#E8000D"),
+    "Kansas State":     ("#512888", "#A7A9AC"),
+    "Kentucky":         ("#0033A0", "#FFFFFF"),
+    "Louisville":       ("#AD0000", "#000000"),
+    "LSU":              ("#461D7C", "#FDD023"),
+    "Maryland":         ("#E03A3E", "#FFD520"),
+    "Memphis":          ("#003087", "#898D8D"),
+    "Miami":            ("#F47321", "#005030"),
+    "Michigan":         ("#00274C", "#FFCB05"),
+    "Michigan State":   ("#18453B", "#FFFFFF"),
+    "Minnesota":        ("#7A0019", "#FFCC33"),
+    "Mississippi":      ("#CE1126", "#14213D"),
+    "Mississippi State":("#660000", "#FFFFFF"),
+    "Missouri":         ("#F1B82D", "#000000"),
+    "NC State":         ("#CC0000", "#000000"),
+    "Nebraska":         ("#E41C38", "#FDF6E3"),
+    "North Carolina":   ("#7BAFD4", "#FFFFFF"),
+    "Northwestern":     ("#4E2A84", "#FFFFFF"),
+    "Notre Dame":       ("#0C2340", "#C99700"),
+    "Ohio State":       ("#BB0000", "#666666"),
+    "Oklahoma":         ("#841617", "#FDF9D8"),
+    "Oklahoma State":   ("#FF7300", "#000000"),
+    "Ole Miss":         ("#CE1126", "#14213D"),
+    "Oregon":           ("#154733", "#FEE123"),
+    "Oregon State":     ("#DC4405", "#000000"),
+    "Penn State":       ("#041E42", "#FFFFFF"),
+    "Pittsburgh":       ("#003594", "#FFB81C"),
+    "Purdue":           ("#CFB991", "#000000"),
+    "Rutgers":          ("#CC0033", "#5F6A72"),
+    "SMU":              ("#0033A0", "#C8102E"),
+    "South Carolina":   ("#73000A", "#000000"),
+    "Stanford":         ("#8C1515", "#FFFFFF"),
+    "Syracuse":         ("#F76900", "#000E54"),
+    "TCU":              ("#4D1979", "#A3A9AC"),
+    "Tennessee":        ("#FF8200", "#FFFFFF"),
+    "Texas":            ("#BF5700", "#FFFFFF"),
+    "Texas A&M":        ("#500000", "#FFFFFF"),
+    "Texas Tech":       ("#CC0000", "#000000"),
+    "UCF":              ("#000000", "#BA9B37"),
+    "UCLA":             ("#2774AE", "#FFD100"),
+    "USC":              ("#990000", "#FFCC00"),
+    "Utah":             ("#CC0000", "#FFFFFF"),
+    "Vanderbilt":       ("#000000", "#866D4B"),
+    "Virginia":         ("#232D4B", "#F84C1E"),
+    "Virginia Tech":    ("#630031", "#CF4420"),
+    "Wake Forest":      ("#9E7E38", "#000000"),
+    "Washington":       ("#4B2E83", "#B7A57A"),
+    "West Virginia":    ("#002855", "#EAAA00"),
+    "Wisconsin":        ("#C5050C", "#FFFFFF"),
+}
+
+
+_CFBD_LOGOS_PATH = Path(__file__).resolve().parent / "data" / "cfbd_team_logos.parquet"
+_cfbd_logos_cache: dict | None = None
+
+
+# Consensus board uses common names; CFBD uses brand names. Map both
+# so a board lookup finds the right CFBD record.
+_SCHOOL_ALIASES = {
+    "Mississippi": "Ole Miss",
+    "Miami (FL)": "Miami",
+}
+
+
+def _load_cfbd_logos() -> dict:
+    """Cached school → {logo, color, alt_color} index from CFBD."""
+    global _cfbd_logos_cache
+    if _cfbd_logos_cache is not None:
+        return _cfbd_logos_cache
+    if not _CFBD_LOGOS_PATH.exists():
+        _cfbd_logos_cache = {}
+        return _cfbd_logos_cache
+    import pandas as pd
+    df = pd.read_parquet(_CFBD_LOGOS_PATH)
+    out: dict = {}
+    for _, r in df.iterrows():
+        s = r.get("school")
+        if not s:
+            continue
+        # ESPN serves both http and https — prefer https for fetches.
+        logo = r.get("logo") or ""
+        if logo.startswith("http://"):
+            logo = "https://" + logo[len("http://"):]
+        out[s] = {"logo": logo,
+                   "color": r.get("color"),
+                   "alt_color": r.get("alt_color")}
+    # Mirror records under common-name aliases used by our board.
+    for alias, cfbd_name in _SCHOOL_ALIASES.items():
+        if cfbd_name in out:
+            out[alias] = out[cfbd_name]
+    _cfbd_logos_cache = out
+    return out
+
+
+def college_theme(school: str | None) -> dict:
+    """Return a theme dict for a college program, mirroring the
+    NFL team_theme contract: {abbr, name, primary, secondary, logo}.
+
+    Color order: hand-picked _COLLEGE_COLORS first (curated for the
+    consensus board), then CFBD-supplied color, then a generic navy
+    fallback. Logo always pulled from CFBD/ESPN when available."""
+    fallback = {"abbr": school or "CFB", "name": school or "College",
+                "primary": "#1F2A44", "secondary": "#0B1730",
+                "logo": ""}
+    if not school:
+        return fallback
+    cfbd = _load_cfbd_logos().get(school, {})
+    logo = cfbd.get("logo") or ""
+    primary_secondary = _COLLEGE_COLORS.get(school)
+    if primary_secondary:
+        primary, secondary = primary_secondary
+    elif cfbd.get("color"):
+        primary = cfbd["color"]
+        secondary = cfbd.get("alt_color") or "#0B1730"
+    else:
+        return dict(fallback, abbr=school, name=school, logo=logo)
+    return {"abbr": school, "name": school,
+            "primary": primary, "secondary": secondary, "logo": logo}
+
+
 def team_theme(team_abbr: str | None) -> dict:
     """Return the visual theme for an NFL team — the single source of
     truth for color and logo on every player surface (panels, cards,
@@ -1285,6 +1431,125 @@ def team_theme(team_abbr: str | None) -> dict:
         "secondary": info.get("secondary", _FALLBACK_THEME["secondary"]),
         "logo": logo,
     }
+
+
+# Per-position stat tiles for the inline player-card banner. Format
+# is (col_name, fmt_str, LABEL); render_player_card reads col from
+# view_row and applies fmt_str. Order = card tile order.
+_NFL_CARD_STAT_SPECS: dict[str, list[tuple[str, str, str]]] = {
+    "qb":  [("passing_yards",          "{:.0f}",  "PASS YDS"),
+            ("passing_tds",            "{:.0f}",  "TD"),
+            ("passing_interceptions",  "{:.0f}",  "INT"),
+            ("yards_per_attempt",      "{:.1f}",  "Y/ATT"),
+            ("pass_epa_per_play",      "{:+.2f}", "EPA/PLAY"),
+            ("completion_pct",         "{:.1%}",  "COMP%")],
+    "wr":  [("targets",                "{:.0f}",  "TGT"),
+            ("receptions",             "{:.0f}",  "REC"),
+            ("rec_yards",              "{:.0f}",  "REC YDS"),
+            ("rec_tds",                "{:.0f}",  "TD"),
+            ("yards_per_target",       "{:.1f}",  "Y/TGT"),
+            ("epa_per_target",         "{:+.2f}", "EPA/TGT")],
+    "te":  [("targets",                "{:.0f}",  "TGT"),
+            ("receptions",             "{:.0f}",  "REC"),
+            ("rec_yards",              "{:.0f}",  "REC YDS"),
+            ("rec_tds",                "{:.0f}",  "TD"),
+            ("yards_per_target",       "{:.1f}",  "Y/TGT"),
+            ("epa_per_target",         "{:+.2f}", "EPA/TGT")],
+    "rb":  [("carries",                "{:.0f}",  "CAR"),
+            ("rush_yards",             "{:.0f}",  "RUSH YDS"),
+            ("rush_tds",               "{:.0f}",  "TD"),
+            ("yards_per_carry",        "{:.1f}",  "YPC"),
+            ("receptions",             "{:.0f}",  "REC"),
+            ("epa_per_rush",           "{:+.2f}", "EPA/CAR")],
+    "ol":  [("off_snaps",              "{:.0f}",  "SNAPS"),
+            ("games_played",           "{:.0f}",  "GAMES"),
+            ("penalties_total",        "{:.0f}",  "PENS"),
+            ("team_sack_rate",         "{:.1%}",  "TEAM SK%")],
+    "de":  [("def_sacks",              "{:.1f}",  "SACKS"),
+            ("def_qb_hits",            "{:.0f}",  "HITS"),
+            ("def_tackles_for_loss",   "{:.1f}",  "TFL"),
+            ("pressure_rate",          "{:.1%}",  "PRESS%"),
+            ("def_snaps",              "{:.0f}",  "SNAPS")],
+    "dt":  [("def_sacks",              "{:.1f}",  "SACKS"),
+            ("def_qb_hits",            "{:.0f}",  "HITS"),
+            ("def_tackles_for_loss",   "{:.1f}",  "TFL"),
+            ("pressure_rate",          "{:.1%}",  "PRESS%"),
+            ("def_snaps",              "{:.0f}",  "SNAPS")],
+    "lb":  [("tackles",                "{:.0f}",  "TACKLES"),
+            ("def_tackles_for_loss",   "{:.1f}",  "TFL"),
+            ("def_sacks",              "{:.1f}",  "SACKS"),
+            ("def_interceptions",      "{:.0f}",  "INT"),
+            ("def_snaps",              "{:.0f}",  "SNAPS")],
+    "cb":  [("def_interceptions",      "{:.0f}",  "INT"),
+            ("def_pass_defended",      "{:.0f}",  "PD"),
+            ("def_tackles_solo",       "{:.0f}",  "TACKLES"),
+            ("passer_rating_allowed",  "{:.1f}",  "RTG ALL"),
+            ("def_snaps",              "{:.0f}",  "SNAPS")],
+    "s":   [("def_tackles_solo",       "{:.0f}",  "TACKLES"),
+            ("def_interceptions",      "{:.0f}",  "INT"),
+            ("def_pass_defended",      "{:.0f}",  "PD"),
+            ("def_fumbles_forced",     "{:.0f}",  "FF"),
+            ("def_snaps",              "{:.0f}",  "SNAPS")],
+    "k":   [("fg_made",                "{:.0f}",  "FG MADE"),
+            ("fg_att",                 "{:.0f}",  "FG ATT"),
+            ("fg_pct",                 "{:.1%}",  "FG%"),
+            ("fg_long",                "{:.0f}",  "LONG"),
+            ("pat_made",               "{:.0f}",  "XP")],
+    "p":   [("punts",                  "{:.0f}",  "PUNTS"),
+            ("avg_distance",           "{:.1f}",  "AVG"),
+            ("avg_net",                "{:.1f}",  "NET"),
+            ("inside_20_rate",         "{:.1%}",  "IN 20%"),
+            ("touchback_rate",         "{:.1%}",  "TB%")],
+}
+
+# Position columns to SUM (not average) when rendering a career view.
+_NFL_CARD_SUM_COLS = {
+    "passing_yards", "passing_tds", "passing_interceptions",
+    "rec_yards", "rec_tds", "receptions", "targets",
+    "rush_yards", "rush_tds", "carries",
+    "def_sacks", "def_tackles", "def_tackles_solo", "tackles",
+    "def_tackles_for_loss", "def_qb_hits", "def_interceptions",
+    "def_pass_defended", "def_fumbles_forced",
+    "def_snaps", "off_snaps", "games_played",
+    "penalties_total", "fg_made", "fg_att", "fg_long", "pat_made",
+    "punts",
+}
+
+
+_NFL_POSITION_LABELS = {
+    "qb": "QB", "wr": "WR", "te": "TE", "rb": "RB", "ol": "OL",
+    "de": "EDGE", "dt": "DT", "lb": "LB", "cb": "CB", "s": "S",
+    "k": "K", "p": "P",
+}
+
+
+def render_nfl_player_banner(*, position: str, player_name: str,
+                                view_row, score, season_str: str,
+                                player_career=None,
+                                is_career_view: bool = False) -> None:
+    """Render the inline trading-card banner above an NFL player-detail
+    surface. Uses the player's `recent_team` for the team theme so
+    Josh Allen on the Bills page renders in Bills colors regardless
+    of any league-wide filter the page is set to."""
+    pos = position.lower()
+    stat_specs = _NFL_CARD_STAT_SPECS.get(pos, [])
+    pos_label = _NFL_POSITION_LABELS.get(pos, pos.upper())
+    team_abbr = None
+    if view_row is not None:
+        # OL/CB/S parquets use "team"; offensive skill use "recent_team".
+        team_abbr = view_row.get("recent_team") or view_row.get("team")
+    render_player_card(
+        player_name=player_name,
+        position_label=pos_label,
+        season_str=season_str,
+        score=score,
+        stat_specs=stat_specs,
+        view_row=view_row,
+        team_abbr=team_abbr,
+        player_career=player_career,
+        is_career_view=is_career_view,
+        sum_cols=_NFL_CARD_SUM_COLS,
+    )
 
 
 def render_player_card(*, player_name, position_label, season_str,

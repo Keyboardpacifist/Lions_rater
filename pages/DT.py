@@ -504,8 +504,6 @@ if len(season_stints) > 1:
 # ── Unified Season picker — drives stat bar + bundle table + radar ──
 player_career = all_dts_full[all_dts_full["player_id"] == player.get("player_id")] if "player_id" in all_dts_full.columns else all_dts_full[0:0]
 
-st.markdown(f"### {selected}")
-
 _yr = render_player_year_picker(
     career_df=player_career,
     default_season=selected_season,
@@ -522,6 +520,23 @@ if total_weight > 0:
                        if pd.notna(view_row.get(z)))
 else:
     _view_score = float("nan")
+
+from lib_shared import render_nfl_player_banner
+render_nfl_player_banner(
+    position="dt", player_name=selected, view_row=view_row,
+    score=_view_score,
+    season_str=_yr.get("season_str") or f"Season {selected_season}",
+    player_career=player_career,
+    is_career_view=(year_choice == "Career"),
+)
+
+from lib_movement_panel import (
+    render_movement_panel, render_advanced_production,
+)
+_yr_for_panels = int(view_row.get("season_year", selected_season))
+render_advanced_production(view_row, "dt", all_dts_full,
+                              season=_yr_for_panels)
+render_movement_panel(selected, "dt", season=_yr_for_panels)
 
 DT_STAT_SPECS = [
     ("def_tackles_for_loss", "{:.1f}", "TFL"),
@@ -552,16 +567,8 @@ def _safe_fmt(v, fmt="{:.0f}"):
     try: return fmt.format(v)
     except: return str(v)
 
-_card_narrative = None
-try:
-    from lib_field_viz import build_position_narrative
-    _season_pool = all_dts_full[all_dts_full["season_year"] == selected_season]
-    _card_narrative = build_position_narrative(
-        player_row=view_row, peer_pool=_season_pool,
-        stat_labels=stat_labels, position_label="interior linemen",
-    )
-except Exception:
-    _card_narrative = None
+from lib_player_blurb import make_card_narrative
+_card_narrative = make_card_narrative(view_row, all_dts_full, "dt")
 
 _card_stats = [
     ("TFL",    _safe_fmt(view_row.get("def_tackles_for_loss"), "{:.1f}"), ""),

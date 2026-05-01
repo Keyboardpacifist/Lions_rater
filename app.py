@@ -1925,6 +1925,17 @@ else:
             st.session_state.pop(f"lb_selected_{_p}", None)
     st.session_state._college_filter_ctx = _filter_ctx
 
+    # Force-detail token from CollegeTeam roster click — survives all
+    # auto-clears above, applied just-in-time so detail mode fires on
+    # first render. Pops itself so subsequent reruns behave normally.
+    _force = st.session_state.pop("_force_college_detail", None)
+    if _force and isinstance(_force, dict):
+        _fp = _force.get("position")
+        _fn = _force.get("player")
+        if _fp and _fn:
+            st.session_state[f"lb_selected_{_fp}"] = _fn
+            st.session_state["expand_college_player"] = _fn
+
     college_search_target = st.session_state.get("expand_college_player")
     detail_pos, detail_player = None, None
     for _p, _ in positions_to_render:
