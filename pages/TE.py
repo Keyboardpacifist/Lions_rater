@@ -432,7 +432,7 @@ render_nfl_player_banner(
     score=_view_score,
     season_str=_yr.get("season_str") or f"Season {selected_season}",
     player_career=player_career,
-    is_career_view=(year_choice == "Career"),
+    is_career_view=_yr["is_career_view"],
 )
 
 from lib_movement_panel import (

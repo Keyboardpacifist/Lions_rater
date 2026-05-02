@@ -1546,11 +1546,17 @@ def render_nfl_player_banner(*, position: str, player_name: str,
 
     # Look up GAS data. Single-season → look up that season; career
     # view → aggregate across all seasons (snap-weighted).
+    # NOTE: in career view, view_row is career_df.select_dtypes(include="number").mean()
+    # which DROPS string columns including player_id. Pull it from the
+    # player_career DataFrame instead.
     gas_score = gas_label = gas_confidence = gas_percentile = None
     gas_row = None
     career_gas = None
     if view_row is not None:
-        player_id = view_row.get("player_id")
+        # Resolve player_id robustly across single-season + career-view.
+        player_id = view_row.get("player_id") if not is_career_view else None
+        if not player_id and player_career is not None and len(player_career):
+            player_id = player_career.iloc[0].get("player_id")
         try:
             from lib_gas_panels import (
                 lookup_player_gas, gas_league_percentile,
