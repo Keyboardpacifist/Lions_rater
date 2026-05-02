@@ -1544,27 +1544,41 @@ def render_nfl_player_banner(*, position: str, player_name: str,
         # OL/CB/S parquets use "team"; offensive skill use "recent_team".
         team_abbr = view_row.get("recent_team") or view_row.get("team")
 
-    # Look up GAS data for this player-season (skip in career-view —
-    # we don't aggregate GAS across seasons in v1).
+    # Look up GAS data. Single-season → look up that season; career
+    # view → aggregate across all seasons (snap-weighted).
     gas_score = gas_label = gas_confidence = gas_percentile = None
     gas_row = None
-    if not is_career_view and view_row is not None:
+    career_gas = None
+    if view_row is not None:
+        player_id = view_row.get("player_id")
         try:
             from lib_gas_panels import (
                 lookup_player_gas, gas_league_percentile,
+                compute_career_gas,
             )
-            player_id = view_row.get("player_id")
-            season_year = view_row.get("season_year")
-            gas_row = lookup_player_gas(pos, player_id, season_year)
-            if gas_row is not None:
-                gas_score = float(gas_row.get("gas_score", 50.0))
-                gas_label = str(gas_row.get("gas_label", ""))
-                gas_confidence = str(gas_row.get("gas_confidence", ""))
-                gas_percentile = gas_league_percentile(
-                    pos, season_year, gas_score)
+            if is_career_view:
+                career_gas = compute_career_gas(pos, player_id)
+                if career_gas is not None:
+                    gas_score = career_gas["career_gas"]
+                    gas_label = career_gas["career_label"]
+                    gas_confidence = career_gas["career_confidence"]
+                    # No league percentile for career view in v1 —
+                    # would require career GAS for every player.
+                    gas_percentile = None
+            else:
+                season_year = view_row.get("season_year")
+                gas_row = lookup_player_gas(pos, player_id, season_year)
+                if gas_row is not None:
+                    gas_score = float(gas_row.get("gas_score", 50.0))
+                    gas_label = str(gas_row.get("gas_label", ""))
+                    gas_confidence = str(gas_row.get(
+                        "gas_confidence", ""))
+                    gas_percentile = gas_league_percentile(
+                        pos, season_year, gas_score)
         except Exception:
-            # Soft-fail: if GAS lookup raises, render the card without GAS.
+            # Soft-fail: render card without GAS.
             gas_row = None
+            career_gas = None
 
     render_player_card(
         player_name=player_name,
@@ -1583,11 +1597,17 @@ def render_nfl_player_banner(*, position: str, player_name: str,
         gas_percentile=gas_percentile,
     )
 
-    # GAS extras below the card (bundle expander + Hot Take + Show Math)
+    # GAS extras below the card.
     if gas_row is not None:
         try:
             from lib_gas_panels import render_player_gas_extras
             render_player_gas_extras(gas_row, pos)
+        except Exception:
+            pass
+    elif career_gas is not None:
+        try:
+            from lib_gas_panels import render_career_gas_extras
+            render_career_gas_extras(career_gas, pos)
         except Exception:
             pass
 

@@ -262,6 +262,100 @@ def gas_league_percentile(position: str, season_year: Optional[int],
     return float((season_pop["gas_score"] < score).mean() * 100)
 
 
+# ── Career-level GAS aggregation ─────────────────────────────────
+
+def _grade_label(score: float) -> str:
+    """Mirror of lib_grade.grade_label thresholds. Inlined to avoid
+    a hard import chain when this module is loaded outside Streamlit."""
+    if score >= 90:
+        return "Elite"
+    if score >= 80:
+        return "High-end starter"
+    if score >= 70:
+        return "Above average"
+    if score >= 60:
+        return "Solid starter"
+    if score >= 50:
+        return "Average / replaceable"
+    if score >= 40:
+        return "Below average"
+    return "Poor"
+
+
+def compute_career_gas(position: str,
+                          player_id: Optional[str]
+                          ) -> Optional[dict]:
+    """Snap/game-weighted career GAS across all seasons in the file.
+
+    Returns a dict with:
+      career_gas, career_label, career_confidence,
+      n_seasons, total_games, seasons (the per-season df with
+      gas_score for charting trajectory)
+    or None if the player has no GAS rows.
+    """
+    if not player_id:
+        return None
+    df = load_gas_data(position)
+    if df is None:
+        return None
+    rows = df[df["player_id"] == player_id].copy()
+    if not len(rows):
+        return None
+    rows = rows.sort_values("season_year")
+
+    # Pick the best per-row weight column we have, in priority order.
+    weight = None
+    for col in ("def_snaps", "off_snaps", "games"):
+        if col in rows.columns and rows[col].notna().any():
+            weight = rows[col].fillna(0).astype(float)
+            if weight.sum() > 0:
+                break
+    if weight is None or weight.sum() <= 0:
+        weight = pd.Series([1.0] * len(rows), index=rows.index)
+
+    career_gas = float((rows["gas_score"] * weight).sum() / weight.sum())
+    total_games = (
+        int(rows["games"].fillna(0).sum())
+        if "games" in rows.columns else 0
+    )
+    n_seasons = len(rows)
+
+    if total_games >= 50:
+        confidence = "HIGH"
+    elif total_games >= 20:
+        confidence = "MEDIUM"
+    else:
+        confidence = "LOW"
+
+    return {
+        "career_gas":         career_gas,
+        "career_label":       _grade_label(career_gas),
+        "career_confidence":  confidence,
+        "n_seasons":          n_seasons,
+        "total_games":        total_games,
+        "seasons":            rows[["season_year", "gas_score",
+                                     "gas_label"]].copy(),
+    }
+
+
+def render_career_gas_extras(career: dict, position: str) -> None:
+    """Per-season GAS trajectory chart below a career-view card.
+    Pass the dict returned by compute_career_gas."""
+    seasons = career.get("seasons")
+    if seasons is None or seasons.empty:
+        return
+    chart_df = seasons.set_index("season_year")[["gas_score"]]
+    chart_df = chart_df.rename(columns={"gas_score": "GAS Score"})
+    with st.expander("📈 Career GAS trajectory", expanded=True):
+        st.line_chart(chart_df, height=240)
+        st.caption(
+            f"Career GAS: **{career['career_gas']:.1f}** "
+            f"({career['career_label']}, {career['n_seasons']} season"
+            f"{'s' if career['n_seasons'] != 1 else ''}, "
+            f"{career['total_games']} games)"
+        )
+
+
 def _label_color(label: str) -> str:
     if "Elite" in label:
         return "#16a34a"
