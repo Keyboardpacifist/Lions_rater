@@ -350,6 +350,157 @@ if len(goff):
           f"{cold.p10:.0f}/{cold.p50:.0f}/{cold.p90:.0f}")
 
 
+# ── 10. Trend Divergence (Feature 5.6) ───────────────────────────
+
+section("10. Trend Divergence (5.6)")
+from lib_trend_divergence import compute_player_window, league_divergence_today
+
+# Pull a known player's window
+asb = "00-0036900"  # Ja'Marr Chase actually
+rows = compute_player_window(asb, 2024, 18, lookback=3)
+check("trend window returns rows for an active player",
+      len(rows) > 0, f"got {len(rows)} stat rows")
+
+# League scan returns a dataframe
+league = league_divergence_today(2024, 18, position="WR", min_z=1.0)
+check("league divergence scan returns rows", not league.empty,
+      f"got {len(league)} flags")
+
+# Z-scores must be float, finite, and at least one |z| ≥ 1.0
+if not league.empty:
+    valid = league["delta_z"].abs() >= 1.0
+    check("≥80% of flagged rows have |z| ≥ 1.0", valid.mean() >= 0.80)
+
+
+# ── 11. Longest-Play Edge (Feature 5.7) ──────────────────────────
+
+section("11. Longest-Play Edge (5.7)")
+from lib_longest_play import (
+    longest_play_distribution, p_longest_at_least, player_options as lp_opts
+)
+
+opts = lp_opts(kind="reception", min_games=50)
+check("longest-play player options non-empty",
+      not opts.empty, f"{len(opts)} players with ≥50 games")
+
+# Pick first player and check distribution
+if not opts.empty:
+    pid = opts.iloc[0]["player_id"]
+    dist = longest_play_distribution(pid, kind="reception")
+    check("distribution returns one row per (game, player)",
+          not dist.empty, f"{len(dist)} games")
+    r = p_longest_at_least(pid, 30, kind="reception")
+    check("longest-play P(≥30) is in [0, 1]",
+          0 <= r.p_at_least <= 1)
+    check("P10 ≤ median ≤ P90 (longest-play)",
+          r.p10_longest <= r.median_longest <= r.p90_longest)
+
+
+# ── 12. Alt-Line EV (Feature 5.3) ────────────────────────────────
+
+section("12. Alt-Line EV (5.3)")
+from lib_alt_line_ev import (
+    american_to_decimal, decimal_to_implied_prob, p_over_threshold,
+    rank_ladder,
+)
+
+# Conversion sanity
+check("american_to_decimal(-110) ≈ 1.909",
+      abs(american_to_decimal(-110) - 1.909) < 0.01)
+check("american_to_decimal(+180) = 2.80",
+      abs(american_to_decimal(180) - 2.80) < 0.001)
+check("implied_prob(2.0) = 0.5",
+      abs(decimal_to_implied_prob(2.0) - 0.5) < 0.001)
+
+# Ladder evaluation
+asb_id = "00-0036900"
+ladder = [(75.5, "over", -110), (95.5, "over", 180)]
+df = rank_ladder(asb_id, "receiving_yards", ladder, lookback_games=20)
+check("rank_ladder returns ranked dataframe",
+      not df.empty and "ev" in df.columns,
+      f"shape: {df.shape}")
+check("ladder is sorted by EV descending",
+      df["ev"].is_monotonic_decreasing if len(df) > 1 else True)
+
+
+# ── 13. SGP Pricing (Feature 5.2 upgrade) ────────────────────────
+
+section("13. SGP Pricing (5.2 upgrade)")
+from lib_sgp_pricing import Leg, sgp_price
+
+legs = [
+    Leg("00-0036389", "Jalen Hurts", "passing_yards", 240, "over"),
+    Leg("00-0035216", "A.J. Brown", "receiving_yards", 70, "over"),
+]
+r = sgp_price(legs, book_american_odds=300)
+check("SGP returns 2-leg result",
+      r.n_legs == 2, f"n_legs={r.n_legs}")
+check("joint games > 0 for known stack",
+      r.n_games_joint > 0, f"n_joint={r.n_games_joint}")
+check("p_independent and p_correlated both in [0, 1]",
+      0 <= r.p_independent <= 1 and 0 <= r.p_correlated <= 1)
+check("Hurts/Brown stack has positive correlation lift",
+      r.correlation_lift >= 0,
+      f"lift={r.correlation_lift:+.3f}")
+
+
+# ── 14. Decomposed Projection (Feature 5.1) ──────────────────────
+
+section("14. Decomposed Projection (5.1)")
+from lib_decomposed_projection import decompose
+
+asb = "00-0036900"
+d = decompose(player_id=asb, position="WR", team="CIN",
+              stat="receiving_yards",
+              opponent="HOU", season=2024, week=10,
+              target_temp=68, target_wind=5,
+              lookback_games=12)
+check("decomposition returns positive baseline",
+      d.baseline > 0, f"baseline={d.baseline:.1f}")
+check("projection = baseline + sum(deltas)",
+      abs(d.projection - (d.baseline + sum(c.delta for c in d.contributions))) < 0.01)
+check("contributions list is non-empty when context provided",
+      len(d.contributions) >= 1)
+
+
+# ── 15. Smart Parlay Builder (Feature 5.4) ───────────────────────
+
+section("15. Smart Parlay (5.4)")
+from lib_smart_parlay import score_parlay, detect_anti_correlated
+
+legs = [
+    Leg("00-0036389", "Jalen Hurts", "passing_yards", 240, "over"),
+    Leg("00-0035216", "A.J. Brown", "receiving_yards", 70, "over"),
+]
+p = score_parlay(legs, book_odds=300, lookback_games=20)
+check("score_parlay returns marginals for each leg",
+      len(p.leg_marginals) == 2)
+check("score_parlay returns a verdict string",
+      isinstance(p.verdict, str) and len(p.verdict) > 0)
+check("anti-correlated detector returns a list (may be empty)",
+      isinstance(detect_anti_correlated(legs, lookback_games=20), list))
+
+
+# ── 16. TD Probability (Feature 5.5) ─────────────────────────────
+
+section("16. TD Probability (5.5)")
+from lib_td_probability import (
+    player_td_rates, rz_usage_share, td_probability_vector,
+)
+
+pacheco = "00-0037197"
+r = player_td_rates(pacheco, lookback_games=20)
+check("td_rates returns per-game rates in [0, 1]",
+      0 <= r.p_rush_td <= 1 and 0 <= r.p_rec_td <= 1
+      and 0 <= r.p_any_td <= 1)
+check("p_any_td ≤ p_rush_td + p_rec_td (additivity bound)",
+      r.p_any_td <= r.p_rush_td + r.p_rec_td + 0.001)
+
+u = rz_usage_share(pacheco, 2024, team="KC")
+check("rz_usage_share returns shares in [0, 1]",
+      0 <= u.rz_carries_share <= 1 and 0 <= u.rz_targets_share <= 1)
+
+
 # ── 9. Smart Alerts fusion (Feature 4.4) ─────────────────────────
 
 section("9. Smart Alerts (4.4)")

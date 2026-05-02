@@ -48,6 +48,30 @@ from lib_weather import (
     primary_stat_for_position,
     weather_cohort,
 )
+from lib_alt_line_ev import (
+    american_to_decimal,
+    decimal_to_implied_prob,
+    p_over_threshold,
+    player_distribution,
+    rank_ladder,
+)
+from lib_decomposed_projection import decompose
+from lib_longest_play import (
+    p_longest_at_least,
+    longest_play_distribution,
+    player_options as longest_player_options,
+)
+from lib_sgp_pricing import Leg, sgp_price
+from lib_smart_parlay import detect_anti_correlated, score_parlay
+from lib_td_probability import (
+    player_td_rates,
+    rz_usage_share,
+    td_probability_vector,
+)
+from lib_trend_divergence import (
+    USAGE_STATS,
+    league_divergence_today,
+)
 from lib_shared import inject_css
 
 
@@ -67,16 +91,24 @@ st.caption("Internal playground for the gambling-product engines. "
 
 
 (tab_alerts, tab_injury, tab_gscript, tab_books, tab_weather,
- tab_scheme, tab_dvp, tab_coach, tab_sgp) = st.tabs([
+ tab_scheme, tab_coach,
+ tab_decomp, tab_sgp, tab_alt, tab_parlay, tab_td, tab_trend,
+ tab_long, tab_dvp) = st.tabs([
     "⭐ Smart Alerts (4.4)",
     "🩹 Injury Cohort (4.1)",
     "🎯 Game-Script (4.2)",
     "📊 Books vs Model (4.3)",
     "🌧️ Weather Window (4.5)",
     "🧪 Scheme Deltas (4.6)",
-    "🛡️ DvP (5.8)",
     "📋 Coaching Tendencies",
+    "🔬 Decomposed Projection (5.1)",
     "🔗 SGP Correlations (5.2)",
+    "🎲 Alt-Line EV (5.3)",
+    "🎰 Smart Parlay (5.4)",
+    "🎯 Anytime / First TD (5.5)",
+    "📈 Trend Divergence (5.6)",
+    "💥 Longest-Play Edge (5.7)",
+    "🛡️ DvP (5.8)",
 ])
 
 
@@ -1051,3 +1083,552 @@ with tab_sgp:
                                 "Partner 75+ | QB 300+",
                                 "Lift"]
                 st.dataframe(view, use_container_width=True, hide_index=True)
+
+
+# ════════════════════════════════════════════════════════════════
+# Tab — Decomposed Projection (Feature 5.1)
+# ════════════════════════════════════════════════════════════════
+
+with tab_decomp:
+    st.markdown("### Decomposed Prop Projection")
+    st.caption(
+        "**The transparency feature.** Pick a player and a stat, "
+        "configure the matchup context, and the engine returns a "
+        "row-by-row decomposition: baseline + each adjustment "
+        "(injury / weather / matchup / game-script) shown as its own "
+        "labeled contribution. Every yard is auditable."
+    )
+
+    @st.cache_data(show_spinner=False)
+    def _decomp_player_options(position: str) -> pd.DataFrame:
+        df = pd.read_parquet(
+            Path(__file__).resolve().parent.parent
+            / "data" / "nfl_player_stats_weekly.parquet"
+        )
+        recent = df[df["season"] >= 2023]
+        if position:
+            recent = recent[recent["position"] == position]
+        opts = (recent.groupby(["player_id", "player_display_name",
+                                 "position", "team"])
+                .size().reset_index().rename(columns={0: "n_games"}))
+        opts = opts[opts["n_games"] >= 6]
+        return opts.sort_values("n_games", ascending=False).reset_index(drop=True)
+
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        pos_pick = st.selectbox("Position", ["QB", "WR", "TE", "RB"],
+                                 key="dec_pos")
+        stat_choices = {
+            "QB": ["passing_yards"],
+            "WR": ["receiving_yards"],
+            "TE": ["receiving_yards"],
+            "RB": ["rushing_yards", "receiving_yards"],
+        }
+        stat_pick = st.selectbox("Stat", stat_choices[pos_pick],
+                                  key="dec_stat")
+        opts = _decomp_player_options(pos_pick)
+        opts["_label"] = (opts["player_display_name"]
+                          + " · " + opts["team"]
+                          + f" ({opts['n_games']} games)")
+        player_label = st.selectbox("Player",
+                                     opts["_label"].tolist(),
+                                     key="dec_player")
+        if player_label:
+            chosen = opts[opts["_label"] == player_label].iloc[0]
+
+            st.markdown("**Matchup context**")
+            opp_pick = st.text_input("Opponent (e.g. HOU)",
+                                       key="dec_opp", value="")
+            season_pick = st.number_input("Season", 2016, 2025, 2024,
+                                            key="dec_season")
+            week_pick = st.number_input("Week", 1, 22, 10,
+                                          key="dec_week")
+
+            st.markdown("**Injury status (optional)**")
+            inj_status = st.selectbox(
+                "Status", ["NONE", "PROBABLE", "QUESTIONABLE",
+                          "DOUBTFUL", "OUT"],
+                key="dec_status",
+            )
+            inj_body = st.text_input("Body part",
+                                      key="dec_body", value="unknown")
+            inj_practice = st.selectbox(
+                "Practice", ["FULL", "LIMITED", "DNP"],
+                key="dec_practice",
+            )
+
+            st.markdown("**Weather (optional)**")
+            use_weather = st.checkbox("Apply weather adjustment",
+                                       key="dec_useweather")
+            if use_weather:
+                w_temp = st.slider("Temp (°F)", -5, 100, 50,
+                                    key="dec_temp")
+                w_wind = st.slider("Wind (mph)", 0, 35, 5,
+                                    key="dec_wind")
+            else:
+                w_temp = w_wind = None
+
+            st.markdown("**Game-script (optional)**")
+            starter_out = st.selectbox(
+                "Key starter out",
+                ["none", "QB1", "RB1", "WR1", "TE1", "MULTI"],
+                key="dec_starter",
+            )
+
+            run_d = st.button("Run decomposition", type="primary",
+                              use_container_width=True, key="dec_run")
+
+    with c2:
+        if c1 and "dec_run" in st.session_state and \
+                st.session_state.get("dec_run"):
+            d = decompose(
+                player_id=chosen["player_id"],
+                position=pos_pick,
+                team=str(chosen["team"]),
+                stat=stat_pick,
+                opponent=(opp_pick.upper() if opp_pick else None),
+                season=int(season_pick),
+                week=int(week_pick),
+                injury_status=(inj_status if inj_status != "NONE" else None),
+                injury_body_part=inj_body,
+                injury_practice=inj_practice,
+                key_starter_out=(starter_out if starter_out != "none"
+                                  else None),
+                target_temp=w_temp, target_wind=w_wind,
+            )
+            st.markdown(f"#### {d.player_display_name} — {d.stat}")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Baseline (median)", f"{d.baseline:.1f}")
+            m2.metric("Adjustments",
+                       f"{sum(c.delta for c in d.contributions):+.1f}")
+            m3.metric("Projection", f"{d.projection:.1f}")
+
+            if d.contributions:
+                rows = [{"Adjustment": c.label,
+                         "Δ yards": f"{c.delta:+.1f}",
+                         "Note": c.note} for c in d.contributions]
+                st.dataframe(pd.DataFrame(rows),
+                              use_container_width=True, hide_index=True)
+            else:
+                st.info("No adjustments applied — projection equals baseline.")
+
+            st.markdown("**Compare to a book line**")
+            book_line = st.number_input(
+                "Book line", 0.0, 500.0, float(round(d.baseline)),
+                step=0.5, key="dec_book_line",
+            )
+            edge_yards = d.projection - book_line
+            verdict = ("📈 LEAN OVER" if edge_yards > 3
+                        else "📉 LEAN UNDER" if edge_yards < -3
+                        else "≈ pass — within 3 yds of model")
+            st.metric("Model − book line",
+                       f"{edge_yards:+.1f} yds",
+                       delta=verdict)
+        else:
+            st.info("Pick a player on the left and click "
+                     "**Run decomposition**.")
+
+
+# ════════════════════════════════════════════════════════════════
+# Tab — Alt-Line EV Finder (Feature 5.3)
+# ════════════════════════════════════════════════════════════════
+
+with tab_alt:
+    st.markdown("### Alt-Line EV Finder")
+    st.caption(
+        "Build an alt-line ladder for any player+stat, paste in the "
+        "American odds at each rung, and the engine returns each rung "
+        "ranked by EV. Most bettors leave 5-15% of EV on the table by "
+        "reflexively betting main lines — this finds the rung where the "
+        "book is most wrong."
+    )
+
+    @st.cache_data(show_spinner=False)
+    def _alt_player_options(position: str) -> pd.DataFrame:
+        df = pd.read_parquet(
+            Path(__file__).resolve().parent.parent
+            / "data" / "nfl_player_stats_weekly.parquet"
+        )
+        recent = df[df["season"] >= 2022]
+        if position:
+            recent = recent[recent["position"] == position]
+        return (recent.groupby(["player_id", "player_display_name",
+                                 "position", "team"])
+                .size().reset_index().rename(columns={0: "n_games"})
+                .sort_values("n_games", ascending=False)
+                .reset_index(drop=True))
+
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        a_pos = st.selectbox("Position", ["QB", "WR", "TE", "RB"],
+                              key="alt_pos")
+        a_stat_options = {
+            "QB": ["passing_yards", "passing_tds", "completions"],
+            "WR": ["receiving_yards", "receptions", "targets"],
+            "TE": ["receiving_yards", "receptions", "targets"],
+            "RB": ["rushing_yards", "carries", "receiving_yards",
+                   "receptions"],
+        }
+        a_stat = st.selectbox("Stat", a_stat_options[a_pos],
+                              key="alt_stat")
+        a_opts = _alt_player_options(a_pos)
+        a_opts["_label"] = (a_opts["player_display_name"]
+                            + " · " + a_opts["team"]
+                            + f" ({a_opts['n_games']}g)")
+        a_player = st.selectbox("Player", a_opts["_label"].tolist(),
+                                 key="alt_player")
+        a_lookback = st.slider("Lookback (games)", 5, 50, 20,
+                                key="alt_lookback")
+        st.markdown(
+            "**Ladder (one rung per row)** — `threshold,side,odds`. "
+            "Side = `over` or `under`."
+        )
+        default_ladder = "65.5,over,-150\n75.5,over,-110\n85.5,over,+120\n95.5,over,+180\n105.5,over,+260\n75.5,under,-110"
+        ladder_text = st.text_area(
+            "Ladder", value=default_ladder, height=180, key="alt_ladder",
+        )
+        run_a = st.button("Score ladder", type="primary",
+                           use_container_width=True, key="alt_run")
+
+    with c2:
+        if run_a:
+            chosen = a_opts[a_opts["_label"] == a_player].iloc[0]
+            ladder_rungs = []
+            for line in ladder_text.strip().split("\n"):
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) != 3:
+                    continue
+                try:
+                    threshold = float(parts[0])
+                    side = parts[1]
+                    odds = int(parts[2])
+                    ladder_rungs.append((threshold, side, odds))
+                except ValueError:
+                    continue
+            if not ladder_rungs:
+                st.warning("Couldn't parse the ladder.")
+            else:
+                df = rank_ladder(chosen["player_id"], a_stat,
+                                  ladder_rungs,
+                                  lookback_games=a_lookback)
+                if df.empty:
+                    st.info("No valid rungs after parsing.")
+                else:
+                    view = df.copy()
+                    view["p_model"] = view["p_model"].apply(
+                        lambda x: f"{x:.1%}")
+                    view["p_implied"] = view["p_implied"].apply(
+                        lambda x: f"{x:.1%}")
+                    view["edge"] = view["edge"].apply(
+                        lambda x: f"{x:+.1%}")
+                    view["ev"] = view["ev"].apply(lambda x: f"{x:+.1%}")
+                    view["decimal_odds"] = view["decimal_odds"].round(2)
+                    view = view[["threshold", "side", "american_odds",
+                                  "decimal_odds", "p_model", "p_implied",
+                                  "edge", "ev", "n_games"]]
+                    view.columns = ["Line", "Side", "Odds", "Decimal",
+                                     "Model P", "Implied P", "Edge",
+                                     "EV", "n"]
+                    st.dataframe(view, use_container_width=True,
+                                  hide_index=True)
+
+
+# ════════════════════════════════════════════════════════════════
+# Tab — Smart Parlay Builder (Feature 5.4)
+# ════════════════════════════════════════════════════════════════
+
+with tab_parlay:
+    st.markdown("### Smart Parlay Builder")
+    st.caption(
+        "Build a multi-leg parlay; the engine computes the joint "
+        "probability empirically from games where ALL players played, "
+        "compares to the independence assumption (book's default), "
+        "and surfaces the EV gap at the book's quoted parlay odds."
+    )
+
+    @st.cache_data(show_spinner=False)
+    def _parlay_player_options() -> pd.DataFrame:
+        df = pd.read_parquet(
+            Path(__file__).resolve().parent.parent
+            / "data" / "nfl_player_stats_weekly.parquet"
+        )
+        recent = df[df["season"] >= 2022]
+        opts = (recent.groupby(["player_id", "player_display_name",
+                                 "position", "team"])
+                .size().reset_index().rename(columns={0: "n_games"}))
+        opts = opts[opts["n_games"] >= 8]
+        opts["_label"] = (opts["player_display_name"]
+                          + " · " + opts["team"]
+                          + " · " + opts["position"]
+                          + f" ({opts['n_games']}g)")
+        return opts.sort_values("n_games", ascending=False).reset_index(drop=True)
+
+    p_opts = _parlay_player_options()
+    n_legs = st.number_input("Number of legs", 2, 5, 2, key="par_n")
+    legs: list[Leg] = []
+    cols = st.columns(int(n_legs))
+    for i in range(int(n_legs)):
+        with cols[i]:
+            st.markdown(f"**Leg {i+1}**")
+            player = st.selectbox(
+                "Player", p_opts["_label"].tolist(),
+                key=f"par_player_{i}", index=i if i < len(p_opts) else 0,
+            )
+            stat = st.selectbox(
+                "Stat",
+                ["passing_yards", "rushing_yards", "receiving_yards",
+                 "receptions", "targets", "carries"],
+                key=f"par_stat_{i}",
+            )
+            threshold = st.number_input(
+                "Threshold", 0.0, 500.0, 75.0, step=0.5,
+                key=f"par_thr_{i}",
+            )
+            side = st.selectbox(
+                "Side", ["over", "under"], key=f"par_side_{i}",
+            )
+            row = p_opts[p_opts["_label"] == player].iloc[0]
+            legs.append(Leg(
+                player_id=row["player_id"],
+                player_display_name=row["player_display_name"],
+                stat=stat, threshold=float(threshold), side=side,
+            ))
+
+    book_odds = st.number_input(
+        "Book parlay odds (American, e.g., +600)",
+        -1000, 5000, 600, step=10, key="par_odds",
+    )
+    p_lookback = st.slider("Lookback (joint games)", 5, 50, 25,
+                            key="par_lookback")
+    if st.button("Score parlay", type="primary",
+                  use_container_width=True, key="par_run"):
+        try:
+            r = score_parlay(legs, book_odds=int(book_odds),
+                              lookback_games=p_lookback)
+        except Exception as e:
+            st.error(f"Pricing failed: {e}")
+        else:
+            st.markdown(f"#### {r.n_legs}-leg parlay")
+            for label, p in r.leg_marginals:
+                p_str = f"{p:.1%}" if (p == p) else "—"
+                st.markdown(f"- **{label}** → P_model = {p_str}")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("P (independent)",
+                      f"{r.p_independent:.1%}" if r.p_independent == r.p_independent else "—")
+            m2.metric("P (correlated)",
+                      f"{r.p_correlated:.1%}" if r.p_correlated == r.p_correlated else "—")
+            m3.metric("Lift",
+                      f"{r.correlation_lift:+.1%}" if r.correlation_lift == r.correlation_lift else "—")
+            m4.metric("Joint games", f"{r.n_games_joint}")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Fair odds (corr)",
+                      f"{r.fair_american_correlated:+d}" if r.fair_american_correlated else "—")
+            m2.metric("Book odds",
+                      f"{r.book_american:+d}" if r.book_american else "—")
+            if r.ev_vs_book is not None:
+                m3.metric("EV vs book", f"{r.ev_vs_book:+.1%}")
+            st.success(f"**Verdict:** {r.verdict}")
+
+            anti = detect_anti_correlated(legs, lookback_games=p_lookback)
+            if anti:
+                st.warning(
+                    f"⚠ {len(anti)} anti-correlated leg pair(s) detected: "
+                    + ", ".join([f"legs {i+1}↔{j+1} (lift {l:+.0%})"
+                                  for i, j, l in anti])
+                )
+
+
+# ════════════════════════════════════════════════════════════════
+# Tab — Anytime / First TD (Feature 5.5)
+# ════════════════════════════════════════════════════════════════
+
+with tab_td:
+    st.markdown("### Anytime / First TD Probability Vector")
+    st.caption(
+        "Per-player TD probability decomposed into rushing-only, "
+        "receiving-only, and anytime. Pair with red-zone usage share "
+        "to find players whose TD market is mispriced (most often, "
+        "the rushing-TD-only line for a pass-catching back or the "
+        "receiving-TD-only line for a goal-line back)."
+    )
+
+    @st.cache_data(show_spinner=False)
+    def _td_player_options(position: str) -> pd.DataFrame:
+        df = pd.read_parquet(
+            Path(__file__).resolve().parent.parent
+            / "data" / "nfl_player_stats_weekly.parquet"
+        )
+        recent = df[df["season"] >= 2023]
+        if position:
+            recent = recent[recent["position"] == position]
+        return (recent.groupby(["player_id", "player_display_name",
+                                 "position", "team"])
+                .size().reset_index().rename(columns={0: "n_games"})
+                .pipe(lambda d: d[d["n_games"] >= 6])
+                .sort_values("n_games", ascending=False)
+                .reset_index(drop=True))
+
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        td_pos = st.selectbox("Position", ["RB", "WR", "TE", "QB"],
+                                key="td_pos")
+        td_opts = _td_player_options(td_pos)
+        td_opts["_label"] = (td_opts["player_display_name"]
+                              + " · " + td_opts["team"]
+                              + f" ({td_opts['n_games']}g)")
+        td_player = st.selectbox("Player",
+                                   td_opts["_label"].tolist(),
+                                   key="td_player")
+        td_lookback = st.slider("Lookback", 5, 40, 20, key="td_lookback")
+        td_season = st.number_input("Season (for RZ usage)",
+                                       2016, 2025, 2024,
+                                       key="td_season")
+        if st.button("Run", type="primary", use_container_width=True,
+                       key="td_run"):
+            row = td_opts[td_opts["_label"] == td_player].iloc[0]
+            v = td_probability_vector(
+                row["player_id"], season=int(td_season),
+                lookback_games=td_lookback,
+            )
+            u = rz_usage_share(row["player_id"], int(td_season),
+                                team=str(row["team"]))
+            with c2:
+                st.markdown(f"#### {row['player_display_name']}")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("P(rushing TD)",
+                          f"{v.p_rush_td_baseline:.0%}")
+                m2.metric("P(receiving TD)",
+                          f"{v.p_rec_td_baseline:.0%}")
+                m3.metric("P(anytime TD)",
+                          f"{v.p_any_td_baseline:.0%}")
+                st.markdown("**Per-game expected count:**")
+                st.markdown(
+                    f"- Rush TDs/g: {v.p_rush_td_baseline:.2f}  "
+                    f"·  Rec TDs/g: {v.p_rec_td_baseline:.2f}  "
+                    f"·  Any TDs/g: {v.p_any_td_baseline:.2f}"
+                )
+                st.markdown("**Red-zone usage share (this season):**")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("RZ carries share", f"{u.rz_carries_share:.0%}")
+                m2.metric("RZ targets share", f"{u.rz_targets_share:.0%}")
+                m3.metric("Goal-line carries share",
+                          f"{u.goal_line_carries_share:.0%}")
+                st.caption(
+                    f"Sample: {v.n_games_player} player games · "
+                    f"team RZ plays this season: {u.n_team_rz_plays}"
+                )
+
+
+# ════════════════════════════════════════════════════════════════
+# Tab — Trend Divergence (Feature 5.6)
+# ════════════════════════════════════════════════════════════════
+
+with tab_trend:
+    st.markdown("### Snap-Share / Target-Share Trend Divergence")
+    st.caption(
+        "Flags players whose recent (last-3-week) usage has decoupled "
+        "from their season baseline. Books often anchor to season "
+        "averages and miss recent role expansions or contractions."
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    seasons_avail = list(range(2025, 2015, -1))
+    season_pick = c1.selectbox("Season", seasons_avail, key="td_div_season")
+    week_pick = c2.number_input("Through week", 4, 22, 18,
+                                  key="td_div_week")
+    pos_pick = c3.selectbox("Position", ["WR", "RB", "TE", "QB", "all"],
+                              index=0, key="td_div_pos")
+    min_z = c4.slider("Min |z|", 0.5, 3.0, 1.0, step=0.1,
+                       key="td_div_minz")
+
+    if st.button("Find divergences", type="primary",
+                   use_container_width=True, key="td_div_run"):
+        pos = None if pos_pick == "all" else pos_pick
+        with st.spinner(f"Computing divergences for {pos_pick} W{week_pick} {season_pick}..."):
+            df = league_divergence_today(
+                int(season_pick), int(week_pick), position=pos,
+                min_z=float(min_z),
+            )
+        if df.empty:
+            st.info("No divergence flags at this filter.")
+        else:
+            df = df.sort_values("delta_z", ascending=False)
+            view = df[["player_display_name", "team", "position",
+                        "stat", "recent_avg", "season_avg",
+                        "delta", "delta_z", "n_recent",
+                        "n_season"]].copy()
+            view["recent_avg"] = view["recent_avg"].round(2)
+            view["season_avg"] = view["season_avg"].round(2)
+            view["delta"] = view["delta"].apply(lambda x: f"{x:+.2f}")
+            view["delta_z"] = view["delta_z"].apply(lambda x: f"{x:+.2f}")
+            view.columns = ["Player", "Team", "Pos", "Stat",
+                             "Recent avg", "Season avg", "Δ",
+                             "z", "Recent n", "Season n"]
+            st.dataframe(view, use_container_width=True, hide_index=True)
+
+
+# ════════════════════════════════════════════════════════════════
+# Tab — Longest-Play Edge (Feature 5.7)
+# ════════════════════════════════════════════════════════════════
+
+with tab_long:
+    st.markdown("### Longest-Play Edge Finder")
+    st.caption(
+        "Empirical distribution of a player's per-game longest single "
+        "play. Books model 'longest reception' / 'longest rush' on "
+        "smooth distributions, but reality is bimodal — most plays are "
+        "short, then a heavy tail. Players with elite explosive rates "
+        "have structurally undervalued longest-play markets."
+    )
+
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        kind = st.radio("Kind", ["reception", "rush"], horizontal=True,
+                          key="lp_kind")
+        opts = longest_player_options(kind=kind, min_games=20)
+        opts["_label"] = (opts["player_display_name"]
+                          + f" ({opts['n_games']}g)")
+        player_label = st.selectbox("Player", opts["_label"].tolist(),
+                                      key="lp_player")
+        threshold = st.number_input("Target threshold (yards)",
+                                       0.0, 200.0, 25.0, step=2.5,
+                                       key="lp_thr")
+        if st.button("Score", type="primary", use_container_width=True,
+                       key="lp_run"):
+            row = opts[opts["_label"] == player_label].iloc[0]
+            r = p_longest_at_least(row["player_id"], threshold,
+                                     kind=kind)
+            with c2:
+                st.markdown(
+                    f"#### {row['player_display_name']} — "
+                    f"longest {kind}"
+                )
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric(f"P(≥ {threshold:.0f} yds)",
+                           f"{r.p_at_least:.1%}")
+                m2.metric("Median longest",
+                           f"{r.median_longest:.0f}")
+                m3.metric("P10 longest",
+                           f"{r.p10_longest:.0f}")
+                m4.metric("P90 longest",
+                           f"{r.p90_longest:.0f}")
+                st.caption(
+                    f"Sample: {r.n_games} player games"
+                )
+                # Show distribution
+                dist = longest_play_distribution(row["player_id"],
+                                                   kind=kind)
+                if not dist.empty:
+                    import plotly.express as px
+                    fig = px.histogram(
+                        dist, x="longest_play",
+                        nbins=20,
+                        title=(f"Distribution of "
+                                f"longest-{kind}-per-game"),
+                    )
+                    fig.add_vline(x=threshold, line_dash="dash",
+                                    line_color="red")
+                    fig.update_layout(height=320,
+                                       margin=dict(l=10, r=10,
+                                                   t=40, b=10))
+                    st.plotly_chart(fig, use_container_width=True)
