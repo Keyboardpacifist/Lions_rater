@@ -130,13 +130,16 @@ def player_options(kind: str = "reception",
                                     "game_id": "n_games"}))
     players = players[players["n_games"] >= min_games]
 
-    # Attach name from player_stats
+    # Attach name + most-recent team from player_stats
     ps = pd.read_parquet(REPO / "data" / "nfl_player_stats_weekly.parquet",
                           columns=["player_id", "player_display_name",
-                                   "position"])
-    name_lookup = (ps.dropna(subset=["player_id"])
-                   .drop_duplicates("player_id")
-                   [["player_id", "player_display_name", "position"]])
+                                   "position", "team", "season", "week"])
+    ps_sorted = (ps.dropna(subset=["player_id"])
+                  .sort_values(["season", "week"],
+                                 ascending=[False, False]))
+    name_lookup = (ps_sorted.drop_duplicates("player_id")[
+        ["player_id", "player_display_name", "position", "team"]
+    ])
     return (players.merge(name_lookup, on="player_id", how="left")
                   .sort_values("n_games", ascending=False)
                   .reset_index(drop=True))

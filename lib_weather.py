@@ -144,8 +144,9 @@ def weather_cohort(player_id: str, position: str,
 
 def all_player_options(position: str | None = None,
                        min_games: int = 8) -> pd.DataFrame:
-    """Return (player_id, player_display_name, position, n_games) for
-    pickers in the lab UI."""
+    """Return (player_id, player_display_name, position, team, n_games)
+    for pickers in the lab UI. `team` is the player's MOST-RECENT team
+    in the table (handles trades by picking the latest)."""
     df = load_weather_table()
     if df.empty:
         return df
@@ -156,6 +157,13 @@ def all_player_options(position: str | None = None,
               .size()
               .reset_index()
               .rename(columns={0: "n_games"}))
-    return (counts[counts["n_games"] >= min_games]
+    # Most-recent team per player
+    sub_sorted = sub.sort_values(["season", "week"],
+                                  ascending=[False, False])
+    teams = (sub_sorted.drop_duplicates(["player_id"])[
+        ["player_id", "team"]
+    ])
+    out = counts.merge(teams, on="player_id", how="left")
+    return (out[out["n_games"] >= min_games]
             .sort_values("n_games", ascending=False)
             .reset_index(drop=True))

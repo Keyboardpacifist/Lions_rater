@@ -845,12 +845,16 @@ with tab_weather:
             st.info("No players found at this position.")
             st.stop()
         opts["_label"] = (opts["player_display_name"]
-                          + " (" + opts["n_games"].astype(str)
-                          + " games)")
+                          + "  ·  " + opts["team"].fillna("?"))
         player_label = st.selectbox(
             "Player", opts["_label"].tolist(),
+            index=None,
+            placeholder="Search player by name...",
             key="w_player",
         )
+        if not player_label:
+            st.info("Pick a player.")
+            st.stop()
         chosen = opts[opts["_label"] == player_label].iloc[0]
 
         st.markdown("**Target weather**")
@@ -1416,22 +1420,35 @@ with tab_proprep:
             Path(__file__).resolve().parent.parent
             / "data" / "nfl_player_stats_weekly.parquet"
         )
-        recent = df[df["season"] >= 2023]
-        opts = (recent.groupby(["player_id", "player_display_name",
-                                  "position", "team"])
-                .size().reset_index().rename(columns={0: "n_games"}))
-        opts = opts[opts["n_games"] >= 4]
+        recent = df[df["season"] >= 2023].copy()
+        # Total games per player_id (across all teams if traded)
+        n_games = (recent.groupby(["player_id", "player_display_name",
+                                      "position"])
+                    .size().reset_index().rename(columns={0: "n_games"}))
+        n_games = n_games[n_games["n_games"] >= 4]
+        # Most-recent team per player_id
+        recent_sorted = recent.sort_values(["season", "week"],
+                                            ascending=[False, False])
+        teams = (recent_sorted.drop_duplicates(["player_id"])[
+            ["player_id", "team"]
+        ])
+        opts = n_games.merge(teams, on="player_id", how="left")
         opts["_label"] = (opts["player_display_name"]
-                          + "  ·  " + opts["team"]
-                          + "  ·  " + opts["position"]
-                          + f"  ({opts['n_games']}g)")
+                          + "  ·  " + opts["team"].fillna("?"))
         return opts.sort_values("n_games",
                                  ascending=False).reset_index(drop=True)
 
     p_opts = _player_options()
     c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-    player_label = c1.selectbox("Player", p_opts["_label"].tolist(),
-                                  key="pr_player")
+    player_label = c1.selectbox(
+        "Player", p_opts["_label"].tolist(),
+        index=None,
+        placeholder="Search player by name...",
+        key="pr_player",
+    )
+    if not player_label:
+        st.info("Pick a player.")
+        st.stop()
     chosen = p_opts[p_opts["_label"] == player_label].iloc[0]
 
     seasons_avail = list(range(2025, 2015, -1))
@@ -1686,14 +1703,22 @@ with tab_decomp:
             Path(__file__).resolve().parent.parent
             / "data" / "nfl_player_stats_weekly.parquet"
         )
-        recent = df[df["season"] >= 2016]
+        recent = df[df["season"] >= 2016].copy()
         if position:
             recent = recent[recent["position"] == position]
-        opts = (recent.groupby(["player_id", "player_display_name",
-                                 "position"])
-                .size().reset_index().rename(columns={0: "n_games"}))
-        opts = opts[opts["n_games"] >= 6]
-        return opts.sort_values("n_games", ascending=False).reset_index(drop=True)
+        n_games = (recent.groupby(["player_id", "player_display_name",
+                                       "position"])
+                    .size().reset_index().rename(columns={0: "n_games"}))
+        n_games = n_games[n_games["n_games"] >= 6]
+        # Most-recent team per player
+        recent_sorted = recent.sort_values(["season", "week"],
+                                            ascending=[False, False])
+        teams = (recent_sorted.drop_duplicates(["player_id"])[
+            ["player_id", "team"]
+        ])
+        opts = n_games.merge(teams, on="player_id", how="left")
+        return opts.sort_values("n_games",
+                                 ascending=False).reset_index(drop=True)
 
     @st.cache_data(show_spinner=False)
     def _decomp_player_seasons(player_id: str) -> list[int]:
@@ -1769,10 +1794,16 @@ with tab_decomp:
                                   key="dec_stat")
         opts = _decomp_player_options(pos_pick)
         opts["_label"] = (opts["player_display_name"]
-                          + f"  ({opts['n_games']} games)")
-        player_label = st.selectbox("Player",
-                                     opts["_label"].tolist(),
-                                     key="dec_player")
+                          + "  ·  " + opts["team"].fillna("?"))
+        player_label = st.selectbox(
+            "Player", opts["_label"].tolist(),
+            index=None,
+            placeholder="Search player by name...",
+            key="dec_player",
+        )
+        if not player_label:
+            st.info("Pick a player.")
+            st.stop()
         chosen = opts[opts["_label"] == player_label].iloc[0]
 
         st.markdown("**Pick a game**")
@@ -1972,14 +2003,20 @@ with tab_alt:
             Path(__file__).resolve().parent.parent
             / "data" / "nfl_player_stats_weekly.parquet"
         )
-        recent = df[df["season"] >= 2022]
+        recent = df[df["season"] >= 2022].copy()
         if position:
             recent = recent[recent["position"] == position]
-        return (recent.groupby(["player_id", "player_display_name",
-                                 "position", "team"])
-                .size().reset_index().rename(columns={0: "n_games"})
-                .sort_values("n_games", ascending=False)
-                .reset_index(drop=True))
+        n_games = (recent.groupby(["player_id", "player_display_name",
+                                       "position"])
+                    .size().reset_index().rename(columns={0: "n_games"}))
+        recent_sorted = recent.sort_values(["season", "week"],
+                                            ascending=[False, False])
+        teams = (recent_sorted.drop_duplicates(["player_id"])[
+            ["player_id", "team"]
+        ])
+        return (n_games.merge(teams, on="player_id", how="left")
+                       .sort_values("n_games", ascending=False)
+                       .reset_index(drop=True))
 
     c1, c2 = st.columns([1, 2])
     with c1:
@@ -1996,10 +2033,13 @@ with tab_alt:
                               key="alt_stat")
         a_opts = _alt_player_options(a_pos)
         a_opts["_label"] = (a_opts["player_display_name"]
-                            + " · " + a_opts["team"]
-                            + f" ({a_opts['n_games']}g)")
-        a_player = st.selectbox("Player", a_opts["_label"].tolist(),
-                                 key="alt_player")
+                            + "  ·  " + a_opts["team"].fillna("?"))
+        a_player = st.selectbox(
+            "Player", a_opts["_label"].tolist(),
+            index=None,
+            placeholder="Search player by name...",
+            key="alt_player",
+        )
         a_lookback = st.slider("Lookback (games)", 5, 50, 20,
                                 key="alt_lookback")
         st.markdown(
@@ -2015,6 +2055,9 @@ with tab_alt:
 
     with c2:
         if run_a:
+            if not a_player:
+                st.warning("Pick a player first.")
+                st.stop()
             chosen = a_opts[a_opts["_label"] == a_player].iloc[0]
             ladder_rungs = []
             for line in ladder_text.strip().split("\n"):
@@ -2095,16 +2138,21 @@ with tab_parlay:
             Path(__file__).resolve().parent.parent
             / "data" / "nfl_player_stats_weekly.parquet"
         )
-        recent = df[df["season"] >= 2022]
-        opts = (recent.groupby(["player_id", "player_display_name",
-                                 "position", "team"])
-                .size().reset_index().rename(columns={0: "n_games"}))
-        opts = opts[opts["n_games"] >= 8]
+        recent = df[df["season"] >= 2022].copy()
+        n_games = (recent.groupby(["player_id", "player_display_name",
+                                       "position"])
+                    .size().reset_index().rename(columns={0: "n_games"}))
+        n_games = n_games[n_games["n_games"] >= 8]
+        recent_sorted = recent.sort_values(["season", "week"],
+                                            ascending=[False, False])
+        teams = (recent_sorted.drop_duplicates(["player_id"])[
+            ["player_id", "team"]
+        ])
+        opts = n_games.merge(teams, on="player_id", how="left")
         opts["_label"] = (opts["player_display_name"]
-                          + " · " + opts["team"]
-                          + " · " + opts["position"]
-                          + f" ({opts['n_games']}g)")
-        return opts.sort_values("n_games", ascending=False).reset_index(drop=True)
+                          + "  ·  " + opts["team"].fillna("?"))
+        return opts.sort_values("n_games",
+                                 ascending=False).reset_index(drop=True)
 
     p_opts = _parlay_player_options()
     n_legs = st.number_input("Number of legs", 2, 5, 2, key="par_n")
@@ -2115,7 +2163,9 @@ with tab_parlay:
             st.markdown(f"**Leg {i+1}**")
             player = st.selectbox(
                 "Player", p_opts["_label"].tolist(),
-                key=f"par_player_{i}", index=i if i < len(p_opts) else 0,
+                key=f"par_player_{i}",
+                index=None,
+                placeholder="Search player by name...",
             )
             stat = st.selectbox(
                 "Stat",
@@ -2130,6 +2180,8 @@ with tab_parlay:
             side = st.selectbox(
                 "Side", ["over", "under"], key=f"par_side_{i}",
             )
+            if not player:
+                continue   # leg blank; skip
             row = p_opts[p_opts["_label"] == player].iloc[0]
             legs.append(Leg(
                 player_id=row["player_id"],
@@ -2145,6 +2197,10 @@ with tab_parlay:
                             key="par_lookback")
     if st.button("Score parlay", type="primary",
                   use_container_width=True, key="par_run"):
+        if len(legs) < 2:
+            st.warning(f"Need ≥2 legs filled in (got {len(legs)}). "
+                        "Pick players for each leg.")
+            st.stop()
         try:
             r = score_parlay(legs, book_odds=int(book_odds),
                               lookback_games=p_lookback)
@@ -2215,15 +2271,21 @@ with tab_td:
             Path(__file__).resolve().parent.parent
             / "data" / "nfl_player_stats_weekly.parquet"
         )
-        recent = df[df["season"] >= 2023]
+        recent = df[df["season"] >= 2023].copy()
         if position:
             recent = recent[recent["position"] == position]
-        return (recent.groupby(["player_id", "player_display_name",
-                                 "position", "team"])
-                .size().reset_index().rename(columns={0: "n_games"})
-                .pipe(lambda d: d[d["n_games"] >= 6])
-                .sort_values("n_games", ascending=False)
-                .reset_index(drop=True))
+        n_games = (recent.groupby(["player_id", "player_display_name",
+                                       "position"])
+                    .size().reset_index().rename(columns={0: "n_games"}))
+        n_games = n_games[n_games["n_games"] >= 6]
+        recent_sorted = recent.sort_values(["season", "week"],
+                                            ascending=[False, False])
+        teams = (recent_sorted.drop_duplicates(["player_id"])[
+            ["player_id", "team"]
+        ])
+        return (n_games.merge(teams, on="player_id", how="left")
+                       .sort_values("n_games", ascending=False)
+                       .reset_index(drop=True))
 
     c1, c2 = st.columns([1, 2])
     with c1:
@@ -2231,17 +2293,22 @@ with tab_td:
                                 key="td_pos")
         td_opts = _td_player_options(td_pos)
         td_opts["_label"] = (td_opts["player_display_name"]
-                              + " · " + td_opts["team"]
-                              + f" ({td_opts['n_games']}g)")
-        td_player = st.selectbox("Player",
-                                   td_opts["_label"].tolist(),
-                                   key="td_player")
+                              + "  ·  " + td_opts["team"].fillna("?"))
+        td_player = st.selectbox(
+            "Player", td_opts["_label"].tolist(),
+            index=None,
+            placeholder="Search player by name...",
+            key="td_player",
+        )
         td_lookback = st.slider("Lookback", 5, 40, 20, key="td_lookback")
         td_season = st.number_input("Season (for RZ usage)",
                                        2016, 2025, 2024,
                                        key="td_season")
         if st.button("Run", type="primary", use_container_width=True,
                        key="td_run"):
+            if not td_player:
+                st.warning("Pick a player first.")
+                st.stop()
             row = td_opts[td_opts["_label"] == td_player].iloc[0]
             v = td_probability_vector(
                 row["player_id"], season=int(td_season),
@@ -2344,14 +2411,21 @@ with tab_long:
                           key="lp_kind")
         opts = longest_player_options(kind=kind, min_games=20)
         opts["_label"] = (opts["player_display_name"]
-                          + f" ({opts['n_games']}g)")
-        player_label = st.selectbox("Player", opts["_label"].tolist(),
-                                      key="lp_player")
+                          + "  ·  " + opts["team"].fillna("?"))
+        player_label = st.selectbox(
+            "Player", opts["_label"].tolist(),
+            index=None,
+            placeholder="Search player by name...",
+            key="lp_player",
+        )
         threshold = st.number_input("Target threshold (yards)",
                                        0.0, 200.0, 25.0, step=2.5,
                                        key="lp_thr")
         if st.button("Score", type="primary", use_container_width=True,
                        key="lp_run"):
+            if not player_label:
+                st.warning("Pick a player first.")
+                st.stop()
             row = opts[opts["_label"] == player_label].iloc[0]
             r = p_longest_at_least(row["player_id"], threshold,
                                      kind=kind)
