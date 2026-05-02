@@ -193,12 +193,6 @@ if "algo" in st.query_params and st.session_state.te_loaded_algo is None:
 # PAGE
 # ══════════════════════════════════════════════════════════════
 st.subheader(f"{team_name} tight ends")
-
-gp.render_team_gas_section("te", selected_team, selected_season,
-                              title=f"GAS Score · {team_name} TEs")
-st.caption("⚠️ v1: receiving-only — blocking grade not in this version.")
-st.markdown("---")
-st.markdown("### 🎛️ Build your own algorithm")
 st.markdown("What makes a great TE? **You decide.** Use the sliders on the left to tell us what you value most, and the rankings update instantly.")
 st.caption(f"{selected_season} regular season · Compared to all TEs league-wide with 100+ offensive snaps")
 

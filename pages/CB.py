@@ -232,12 +232,6 @@ if "algo" in st.query_params and st.session_state.cb_loaded_algo is None:
 # PAGE HEADER
 # ══════════════════════════════════════════════════════════════
 st.subheader(f"{team_name} cornerbacks")
-
-gp.render_team_gas_section("cb", selected_team, selected_season,
-                              title=f"GAS Score · {team_name} CBs")
-st.caption("⚠️ v1: no WR-matchup adjustment. CBs facing elite WRs aren't graded easier.")
-st.markdown("---")
-st.markdown("### 🎛️ Build your own algorithm")
 st.markdown("What makes a great cornerback? **You decide.** Use the sliders on the left to tell us what you value most, and the rankings update instantly.")
 st.caption(f"{selected_season} regular season · Compared to all 124 CBs league-wide with 200+ snaps")
 

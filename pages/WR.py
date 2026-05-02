@@ -258,11 +258,6 @@ if "algo" in st.query_params and st.session_state.wr_loaded_algo is None:
 # PAGE
 # ══════════════════════════════════════════════════════════════
 st.subheader(f"{team_name} wide receivers")
-
-gp.render_team_gas_section("wr", selected_team, selected_season,
-                              title=f"GAS Score · {team_name} WRs")
-st.markdown("---")
-st.markdown("### 🎛️ Build your own algorithm")
 st.markdown("What makes a great WR? **You decide.** Use the sliders on the left to tell us what you value most, and the rankings update instantly.")
 st.caption(f"{selected_season} regular season · Compared to all WRs league-wide with 100+ offensive snaps")
 

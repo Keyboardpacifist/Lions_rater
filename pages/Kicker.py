@@ -195,9 +195,6 @@ if total_weight == 0: st.info("All weights are zero — drag some sliders.")
 kickers = kickers.sort_values("score", ascending=False).reset_index(drop=True)
 kickers.index = kickers.index + 1
 
-gp.render_team_gas_section("k", selected_team, selected_season,
-                              title=f"GAS Score · {team_name} K")
-st.caption("⚠️ K stats are inherently volatile year-to-year (low YoY).")
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.subheader("Ranking")
 ranked = kickers.copy()

@@ -212,8 +212,6 @@ else:
     punters = punters.sort_values("score", ascending=False).reset_index(drop=True)
 punters.index = punters.index + 1
 
-gp.render_team_gas_section("p", selected_team, selected_season,
-                              title=f"GAS Score · {team_name} P")
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.subheader("Ranking")
 ranked = punters.copy()

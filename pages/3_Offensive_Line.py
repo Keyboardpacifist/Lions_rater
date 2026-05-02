@@ -193,11 +193,6 @@ if "upvoted_ids" not in st.session_state: st.session_state.upvoted_ids = set()
 if "ol_tiers_enabled" not in st.session_state: st.session_state.ol_tiers_enabled = [1, 2]
 
 st.subheader(f"{team_name} offensive linemen")
-
-gp.render_team_gas_section("ol", selected_team, selected_season,
-                              title=f"GAS Score · {team_name} OL")
-st.markdown("---")
-st.markdown("### 🎛️ Build your own algorithm")
 st.markdown("What makes a great player? **You decide.** Drag the sliders to weight what you value, and watch the Lions starting five re-rank in real time. _No 'best lineman' — just **your** best lineman._")
 st.caption(f"{selected_season} regular season • Z-scores vs all 153 starting OL league-wide • Position-specific run gap attribution")
 

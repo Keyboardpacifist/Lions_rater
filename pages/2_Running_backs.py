@@ -473,12 +473,6 @@ if "rb_tiers_enabled" not in st.session_state:
 # ============================================================
 st.subheader("Running backs")
 
-# ── GAS Score (canonical Lions Rater grade) ──────────────────
-gp.render_team_gas_section("rb", selected_team, selected_season,
-                              title=f"GAS Score · {team_name} RBs")
-st.markdown("---")
-st.markdown("### 🎛️ Build your own algorithm")
-
 
 # ============================================================
 # Load data

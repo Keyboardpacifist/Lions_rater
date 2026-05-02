@@ -1530,7 +1530,12 @@ def render_nfl_player_banner(*, position: str, player_name: str,
     """Render the inline trading-card banner above an NFL player-detail
     surface. Uses the player's `recent_team` for the team theme so
     Josh Allen on the Bills page renders in Bills colors regardless
-    of any league-wide filter the page is set to."""
+    of any league-wide filter the page is set to.
+
+    Auto-injects the GAS Score into the card's score banner when GAS
+    data exists for this (player_id, season_year). When GAS is shown,
+    the bundle breakdown / Show Math / Hot Take render below the card.
+    """
     pos = position.lower()
     stat_specs = _NFL_CARD_STAT_SPECS.get(pos, [])
     pos_label = _NFL_POSITION_LABELS.get(pos, pos.upper())
@@ -1538,6 +1543,29 @@ def render_nfl_player_banner(*, position: str, player_name: str,
     if view_row is not None:
         # OL/CB/S parquets use "team"; offensive skill use "recent_team".
         team_abbr = view_row.get("recent_team") or view_row.get("team")
+
+    # Look up GAS data for this player-season (skip in career-view —
+    # we don't aggregate GAS across seasons in v1).
+    gas_score = gas_label = gas_confidence = gas_percentile = None
+    gas_row = None
+    if not is_career_view and view_row is not None:
+        try:
+            from lib_gas_panels import (
+                lookup_player_gas, gas_league_percentile,
+            )
+            player_id = view_row.get("player_id")
+            season_year = view_row.get("season_year")
+            gas_row = lookup_player_gas(pos, player_id, season_year)
+            if gas_row is not None:
+                gas_score = float(gas_row.get("gas_score", 50.0))
+                gas_label = str(gas_row.get("gas_label", ""))
+                gas_confidence = str(gas_row.get("gas_confidence", ""))
+                gas_percentile = gas_league_percentile(
+                    pos, season_year, gas_score)
+        except Exception:
+            # Soft-fail: if GAS lookup raises, render the card without GAS.
+            gas_row = None
+
     render_player_card(
         player_name=player_name,
         position_label=pos_label,
@@ -1549,7 +1577,19 @@ def render_nfl_player_banner(*, position: str, player_name: str,
         player_career=player_career,
         is_career_view=is_career_view,
         sum_cols=_NFL_CARD_SUM_COLS,
+        gas_score=gas_score,
+        gas_label=gas_label,
+        gas_confidence=gas_confidence,
+        gas_percentile=gas_percentile,
     )
+
+    # GAS extras below the card (bundle expander + Hot Take + Show Math)
+    if gas_row is not None:
+        try:
+            from lib_gas_panels import render_player_gas_extras
+            render_player_gas_extras(gas_row, pos)
+        except Exception:
+            pass
 
 
 def render_player_card(*, player_name, position_label, season_str,
@@ -1558,7 +1598,9 @@ def render_player_card(*, player_name, position_label, season_str,
                        team_label=None, primary_color=None,
                        secondary_color=None, logo_url=None,
                        player_career=None, is_career_view=False,
-                       sum_cols=None):
+                       sum_cols=None,
+                       gas_score=None, gas_label=None,
+                       gas_confidence=None, gas_percentile=None):
     """Render a Topps/MUT-style banner with a team-color gradient,
     team logo, large name, score/percentile banner, and stat tiles.
 
@@ -1595,14 +1637,34 @@ def render_player_card(*, player_name, position_label, season_str,
         else:
             logo_url = ""
 
-    if score is None or (isinstance(score, float) and pd.isna(score)):
-        score_str = "—"
-        pct_str = "—"
+    # When GAS data is provided, the score banner switches to GAS view.
+    # Otherwise we fall back to the legacy slider z-score view.
+    use_gas = gas_score is not None and not (
+        isinstance(gas_score, float) and pd.isna(gas_score))
+    if use_gas:
+        score_label = "GAS Score"
+        score_str = f"{gas_score:.1f}"
+        score_sub = gas_label or ""
+        if gas_confidence:
+            score_sub = (f"{score_sub} · {gas_confidence}"
+                          if score_sub else gas_confidence)
+        pct_label = "Percentile"
+        if gas_percentile is None:
+            pct_str = "—"
+        else:
+            pct_str = f"{int(round(gas_percentile))}th"
     else:
-        sign = "+" if score >= 0 else ""
-        score_str = f"{sign}{score:.2f}"
-        pct_val = float(norm.cdf(score) * 100)
-        pct_str = f"{int(pct_val)}th"
+        score_label = "Your Score"
+        score_sub = ""
+        pct_label = "Percentile"
+        if score is None or (isinstance(score, float) and pd.isna(score)):
+            score_str = "—"
+            pct_str = "—"
+        else:
+            sign = "+" if score >= 0 else ""
+            score_str = f"{sign}{score:.2f}"
+            pct_val = float(norm.cdf(score) * 100)
+            pct_str = f"{int(pct_val)}th"
 
     sum_cols = sum_cols or set()
     tile_blocks = []
@@ -1682,12 +1744,15 @@ def render_player_card(*, player_name, position_label, season_str,
         f"position:relative;z-index:1;'>"
         f"<div>"
         f"<div style='font-size:0.62rem;color:{secondary};letter-spacing:1.6px;"
-        f"font-weight:700;text-transform:uppercase;'>Your Score</div>"
+        f"font-weight:700;text-transform:uppercase;'>{score_label}</div>"
         f"<div style='font-size:1.75rem;font-weight:900;line-height:1.1;'>{score_str}</div>"
-        f"</div>"
+        + (f"<div style='font-size:0.7rem;font-weight:600;color:{secondary};"
+              f"margin-top:2px;letter-spacing:0.5px;'>{score_sub}</div>"
+              if score_sub else "")
+        + f"</div>"
         f"<div style='text-align:right;'>"
         f"<div style='font-size:0.62rem;color:{secondary};letter-spacing:1.6px;"
-        f"font-weight:700;text-transform:uppercase;'>Percentile</div>"
+        f"font-weight:700;text-transform:uppercase;'>{pct_label}</div>"
         f"<div style='font-size:1.75rem;font-weight:900;line-height:1.1;'>{pct_str}</div>"
         f"</div>"
         f"</div>"

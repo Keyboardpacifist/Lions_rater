@@ -203,6 +203,38 @@ def load_gas_data(position: str) -> Optional[pd.DataFrame]:
     return pd.read_parquet(path)
 
 
+def lookup_player_gas(position: str, player_id: Optional[str],
+                         season_year: Optional[int]
+                         ) -> Optional[pd.Series]:
+    """Find a (player_id, season_year) row in this position's GAS
+    table. Returns None if missing."""
+    if not player_id or season_year is None:
+        return None
+    df = load_gas_data(position)
+    if df is None:
+        return None
+    matches = df[(df["player_id"] == player_id)
+                 & (df["season_year"] == int(season_year))]
+    if not len(matches):
+        return None
+    return matches.iloc[0]
+
+
+def gas_league_percentile(position: str, season_year: Optional[int],
+                            score: Optional[float]) -> Optional[float]:
+    """Pct of league players (this position, this season) with a
+    GAS score lower than `score`. None if data missing."""
+    if score is None or season_year is None:
+        return None
+    df = load_gas_data(position)
+    if df is None:
+        return None
+    season_pop = df[df["season_year"] == int(season_year)]
+    if not len(season_pop):
+        return None
+    return float((season_pop["gas_score"] < score).mean() * 100)
+
+
 def _label_color(label: str) -> str:
     if "Elite" in label:
         return "#16a34a"
@@ -388,6 +420,45 @@ def render_hot_take(player_row: pd.Series, league_df: pd.DataFrame,
         </div>""",
         unsafe_allow_html=True,
     )
+
+
+# ── Post-card extras for the player detail view ───────────────────
+
+def render_player_gas_extras(player_row: pd.Series,
+                                position: str) -> None:
+    """Render the bundle breakdown + Show Math + Hot Take below
+    a player card. Each in its own expander so the card stays clean."""
+    bundle_labels = BUNDLE_LABELS.get(position, {})
+    bundle_rows = []
+    for bundle_key, label_text in bundle_labels.items():
+        col = f"gas_{bundle_key}_grade"
+        if col in player_row.index:
+            bundle_rows.append(
+                (label_text, float(player_row[col])))
+
+    with st.expander("📊 GAS bundle breakdown",
+                       expanded=False):
+        if bundle_rows:
+            bdf = pd.DataFrame(bundle_rows,
+                                  columns=["Bundle", "Grade"])
+            st.bar_chart(bdf.set_index("Bundle"), height=240)
+            st.caption(
+                "Each bundle grades 0-100. The composite GAS Score is "
+                "a weighted average across these. Click 'Show the math' "
+                "for the formula and adjustments applied."
+            )
+        else:
+            st.caption("No bundle data available.")
+
+    # Hot take inline (not in expander — should be visible)
+    league_df = load_gas_data(position)
+    if league_df is not None:
+        season_year = int(player_row.get("season_year", 0) or 0)
+        season_df = league_df[league_df["season_year"] == season_year]
+        render_hot_take(player_row, season_df, position)
+
+    # Show math collapsed
+    render_show_math_panel(player_row, position)
 
 
 # ── One-call team renderer for position pages ─────────────────────

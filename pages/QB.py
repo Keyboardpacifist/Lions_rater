@@ -250,13 +250,6 @@ if "algo" in st.query_params and st.session_state.qb_loaded_algo is None:
 # PAGE HEADER
 # ══════════════════════════════════════════════════════════════
 st.subheader(f"{team_name} quarterbacks")
-
-# ── GAS Score (canonical Lions Rater grade) ──────────────────
-gp.render_team_gas_section("qb", selected_team, selected_season,
-                              title=f"GAS Score · {team_name} QBs")
-
-st.markdown("---")
-st.markdown("### 🎛️ Build your own algorithm")
 st.markdown("What makes a great QB? **You decide.** Use the sliders on the left to tell us what you value most, and the rankings update instantly.")
 st.caption(f"{selected_season} regular season · Compared to all 39 QBs league-wide with 200+ pass attempts")
 
