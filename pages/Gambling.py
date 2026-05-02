@@ -92,6 +92,42 @@ st.caption("Internal playground for the gambling-product engines. "
            "live odds, no real bets. This is a validation harness.")
 
 
+def player_picker(options: list[str], key: str,
+                    placeholder: str = "Search player by name...",
+                    label: str = "Player") -> str | None:
+    """Two-state player picker — eliminates the "hit delete a bunch"
+    UX pain.
+
+    - Empty state: searchable dropdown with placeholder. Type any
+      part of the player's name to filter. Pick to select.
+    - Selected state: shows the selected player on a card with a
+      one-click "✕ Change player" button. Click to clear and
+      return to the search dropdown.
+
+    Use the return value (string label) the same way you'd use a
+    plain st.selectbox return.
+    """
+    selected = st.session_state.get(key)
+    if not selected:
+        return st.selectbox(
+            label, options,
+            index=None,
+            placeholder=placeholder,
+            key=key,
+        )
+    # Selected — show readable selection + change button
+    cols = st.columns([5, 1])
+    with cols[0]:
+        st.markdown(f"**{label}:** {selected}")
+    with cols[1]:
+        if st.button("✕ Change",
+                       key=f"{key}__clear",
+                       use_container_width=True):
+            st.session_state[key] = None
+            st.rerun()
+    return selected
+
+
 section_game, section_props = st.tabs([
     "🏟️  GAME BETS  —  spread / total / moneyline",
     "👤  PLAYER PROPS  —  yards / TDs / receptions / parlays",
@@ -851,12 +887,7 @@ with tab_weather:
                 return
             opts["_label"] = (opts["player_display_name"]
                               + "  ·  " + opts["team"].fillna("?"))
-            player_label = st.selectbox(
-                "Player", opts["_label"].tolist(),
-                index=None,
-                placeholder="Search player by name...",
-                key="w_player",
-            )
+            player_label = player_picker(opts["_label"].tolist(), key="w_player")
             if not player_label:
                 st.info("Pick a player.")
                 return
@@ -1449,12 +1480,7 @@ with tab_proprep:
     def _run_player_report_tab():
         p_opts = _player_options()
         c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-        player_label = c1.selectbox(
-            "Player", p_opts["_label"].tolist(),
-            index=None,
-            placeholder="Search player by name...",
-            key="pr_player",
-        )
+        player_label = player_picker(p_opts["_label"].tolist(), key="pr_player")
         if not player_label:
             st.info("Pick a player.")
             return
@@ -1807,12 +1833,7 @@ with tab_decomp:
             opts = _decomp_player_options(pos_pick)
             opts["_label"] = (opts["player_display_name"]
                               + "  ·  " + opts["team"].fillna("?"))
-            player_label = st.selectbox(
-                "Player", opts["_label"].tolist(),
-                index=None,
-                placeholder="Search player by name...",
-                key="dec_player",
-            )
+            player_label = player_picker(opts["_label"].tolist(), key="dec_player")
             if not player_label:
                 st.info("Pick a player.")
                 return
@@ -2048,12 +2069,7 @@ with tab_alt:
         a_opts = _alt_player_options(a_pos)
         a_opts["_label"] = (a_opts["player_display_name"]
                             + "  ·  " + a_opts["team"].fillna("?"))
-        a_player = st.selectbox(
-            "Player", a_opts["_label"].tolist(),
-            index=None,
-            placeholder="Search player by name...",
-            key="alt_player",
-        )
+        a_player = player_picker(a_opts["_label"].tolist(), key="alt_player")
         a_lookback = st.slider("Lookback (games)", 5, 50, 20,
                                 key="alt_lookback")
         st.markdown(
@@ -2175,11 +2191,10 @@ with tab_parlay:
     for i in range(int(n_legs)):
         with cols[i]:
             st.markdown(f"**Leg {i+1}**")
-            player = st.selectbox(
-                "Player", p_opts["_label"].tolist(),
+            player = player_picker(
+                p_opts["_label"].tolist(),
                 key=f"par_player_{i}",
-                index=None,
-                placeholder="Search player by name...",
+                label=f"Leg {i+1} player",
             )
             stat = st.selectbox(
                 "Stat",
@@ -2308,12 +2323,7 @@ with tab_td:
         td_opts = _td_player_options(td_pos)
         td_opts["_label"] = (td_opts["player_display_name"]
                               + "  ·  " + td_opts["team"].fillna("?"))
-        td_player = st.selectbox(
-            "Player", td_opts["_label"].tolist(),
-            index=None,
-            placeholder="Search player by name...",
-            key="td_player",
-        )
+        td_player = player_picker(td_opts["_label"].tolist(), key="td_player")
         td_lookback = st.slider("Lookback", 5, 40, 20, key="td_lookback")
         td_season = st.number_input("Season (for RZ usage)",
                                        2016, 2025, 2024,
@@ -2426,12 +2436,7 @@ with tab_long:
         opts = longest_player_options(kind=kind, min_games=20)
         opts["_label"] = (opts["player_display_name"]
                           + "  ·  " + opts["team"].fillna("?"))
-        player_label = st.selectbox(
-            "Player", opts["_label"].tolist(),
-            index=None,
-            placeholder="Search player by name...",
-            key="lp_player",
-        )
+        player_label = player_picker(opts["_label"].tolist(), key="lp_player")
         threshold = st.number_input("Target threshold (yards)",
                                        0.0, 200.0, 25.0, step=2.5,
                                        key="lp_thr")
