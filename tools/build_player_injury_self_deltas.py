@@ -96,26 +96,66 @@ def _bucket_for(report, practice) -> str:
     return "HEALTHY"
 
 
-PRIMARY_STAT = {
-    "QB":  "passing_yards",
-    "RB":  "rushing_yards",
-    "FB":  "rushing_yards",
-    "WR":  "receiving_yards",
-    "TE":  "receiving_yards",
+# V2.1: Multi-stat coverage. Each position gets a list of prop-relevant
+# stats. The opp adjustment uses the closest yards-allowed proxy (count
+# stats track yards via volume, so this is a reasonable approximation).
+POSITION_STATS = {
+    "QB":  ["passing_yards", "completions", "attempts",
+            "passing_tds", "passing_interceptions",
+            "rushing_yards"],   # mobile QBs
+    "RB":  ["rushing_yards", "carries", "receiving_yards",
+            "receptions", "targets",
+            "rushing_tds", "receiving_tds"],
+    "FB":  ["rushing_yards", "carries"],
+    "WR":  ["receiving_yards", "receptions", "targets",
+            "receiving_tds", "rushing_yards"],   # WR jet sweeps
+    "TE":  ["receiving_yards", "receptions", "targets",
+            "receiving_tds"],
 }
 
-
-# Per-stat opp strength column in team_opponent_strength.parquet
+# Per-stat opp strength column in team_opponent_strength.parquet.
+# Count stats use the yards-side opp metric since volume tracks yards.
 OPP_COL_FOR_STAT = {
+    # yards-side
     "passing_yards":   "opp_pass_yards_allowed_avg",
     "rushing_yards":   "opp_rush_yards_allowed_avg",
     "receiving_yards": "opp_rec_yards_allowed_avg",
+    # count-side (use yards proxy — defenses that allow more yards
+    # also typically allow more attempts/receptions/carries)
+    "completions":     "opp_pass_yards_allowed_avg",
+    "attempts":        "opp_pass_yards_allowed_avg",
+    "receptions":      "opp_rec_yards_allowed_avg",
+    "targets":         "opp_rec_yards_allowed_avg",
+    "carries":         "opp_rush_yards_allowed_avg",
+    # TDs use PPG-allowed since TDs drive scoring
+    "passing_tds":          "opp_ppg_allowed_avg",
+    "passing_interceptions":"opp_ppg_allowed_avg",
+    "rushing_tds":          "opp_ppg_allowed_avg",
+    "receiving_tds":        "opp_ppg_allowed_avg",
 }
 LEAGUE_COL_FOR_STAT = {
     "passing_yards":   "league_pass_yds_pg",
     "rushing_yards":   "league_rush_yds_pg",
     "receiving_yards": "league_rec_yds_pg",
+    "completions":     "league_pass_yds_pg",   # ratio scaling
+    "attempts":        "league_pass_yds_pg",
+    "receptions":      "league_rec_yds_pg",
+    "targets":         "league_rec_yds_pg",
+    "carries":         "league_rush_yds_pg",
+    "passing_tds":          "league_ppg",
+    "passing_interceptions":"league_ppg",
+    "rushing_tds":          "league_ppg",
+    "receiving_tds":        "league_ppg",
 }
+
+# For COUNT stats, the additive opp-adjustment ("subtract opp_yards_allowed
+# and add league_yards_pg") doesn't make sense (yards != count). So for
+# count stats we use a RATIO adjustment instead: scale the count by
+# (league_yards_pg / opp_yards_allowed) — i.e., if opp gives up 110% of
+# league avg yards, the player's count should be deflated by 110/100.
+COUNT_STATS = {"completions", "attempts", "receptions", "targets",
+               "carries", "passing_tds", "passing_interceptions",
+               "rushing_tds", "receiving_tds"}
 
 
 def _norm_name(s: pd.Series) -> pd.Series:
@@ -173,56 +213,72 @@ def main() -> None:
     ps = ps.merge(opp_join, on=["opponent_for_team", "season"],
                    how="left")
 
-    # ── Build per-stat OUTPUT (one stat per position; same player
-    # could be multi-position-eligible — we go by primary)
+    # ── Build per-(position, stat) OUTPUT
     rows: list[dict] = []
-    for position, stat in PRIMARY_STAT.items():
-        opp_col = OPP_COL_FOR_STAT.get(stat)
-        league_col = LEAGUE_COL_FOR_STAT.get(stat)
-        if opp_col is None or league_col is None:
-            continue
-        sub = ps[(ps["position"] == position)
-                 & ps[stat].notna()].copy()
-        if sub.empty:
-            continue
+    seen_keys: set[tuple[str, str]] = set()
+    for position, stats in POSITION_STATS.items():
+        for stat in stats:
+            key = (position, stat)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            opp_col = OPP_COL_FOR_STAT.get(stat)
+            league_col = LEAGUE_COL_FOR_STAT.get(stat)
+            if opp_col is None or league_col is None:
+                continue
+            if stat not in ps.columns:
+                continue
+            sub = ps[(ps["position"] == position)
+                     & ps[stat].notna()].copy()
+            if sub.empty:
+                continue
 
-        # Opp adjustment: actual − (opp_strength) is the gap vs the
-        # expected stat against this defense. We center on the league
-        # avg so HEALTHY baseline is ~0 for an avg player vs avg opp.
-        # adj = stat − opp_strength + league_avg  (so raw and adj have
-        # similar scale and HEALTHY adj ≈ HEALTHY raw on average).
-        sub["adj_stat"] = (sub[stat]
-                            - sub[opp_col].fillna(sub[league_col])
-                            + sub[league_col])
+            # Opp adjustment.
+            # YARDS stats: additive — actual − opp_yards_allowed + league_yards_pg
+            # COUNT stats: ratio  — actual × (league / opp) (caps to avoid blowup)
+            opp_strength = sub[opp_col].fillna(sub[league_col])
+            league_val = sub[league_col]
+            if stat in COUNT_STATS:
+                # Avoid /0 by clipping opp_strength to >= 1
+                ratio = (league_val / opp_strength.clip(lower=1e-3))
+                ratio = ratio.clip(lower=0.6, upper=1.4)  # sanity caps
+                sub["adj_stat"] = sub[stat].astype(float) * ratio
+            else:
+                sub["adj_stat"] = (sub[stat].astype(float)
+                                    - opp_strength + league_val)
 
-        # Group by player + bucket
-        gb = (sub.groupby(["player_id", "player_display_name",
-                             "position", "bucket"], dropna=False)
-              .agg(n=(stat, "size"),
-                   mean_raw=(stat, "mean"),
-                   mean_adj=("adj_stat", "mean"))
-              .reset_index())
-        gb["stat"] = stat
-        # Player healthy baseline (HEALTHY bucket)
-        healthy = gb[gb["bucket"] == "HEALTHY"][[
-            "player_id", "mean_raw", "mean_adj"
-        ]].rename(columns={"mean_raw": "healthy_raw",
-                            "mean_adj": "healthy_adj"})
-        gb = gb.merge(healthy, on="player_id", how="left")
-        gb["delta_raw"] = gb["mean_raw"] - gb["healthy_raw"]
-        gb["delta_adj"] = gb["mean_adj"] - gb["healthy_adj"]
-        # Retention: ratio of injured-bucket adj to healthy adj.
-        # Adjusted means tend to be near league average; ratios
-        # blow up near zero, so use raw means for retention metric.
-        gb["retention_adj"] = (gb["mean_raw"] / gb["healthy_raw"]).clip(
-            lower=0.0, upper=1.10)
+            # Group by player + bucket
+            gb = (sub.groupby(["player_id", "player_display_name",
+                                 "position", "bucket"], dropna=False)
+                  .agg(n=(stat, "size"),
+                       mean_raw=(stat, "mean"),
+                       mean_adj=("adj_stat", "mean"))
+                  .reset_index())
+            gb["stat"] = stat
+            # Player healthy baseline
+            healthy = gb[gb["bucket"] == "HEALTHY"][[
+                "player_id", "mean_raw", "mean_adj"
+            ]].rename(columns={"mean_raw": "healthy_raw",
+                                "mean_adj": "healthy_adj"})
+            gb = gb.merge(healthy, on="player_id", how="left")
+            gb["delta_raw"] = gb["mean_raw"] - gb["healthy_raw"]
+            gb["delta_adj"] = gb["mean_adj"] - gb["healthy_adj"]
+            # Retention. Use ADJ for ratio so opp strength is netted out.
+            # Guard against tiny denominators (e.g., a player whose
+            # healthy avg is effectively 0 for this stat).
+            denom = gb["healthy_adj"].abs()
+            with np.errstate(divide="ignore", invalid="ignore"):
+                ret = np.where(denom > 0.5,
+                                gb["mean_adj"] / gb["healthy_adj"],
+                                np.nan)
+            gb["retention_adj"] = pd.Series(ret).clip(lower=0.0, upper=1.10)
 
-        # Player overall stat sample size (for thin-cell flags)
-        totals = (sub.groupby("player_id")[stat].size().reset_index()
-                  .rename(columns={stat: "n_total_player"}))
-        gb = gb.merge(totals, on="player_id", how="left")
+            # Player overall stat sample size (for thin-cell flags)
+            totals = (sub.groupby("player_id")[stat].size().reset_index()
+                      .rename(columns={stat: "n_total_player"}))
+            gb = gb.merge(totals, on="player_id", how="left")
 
-        rows.append(gb)
+            rows.append(gb)
 
     if not rows:
         print("No data produced.")
