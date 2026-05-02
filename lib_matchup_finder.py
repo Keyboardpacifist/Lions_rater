@@ -55,11 +55,12 @@ class MatchupFinding:
     has_books_signal: bool        # ≥1 historical book-behavior cohort matched
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
 def generate_matchup_findings(season: int, week: int,
                                  min_confidence: int = 2
                                  ) -> pd.DataFrame:
     """Top-level entry point. Returns DataFrame ranked by
-    confidence × |spread_score|."""
+    confidence × |spread_score|. Cached 1 hour."""
     sch = _load_schedules()
     games = sch[(sch["season"] == int(season))
                 & (sch["week"] == int(week))].copy()

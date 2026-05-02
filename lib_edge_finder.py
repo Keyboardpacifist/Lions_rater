@@ -168,58 +168,142 @@ def _weather_for(team: str, season: int, week: int) -> dict:
 def _trend_findings(season: int, week: int,
                       eligible: pd.DataFrame,
                       min_z: float) -> list[Finding]:
+    """Batch-compute trend divergence flags via a single groupby.
+    Massively faster than calling compute_player_window per-player."""
     out: list[Finding] = []
-    for _, p in eligible.iterrows():
-        rows = compute_player_window(
-            p["player_id"], season=int(season), week=int(week),
-            lookback=3,
-        )
-        for r in rows:
-            if r.stat not in TREND_STATS:
+    df = _load_stats()
+    if df.empty:
+        return out
+    # Pre-filter to BEFORE the target week
+    pre = df[(df["season"] < int(season))
+             | ((df["season"] == int(season))
+                & (df["week"] < int(week)))].copy()
+    pre = pre.merge(
+        eligible[["player_id", "player_display_name", "position", "team"]],
+        on="player_id", how="inner", suffixes=("", "_e"),
+    )
+    if pre.empty:
+        return out
+    # Sort by season, week descending so head() = most recent
+    pre = pre.sort_values(["player_id", "season", "week"],
+                            ascending=[True, False, False])
+
+    for stat in TREND_STATS:
+        if stat not in pre.columns:
+            continue
+        min_avg = MIN_RECENT_AVG_FOR_TREND.get(stat, 0.0)
+        # For each player: compute recent (last 3) and season-prior
+        # means, plus union variance for z-score.
+        for pid, group in pre.groupby("player_id", sort=False):
+            sub = group[group[stat].notna()]
+            if len(sub) < 4:
                 continue
-            if abs(r.delta_z) < min_z:
+            recent = sub.head(3)
+            earlier = sub.iloc[3:]
+            if len(recent) < 1 or len(earlier) < 1:
                 continue
-            # Filter out role expansions on stats with no real prop
-            # market (e.g., 0.3 → 0.7 carries for a third-string TE)
-            min_avg = MIN_RECENT_AVG_FOR_TREND.get(r.stat, 0.0)
-            if r.recent_avg < min_avg and r.season_avg < min_avg:
+            recent_avg = float(recent[stat].astype(float).mean())
+            season_avg = float(earlier[stat].astype(float).mean())
+            # Union-variance z (matches lib_trend_divergence semantics)
+            all_vals = pd.concat([recent[stat].astype(float),
+                                    earlier[stat].astype(float)])
+            std = float(all_vals.std(ddof=0))
+            if std < 1e-6:
                 continue
-            direction = "OVER" if r.delta > 0 else "UNDER"
-            stat_label = r.stat.replace("_", " ")
-            verb = "expanded" if r.delta > 0 else "shrunk"
-            confidence = min(5, max(1, int(round(abs(r.delta_z)))))
+            delta = recent_avg - season_avg
+            z = delta / std
+            if abs(z) < min_z:
+                continue
+            if recent_avg < min_avg and season_avg < min_avg:
+                continue
+            direction = "OVER" if delta > 0 else "UNDER"
+            stat_label = stat.replace("_", " ")
+            verb = "expanded" if delta > 0 else "shrunk"
+            confidence = min(5, max(1, int(round(abs(z)))))
+            # Pull static cols from the first row of the group
+            first = group.iloc[0]
             blurb = (
-                f"{p['player_display_name']} ({p['position']}, "
-                f"{p['team']}): {stat_label} role {verb} recently — "
-                f"{r.recent_avg:.1f}/g last 3 vs {r.season_avg:.1f}/g "
-                f"season prior (z={r.delta_z:+.1f}). Books usually "
+                f"{first['player_display_name']} ({first['position']}, "
+                f"{first['team']}): {stat_label} role {verb} recently — "
+                f"{recent_avg:.1f}/g last 3 vs {season_avg:.1f}/g "
+                f"season prior (z={z:+.1f}). Books usually "
                 f"anchor to season averages."
             )
             out.append(Finding(
-                player_id=p["player_id"],
-                player_name=p["player_display_name"],
-                team=p["team"], position=p["position"],
-                stat=r.stat,
+                player_id=str(pid),
+                player_name=str(first["player_display_name"]),
+                team=str(first["team"]),
+                position=str(first["position"]),
+                stat=stat,
                 finding_type="TREND_DIVERGENCE",
                 direction=direction,
-                magnitude=float(r.delta),
-                pct_shift=(r.delta / r.season_avg
-                            if r.season_avg > 0 else 0.0),
+                magnitude=float(delta),
+                pct_shift=(delta / season_avg
+                            if season_avg > 0 else 0.0),
                 confidence=confidence,
                 blurb=blurb,
             ))
     return out
 
 
+def _batch_baselines(eligible: pd.DataFrame, stat: str,
+                       season: int, week: int,
+                       lookback: int = 12) -> dict[str, float]:
+    """Compute the recent-baseline median for `stat` for ALL eligible
+    players in a single pass. Returns {player_id: baseline_median}.
+
+    This is ~50x faster than calling _quick_baseline per player —
+    one filter + one groupby vs. N filters."""
+    df = _load_stats()
+    if df.empty or stat not in df.columns:
+        return {}
+    pids = set(eligible["player_id"].tolist())
+    pre = df[(df["player_id"].isin(pids))
+             & df[stat].notna()]
+    pre = pre[(pre["season"] < int(season))
+              | ((pre["season"] == int(season))
+                 & (pre["week"] < int(week)))]
+    if pre.empty:
+        return {}
+    pre = pre.sort_values(["player_id", "season", "week"],
+                            ascending=[True, False, False])
+    # Take last `lookback` games per player
+    pre["_rank"] = pre.groupby("player_id").cumcount()
+    pre = pre[pre["_rank"] < lookback]
+    return (pre.groupby("player_id")[stat].median()
+              .astype(float).to_dict())
+
+
 def _projection_findings(season: int, week: int,
                             eligible: pd.DataFrame,
                             min_pct_shift: float) -> list[Finding]:
     out: list[Finding] = []
+    # Pre-compute baselines per (position-stat) in batch — much faster
+    # than calling _quick_baseline per player.
+    baselines_by_stat: dict[str, dict[str, float]] = {}
+    stats_needed = set()
+    for pos in eligible["position"].unique():
+        s = primary_stat_for_position(pos)
+        if s:
+            stats_needed.add(s)
+    for s in stats_needed:
+        baselines_by_stat[s] = _batch_baselines(eligible, s,
+                                                    season, week,
+                                                    lookback=12)
+
     for _, p in eligible.iterrows():
         pos = p["position"]
         stat = primary_stat_for_position(pos)
         if not stat:
             continue
+
+        # Lookup pre-computed baseline (fast)
+        min_baseline = MIN_BASELINE_BY_POSITION.get(pos, 0.0)
+        baseline = baselines_by_stat.get(stat, {}).get(p["player_id"], 0.0)
+        if baseline < min_baseline:
+            continue
+
+        # Now do the full decompose (slow path)
         opp = _opp_for(p["team"], season, week)
         wx = _weather_for(p["team"], season, week)
         try:
@@ -235,16 +319,12 @@ def _projection_findings(season: int, week: int,
             )
         except Exception:
             continue
-        # Real prop-market threshold — backup QBs with 4-yard
-        # baselines aren't bet on, and their pct shifts explode.
-        min_baseline = MIN_BASELINE_BY_POSITION.get(pos, 0.0)
-        if d.baseline < min_baseline:
+        if d.baseline <= 0:
             continue
         pct = (d.projection - d.baseline) / d.baseline
         if abs(pct) < min_pct_shift:
             continue
-        # Cap pct at ±100% — any larger usually means model artifact
-        # (cohort blowing up, weather extreme), not a real edge.
+        # Cap at ±100% — larger means model artifact, not real edge
         if abs(pct) > 1.0:
             continue
 
@@ -283,13 +363,18 @@ def _projection_findings(season: int, week: int,
     return out
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
 def generate_edge_findings(season: int, week: int,
                               position_filter: list[str] | None = None,
                               min_z: float = 1.0,
                               min_pct_shift: float = 0.15
                               ) -> pd.DataFrame:
     """Top-level entry point. Returns a DataFrame of findings ranked
-    by confidence × |magnitude|."""
+    by confidence × |magnitude|.
+
+    Cached for 1 hour — same (season, week, filter) input returns
+    instantly on second call.
+    """
     eligible = _eligible_players_for_week(season, week)
     if eligible.empty:
         return pd.DataFrame()
