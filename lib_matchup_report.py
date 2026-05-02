@@ -654,12 +654,21 @@ def _build_narrative(r: MatchupReport) -> MatchupNarrative:
         sign = +1 if s.team == r.away_team else -1
         # line_miss < 0 = team underperformed → fade them
         # line_miss > 0 = team overperformed → bet ON them
+        # Sign mapping: sign = +1 if affected==away_team, -1 if home.
+        # spread_score convention: positive = lean home, negative = lean away.
+        # FADE the affected team:
+        #   affected away → lean home → spread_score should be POSITIVE → += sign (+1)
+        #   affected home → lean away → spread_score should be NEGATIVE → += sign (-1)
+        # Both directions use `+= sign`.
+        # BET ON the affected team:
+        #   affected away → lean away → NEGATIVE → -= sign (= -(+1) = -1) ✓
+        #   affected home → lean home → POSITIVE → -= sign (= -(-1) = +1) ✓
         weight = 2 if abs(s.mean_line_miss) >= 3 else 1
         if abs(s.mean_line_miss) >= 1.5:
             confidence += weight
             if s.mean_line_miss < -1.5:
-                # fade the affected team → push spread away from them
-                spread_score -= sign  # if home, pushes negative (toward away)
+                # fade the affected team
+                spread_score += sign
                 inefficiencies.append(
                     f"Books historically UNDER-react when "
                     f"{s.role_lost} is {s.status} with {s.body_part} — "
@@ -673,7 +682,8 @@ def _build_narrative(r: MatchupReport) -> MatchupNarrative:
                     f"({s.n_games} games, {s.cover_rate:.0%} cover rate)"
                 )
             else:
-                spread_score += sign
+                # contrarian — bet ON the affected team
+                spread_score -= sign
                 inefficiencies.append(
                     f"Books historically OVER-react when "
                     f"{s.role_lost} is {s.status} with {s.body_part} — "

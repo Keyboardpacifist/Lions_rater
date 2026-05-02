@@ -41,6 +41,11 @@ from lib_scheme_deltas import (
     rank_teams,
     season_year_over_year,
 )
+from lib_edge_finder import (
+    generate_edge_findings,
+    latest_week_with_games as _edge_latest_week,
+)
+from lib_matchup_finder import generate_matchup_findings
 from lib_matchup_report import generate_matchup_report
 from lib_player_prop_report import generate_player_report
 from lib_smart_alerts import fuse_alert
@@ -95,37 +100,25 @@ st.caption("Internal playground for the gambling-product engines. "
 def player_picker(options: list[str], key: str,
                     placeholder: str = "Search player by name...",
                     label: str = "Player") -> str | None:
-    """Two-state player picker — eliminates the "hit delete a bunch"
-    UX pain.
+    """Searchable player dropdown.
 
-    - Empty state: searchable dropdown with placeholder. Type any
-      part of the player's name to filter. Pick to select.
-    - Selected state: shows the selected player on a card with a
-      one-click "✕ Change player" button. Click to clear and
-      return to the search dropdown.
+    - Starts blank with a "Search player by name..." placeholder
+    - Type any letters of the name to filter the list
+    - Click to pick
+    - Click the ✕ icon at the right end to clear the selection in
+      one click — no backspacing through the existing name
 
-    Use the return value (string label) the same way you'd use a
-    plain st.selectbox return.
+    Streamlit's native selectbox with `index=None` handles all of
+    the above. Earlier versions of this helper used a custom
+    two-state pattern with st.rerun() inside, which caused page
+    resets when other widgets re-triggered the script.
     """
-    selected = st.session_state.get(key)
-    if not selected:
-        return st.selectbox(
-            label, options,
-            index=None,
-            placeholder=placeholder,
-            key=key,
-        )
-    # Selected — show readable selection + change button
-    cols = st.columns([5, 1])
-    with cols[0]:
-        st.markdown(f"**{label}:** {selected}")
-    with cols[1]:
-        if st.button("✕ Change",
-                       key=f"{key}__clear",
-                       use_container_width=True):
-            st.session_state[key] = None
-            st.rerun()
-    return selected
+    return st.selectbox(
+        label, options,
+        index=None,
+        placeholder=placeholder,
+        key=key,
+    )
 
 
 section_game, section_props = st.tabs([
@@ -134,8 +127,9 @@ section_game, section_props = st.tabs([
 ])
 
 with section_game:
-    (tab_matchup, tab_alerts, tab_injury, tab_gscript, tab_books,
-     tab_weather, tab_scheme, tab_coach) = st.tabs([
+    (tab_match_finder, tab_matchup, tab_alerts, tab_injury, tab_gscript,
+     tab_books, tab_weather, tab_scheme, tab_coach) = st.tabs([
+        "🎯 Matchup Edge Finder",
         "🚀 Matchup Report (auto)",
         "⭐ Smart Alerts (4.4)",
         "🩹 Injury Cohort (4.1)",
@@ -147,8 +141,9 @@ with section_game:
     ])
 
 with section_props:
-    (tab_proprep, tab_decomp, tab_sgp, tab_alt, tab_parlay, tab_td,
-     tab_trend, tab_long, tab_dvp) = st.tabs([
+    (tab_edge_finder, tab_proprep, tab_decomp, tab_sgp, tab_alt,
+     tab_parlay, tab_td, tab_trend, tab_long, tab_dvp) = st.tabs([
+        "🎯 Edge Finder",
         "🚀 Player Report (auto)",
         "🔬 Decomposed Projection (5.1)",
         "🔗 SGP Correlations (5.2)",
@@ -159,6 +154,105 @@ with section_props:
         "💥 Longest-Play Edge (5.7)",
         "🛡️ DvP (5.8)",
     ])
+
+
+# ════════════════════════════════════════════════════════════════
+# Tab — 🎯 Matchup Edge Finder (NEW landing for game-bets)
+# ════════════════════════════════════════════════════════════════
+
+with tab_match_finder:
+    def _run_matchup_finder_tab():
+        st.markdown("### 🎯 Matchup Edge Finder")
+        st.caption(
+            "**Pre-scanned matchup inefficiencies for the slate.** "
+            "We run every game on this week's slate through the matchup "
+            "engine and surface the games where signals stack up to a "
+            "directional lean. Click any row's '🚀 Open full report' "
+            "button to drill into the full matchup analysis."
+        )
+
+        c1, c2, c3 = st.columns([1, 1, 1])
+        seasons = list(range(2025, 2017, -1))
+        season_pick = c1.selectbox("Season", seasons, index=0,
+                                     key="mf_season")
+        try:
+            default_week = _edge_latest_week(int(season_pick))
+        except Exception:
+            default_week = 10
+        week_pick = c2.number_input("Week", 1, 22,
+                                       int(min(default_week, 18)),
+                                       key="mf_week")
+        min_conf = c3.selectbox(
+            "Min confidence",
+            [1, 2, 3, 4, 5],
+            index=1,
+            help="1 = MARGINAL · 2 = WEAK · 3 = SIGNAL DETECTED · 4 = MULTIPLE · 5 = STRONG CLUSTER",
+            key="mf_minconf",
+        )
+        if not st.button("🔍 Scan slate for edges",
+                           type="primary",
+                           use_container_width=True,
+                           key="mf_run"):
+            st.info("Click **Scan slate for edges** to run the audit.")
+            return
+
+        with st.spinner("Scanning every matchup on the slate..."):
+            df = generate_matchup_findings(
+                season=int(season_pick),
+                week=int(week_pick),
+                min_confidence=int(min_conf),
+            )
+        if df.empty:
+            st.warning(
+                f"No matchup edges flagged for W{week_pick} {season_pick} "
+                f"at min confidence {min_conf}★. Either a quiet slate or "
+                "no books-behavior cohorts matched. Try lowering min "
+                "confidence."
+            )
+            return
+
+        st.success(f"Found **{len(df)}** matchups with confidence "
+                     f"≥ {min_conf}★. Ranked best edges first.")
+
+        for i, row in df.iterrows():
+            stars = ("★" * int(row["confidence"])
+                       + "☆" * (5 - int(row["confidence"])))
+            spread = row.get("spread_line")
+            total = row.get("total_line")
+            line_bits = []
+            if spread is not None and pd.notna(spread):
+                fav = (row["home_team"] if spread > 0
+                       else row["away_team"])
+                line_bits.append(f"{fav} -{abs(spread):.1f}")
+            if total is not None and pd.notna(total):
+                line_bits.append(f"O/U {total:.1f}")
+            line_str = "  ·  ".join(line_bits) or "—"
+
+            with st.container(border=True):
+                col_main, col_btn = st.columns([4, 1])
+                with col_main:
+                    st.markdown(
+                        f"### {row['away_team']} @ {row['home_team']}"
+                        f"  ·  {stars}  ·  *{row['confidence_label']}*"
+                    )
+                    st.caption(line_str)
+                    st.markdown(
+                        f"**Lean:** {row['primary_lean']}"
+                    )
+                    if row.get("secondary_lean"):
+                        st.caption(f"Secondary: {row['secondary_lean']}")
+                    for w in row["why_top"]:
+                        st.markdown(f"- {w}")
+                    if row["risk_flags"]:
+                        with st.expander("⚠️ Risk flags"):
+                            for x in row["risk_flags"]:
+                                st.markdown(f"- {x}")
+                with col_btn:
+                    st.metric("# starters out",
+                                int(row["n_starter_absences"]))
+                    if row["has_books_signal"]:
+                        st.markdown("📊 **Books signal**")
+    _run_matchup_finder_tab()
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1437,6 +1531,109 @@ with tab_sgp:
                                 "Partner 75+ | QB 300+",
                                 "Lift"]
                 st.dataframe(view, use_container_width=True, hide_index=True)
+
+
+# ════════════════════════════════════════════════════════════════
+# Tab — 🎯 Edge Finder (NEW landing for player-props)
+# ════════════════════════════════════════════════════════════════
+
+with tab_edge_finder:
+    def _run_edge_finder_tab():
+        st.markdown("### 🎯 Edge Finder")
+        st.caption(
+            "**Pre-scanned mispriced prop bets for this week.** We "
+            "scan every prop-relevant player on the slate for two "
+            "edge types: **role expansions** (recent usage exploded "
+            "vs. season prior — books anchor to season) and "
+            "**projection gaps** (model projection diverges ≥15% "
+            "from recent baseline due to weather / matchup / injury). "
+            "Click any row's 'Open report' to drill into the full "
+            "Player Prop Report."
+        )
+
+        c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+        seasons = list(range(2025, 2017, -1))
+        season_pick = c1.selectbox("Season", seasons, index=0,
+                                     key="ef_season")
+        try:
+            default_week = _edge_latest_week(int(season_pick))
+        except Exception:
+            default_week = 10
+        week_pick = c2.number_input("Week", 1, 22,
+                                       int(min(default_week, 18)),
+                                       key="ef_week")
+        positions = c3.multiselect(
+            "Positions",
+            ["QB", "RB", "WR", "TE"],
+            default=["QB", "RB", "WR", "TE"],
+            key="ef_pos",
+        )
+        finding_type_filter = c4.selectbox(
+            "Finding type",
+            ["both", "TREND_DIVERGENCE", "PROJECTION_GAP"],
+            key="ef_type",
+        )
+        if not st.button("🔍 Scan slate for prop edges",
+                           type="primary",
+                           use_container_width=True,
+                           key="ef_run"):
+            st.info("Click **Scan slate for prop edges** to run the audit.")
+            return
+
+        with st.spinner("Scanning every prop-relevant player on the slate..."):
+            df = generate_edge_findings(
+                season=int(season_pick),
+                week=int(week_pick),
+                position_filter=positions or None,
+                min_z=1.0,
+                min_pct_shift=0.15,
+            )
+        if df.empty:
+            st.warning(
+                f"No prop edges flagged for W{week_pick} {season_pick}. "
+                "Try widening the position filter or check that the "
+                "schedule has games for that week."
+            )
+            return
+        if finding_type_filter != "both":
+            df = df[df["finding_type"] == finding_type_filter]
+
+        st.success(f"Found **{len(df)}** prop edges across the slate. "
+                     "Ranked by confidence × magnitude.")
+
+        # Type-counter caption
+        n_trend = int((df["finding_type"]
+                          == "TREND_DIVERGENCE").sum())
+        n_proj = int((df["finding_type"]
+                         == "PROJECTION_GAP").sum())
+        st.caption(f"📈 {n_trend} role-expansion / shrink flags  ·  "
+                     f"🔬 {n_proj} projection gaps")
+
+        # Render top 30 cards (pagination if needed later)
+        for i, row in df.head(30).iterrows():
+            stars = ("★" * int(row["confidence"])
+                       + "☆" * (5 - int(row["confidence"])))
+            tag = ("📈" if row["finding_type"] == "TREND_DIVERGENCE"
+                   else "🔬")
+            with st.container(border=True):
+                col_main, col_meta = st.columns([4, 1])
+                with col_main:
+                    st.markdown(
+                        f"#### {tag} {row['player_name']}  ·  "
+                        f"{row['team']}  ·  {stars}"
+                    )
+                    direction_badge = ("🟢 OVER"
+                                         if row["direction"] == "OVER"
+                                         else "🔴 UNDER")
+                    st.markdown(
+                        f"**{direction_badge}**  on  **{row['stat']}**"
+                    )
+                    st.markdown(row["blurb"])
+                with col_meta:
+                    st.metric("Δ vs baseline",
+                                f"{row['pct_shift']:+.0%}")
+                    st.caption(row["finding_type"].replace("_", " ").title())
+    _run_edge_finder_tab()
 
 
 # ════════════════════════════════════════════════════════════════

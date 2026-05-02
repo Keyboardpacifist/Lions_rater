@@ -1,0 +1,324 @@
+"""Edge Finder — scans the slate and surfaces mispriced prop bets.
+
+For a given (season, week), runs every prop-relevant player through
+the existing engines and returns a ranked DataFrame of findings —
+scenarios where books TYPICALLY anchor to wrong baselines (season
+averages instead of recent role, prior-injury baseline instead of
+healed, etc.).
+
+Two finding types in v1:
+
+  TREND_DIVERGENCE — recent (last 3) usage z-scored vs season prior
+                       crosses |z| ≥ 1.0. Books usually anchor to
+                       season averages and lag recent role shifts.
+
+  PROJECTION_GAP   — decomposed projection (with opponent / weather /
+                       injury / game-script context) deviates ≥15%
+                       from the player's own recent baseline. Books
+                       price off the baseline; the model factors in
+                       the matchup-specific context.
+
+Each finding gets a plain-English blurb, a magnitude, and a 1-5 star
+confidence rating based on signal strength × sample size.
+
+Public entry point
+------------------
+    generate_edge_findings(season, week, position_filter=None,
+                             min_z=1.0, min_pct_shift=0.15) -> pd.DataFrame
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+
+from lib_decomposed_projection import decompose
+from lib_trend_divergence import compute_player_window
+from lib_weather import primary_stat_for_position
+
+
+REPO = Path(__file__).resolve().parent
+DATA = REPO / "data"
+PLAYER_STATS = DATA / "nfl_player_stats_weekly.parquet"
+SCHEDULES = DATA / "nfl_schedules.parquet"
+
+
+@st.cache_data(show_spinner=False)
+def _load_stats() -> pd.DataFrame:
+    return pd.read_parquet(PLAYER_STATS)
+
+
+@st.cache_data(show_spinner=False)
+def _load_schedules() -> pd.DataFrame:
+    return pd.read_parquet(SCHEDULES)
+
+
+@dataclass
+class Finding:
+    player_id: str
+    player_name: str
+    team: str
+    position: str
+    stat: str
+    finding_type: str          # TREND_DIVERGENCE / PROJECTION_GAP
+    direction: str             # "OVER" / "UNDER"
+    magnitude: float           # raw effect size (yards, target shifts, etc.)
+    pct_shift: float           # signed % vs baseline (for ranking)
+    confidence: int            # 1-5 stars
+    blurb: str                 # plain-English one-liner
+
+
+# Stats we hunt for divergence on. Usage stats lead the most edges.
+TREND_STATS = [
+    "targets", "receptions", "carries",
+    "passing_yards", "rushing_yards", "receiving_yards",
+]
+
+# Minimum BASELINE values to be a "real" prop-market player.
+# Below these, the stat's market doesn't really exist (no book lines)
+# AND percentage shifts blow up (a 0→4 yard projection is "+infinity"
+# percent but means nothing). Keyed on the player's PRIMARY stat.
+MIN_BASELINE_BY_POSITION = {
+    "QB":  150.0,    # ≥ 150 passing yds/g recent baseline → starter
+    "RB":   30.0,    # ≥ 30 rushing yds/g → real RB1/RB2
+    "FB":   30.0,
+    "WR":   25.0,    # ≥ 25 receiving yds/g → meaningful target share
+    "TE":   18.0,    # ≥ 18 receiving yds/g
+}
+
+# Same idea for trend divergence — only flag a role expansion that's
+# headed into prop-market territory (not a player going from 0.3 to
+# 0.7 carries — irrelevant even if z=2)
+MIN_RECENT_AVG_FOR_TREND = {
+    "passing_yards":   150.0,
+    "rushing_yards":    25.0,
+    "receiving_yards":  20.0,
+    "receptions":        3.0,
+    "targets":           4.0,
+    "carries":           5.0,
+}
+
+
+def _eligible_players_for_week(season: int, week: int) -> pd.DataFrame:
+    """Return active prop-relevant players whose team has a game this
+    week. Uses the schedule + most-recent-team logic."""
+    df = _load_stats()
+    sch = _load_schedules()
+
+    # Find teams playing this week
+    g = sch[(sch["season"] == int(season))
+            & (sch["week"] == int(week))]
+    if g.empty:
+        return pd.DataFrame()
+    teams_this_week = set(g["home_team"].dropna().astype(str)) | set(
+        g["away_team"].dropna().astype(str))
+
+    # Players with at least 4 games this season at QB/RB/FB/WR/TE,
+    # whose most-recent team is playing this week
+    season_data = df[(df["season"] == int(season))
+                     & df["position"].isin(["QB", "RB", "FB", "WR", "TE"])]
+    if season_data.empty:
+        return pd.DataFrame()
+
+    counts = (season_data.groupby(["player_id", "player_display_name",
+                                       "position"])
+               .size().reset_index().rename(columns={0: "n_games"}))
+    counts = counts[counts["n_games"] >= 4]
+    most_recent = (season_data.sort_values(["season", "week"],
+                                              ascending=[False, False])
+                    .drop_duplicates(["player_id"])[
+                        ["player_id", "team"]
+                    ])
+    out = counts.merge(most_recent, on="player_id", how="left")
+    out = out[out["team"].isin(teams_this_week)]
+    return out.reset_index(drop=True)
+
+
+def _opp_for(team: str, season: int, week: int) -> str | None:
+    sch = _load_schedules()
+    g = sch[(sch["season"] == int(season))
+            & (sch["week"] == int(week))
+            & ((sch["home_team"] == team)
+               | (sch["away_team"] == team))]
+    if g.empty:
+        return None
+    row = g.iloc[0]
+    return (row["away_team"] if row["home_team"] == team
+            else row["home_team"])
+
+
+def _weather_for(team: str, season: int, week: int) -> dict:
+    sch = _load_schedules()
+    g = sch[(sch["season"] == int(season))
+            & (sch["week"] == int(week))
+            & ((sch["home_team"] == team)
+               | (sch["away_team"] == team))]
+    if g.empty:
+        return {}
+    row = g.iloc[0]
+    return {
+        "temp": (float(row["temp"]) if pd.notna(row.get("temp")) else None),
+        "wind": (float(row["wind"]) if pd.notna(row.get("wind")) else None),
+        "roof": (str(row["roof"]) if pd.notna(row.get("roof")) else None),
+    }
+
+
+def _trend_findings(season: int, week: int,
+                      eligible: pd.DataFrame,
+                      min_z: float) -> list[Finding]:
+    out: list[Finding] = []
+    for _, p in eligible.iterrows():
+        rows = compute_player_window(
+            p["player_id"], season=int(season), week=int(week),
+            lookback=3,
+        )
+        for r in rows:
+            if r.stat not in TREND_STATS:
+                continue
+            if abs(r.delta_z) < min_z:
+                continue
+            # Filter out role expansions on stats with no real prop
+            # market (e.g., 0.3 → 0.7 carries for a third-string TE)
+            min_avg = MIN_RECENT_AVG_FOR_TREND.get(r.stat, 0.0)
+            if r.recent_avg < min_avg and r.season_avg < min_avg:
+                continue
+            direction = "OVER" if r.delta > 0 else "UNDER"
+            stat_label = r.stat.replace("_", " ")
+            verb = "expanded" if r.delta > 0 else "shrunk"
+            confidence = min(5, max(1, int(round(abs(r.delta_z)))))
+            blurb = (
+                f"{p['player_display_name']} ({p['position']}, "
+                f"{p['team']}): {stat_label} role {verb} recently — "
+                f"{r.recent_avg:.1f}/g last 3 vs {r.season_avg:.1f}/g "
+                f"season prior (z={r.delta_z:+.1f}). Books usually "
+                f"anchor to season averages."
+            )
+            out.append(Finding(
+                player_id=p["player_id"],
+                player_name=p["player_display_name"],
+                team=p["team"], position=p["position"],
+                stat=r.stat,
+                finding_type="TREND_DIVERGENCE",
+                direction=direction,
+                magnitude=float(r.delta),
+                pct_shift=(r.delta / r.season_avg
+                            if r.season_avg > 0 else 0.0),
+                confidence=confidence,
+                blurb=blurb,
+            ))
+    return out
+
+
+def _projection_findings(season: int, week: int,
+                            eligible: pd.DataFrame,
+                            min_pct_shift: float) -> list[Finding]:
+    out: list[Finding] = []
+    for _, p in eligible.iterrows():
+        pos = p["position"]
+        stat = primary_stat_for_position(pos)
+        if not stat:
+            continue
+        opp = _opp_for(p["team"], season, week)
+        wx = _weather_for(p["team"], season, week)
+        try:
+            d = decompose(
+                player_id=p["player_id"], position=pos,
+                team=p["team"], stat=stat,
+                opponent=opp,
+                season=int(season), week=int(week),
+                target_temp=wx.get("temp"),
+                target_wind=wx.get("wind"),
+                target_roof=wx.get("roof"),
+                lookback_games=12,
+            )
+        except Exception:
+            continue
+        # Real prop-market threshold — backup QBs with 4-yard
+        # baselines aren't bet on, and their pct shifts explode.
+        min_baseline = MIN_BASELINE_BY_POSITION.get(pos, 0.0)
+        if d.baseline < min_baseline:
+            continue
+        pct = (d.projection - d.baseline) / d.baseline
+        if abs(pct) < min_pct_shift:
+            continue
+        # Cap pct at ±100% — any larger usually means model artifact
+        # (cohort blowing up, weather extreme), not a real edge.
+        if abs(pct) > 1.0:
+            continue
+
+        # Identify the largest single contributor for the blurb
+        if d.contributions:
+            top = max(d.contributions, key=lambda c: abs(c.delta))
+            top_label = top.label
+            top_delta = top.delta
+        else:
+            top_label = "—"
+            top_delta = 0.0
+
+        direction = "UNDER" if pct < 0 else "OVER"
+        stat_label = stat.replace("_", " ")
+        confidence = min(5, max(1, int(round(abs(pct) / 0.05))))
+        verb = "below" if pct < 0 else "above"
+        blurb = (
+            f"{p['player_display_name']} ({p['position']}, "
+            f"{p['team']}): {stat_label} projects {abs(pct):.0%} "
+            f"{verb} recent baseline ({d.baseline:.0f} → "
+            f"{d.projection:.0f}). Top driver: {top_label} "
+            f"({top_delta:+.0f} yds)."
+        )
+        out.append(Finding(
+            player_id=p["player_id"],
+            player_name=p["player_display_name"],
+            team=p["team"], position=p["position"],
+            stat=stat,
+            finding_type="PROJECTION_GAP",
+            direction=direction,
+            magnitude=float(d.projection - d.baseline),
+            pct_shift=float(pct),
+            confidence=confidence,
+            blurb=blurb,
+        ))
+    return out
+
+
+def generate_edge_findings(season: int, week: int,
+                              position_filter: list[str] | None = None,
+                              min_z: float = 1.0,
+                              min_pct_shift: float = 0.15
+                              ) -> pd.DataFrame:
+    """Top-level entry point. Returns a DataFrame of findings ranked
+    by confidence × |magnitude|."""
+    eligible = _eligible_players_for_week(season, week)
+    if eligible.empty:
+        return pd.DataFrame()
+    if position_filter:
+        eligible = eligible[eligible["position"].isin(position_filter)]
+    if eligible.empty:
+        return pd.DataFrame()
+
+    findings: list[Finding] = []
+    findings.extend(_trend_findings(season, week, eligible, min_z))
+    findings.extend(_projection_findings(season, week, eligible,
+                                            min_pct_shift))
+
+    if not findings:
+        return pd.DataFrame()
+    df = pd.DataFrame([f.__dict__ for f in findings])
+    # Rank: confidence first, then magnitude
+    df["_score"] = df["confidence"] * df["pct_shift"].abs()
+    df = df.sort_values("_score", ascending=False).drop(
+        columns="_score").reset_index(drop=True)
+    return df
+
+
+def latest_week_with_games(season: int) -> int:
+    """Return the most-recent week in the schedule for a season that
+    has actual games scheduled."""
+    sch = _load_schedules()
+    sub = sch[(sch["season"] == int(season))
+              & sch["spread_line"].notna()]
+    if sub.empty:
+        return 1
+    return int(sub["week"].max())
