@@ -78,38 +78,87 @@ def main() -> None:
     ).reset_index()
     print(f"  league seasons: {len(league)}")
 
-    # Per-(defteam, season) WR-target allowance
-    opp_def = wr_pass.groupby(["defteam", "season"]).agg(
-        opp_epa_allowed=("epa", "mean"),
-        opp_success_allowed=("success", "mean"),
-        opp_yards_allowed=("receiving_yards", "mean"),
-        opp_complete_allowed=("complete_pass", "mean"),
+    # ── PER-PLAYER LEAVE-ONE-OUT SOS ──────────────────────────────
+    # When grading player P against defense D, the opponent baseline
+    # should EXCLUDE all of P's contribution to D's allowance — not
+    # just one play, but every play P had vs D in that season.
+    #
+    # Math (per (player, season, defteam) cell):
+    #   p_v_d_total = sum(player's stat vs D this season)
+    #   p_v_d_count = count(player's plays vs D this season)
+    #   D_excl_p_total = D_total - p_v_d_total
+    #   D_excl_p_count = D_count - p_v_d_count
+    #   adj_baseline = D_excl_p_total / D_excl_p_count
+    #
+    #   adj(play_i) = play_i - adj_baseline + league_mean
+    #
+    # This removes ~6-12% of D's volume for elite players (real
+    # chicken-and-egg fix). Per-PLAY LOO only removed 1/600 — too
+    # mild to matter.
+    print("→ computing per-defense + per-player season totals...")
+    def_totals = wr_pass.groupby(["defteam", "season"]).agg(
+        d_epa_total=("epa", "sum"),
+        d_success_total=("success", "sum"),
+        d_yards_total=("receiving_yards", "sum"),
+        d_complete_total=("complete_pass", "sum"),
+        d_count=("epa", "size"),
     ).reset_index()
-    print(f"  team-season WR-defense rows: {len(opp_def):,}")
+    player_v_def = wr_pass.groupby(
+        ["receiver_player_id", "defteam", "season"]
+    ).agg(
+        p_v_d_epa=("epa", "sum"),
+        p_v_d_success=("success", "sum"),
+        p_v_d_yards=("receiving_yards", "sum"),
+        p_v_d_complete=("complete_pass", "sum"),
+        p_v_d_count=("epa", "size"),
+    ).reset_index()
+    print(f"  team-season WR-defense rows: {len(def_totals):,}")
+    print(f"  player-vs-def rows: {len(player_v_def):,}")
 
-    # Save the WR-defense quality table for reuse
+    # Save the WR-defense quality table (mean form, for reuse)
     wr_def_path = REPO / "data" / "team_wr_def_quality.parquet"
-    opp_def.rename(columns={"defteam": "team"}).to_parquet(
-        wr_def_path, index=False)
+    wr_def_save = def_totals.copy()
+    wr_def_save["opp_epa_allowed"] = (wr_def_save["d_epa_total"]
+                                          / wr_def_save["d_count"])
+    wr_def_save["opp_success_allowed"] = (wr_def_save["d_success_total"]
+                                              / wr_def_save["d_count"])
+    wr_def_save["opp_yards_allowed"] = (wr_def_save["d_yards_total"]
+                                            / wr_def_save["d_count"])
+    wr_def_save["opp_complete_allowed"] = (wr_def_save["d_complete_total"]
+                                                / wr_def_save["d_count"])
+    wr_def_save = wr_def_save.rename(columns={"defteam": "team"})[[
+        "team", "season", "opp_epa_allowed", "opp_success_allowed",
+        "opp_yards_allowed", "opp_complete_allowed"
+    ]]
+    wr_def_save.to_parquet(wr_def_path, index=False)
     print(f"  ✓ side-effect: wrote {wr_def_path.relative_to(REPO)}")
 
-    # Attach baselines + compute adjusted per-target values
-    wr_pass = wr_pass.merge(opp_def, on=["defteam", "season"],
+    # Attach defense totals + player_v_def + league
+    wr_pass = wr_pass.merge(def_totals, on=["defteam", "season"],
                               how="left")
+    wr_pass = wr_pass.merge(player_v_def,
+                              on=["receiver_player_id", "defteam",
+                                  "season"], how="left")
     wr_pass = wr_pass.merge(league, on="season", how="left")
 
+    # Per-player LOO baseline = (D − player_v_D) / (count − player_count)
+    denom = (wr_pass["d_count"] - wr_pass["p_v_d_count"]).clip(lower=1)
+    base_epa = ((wr_pass["d_epa_total"] - wr_pass["p_v_d_epa"]) / denom)
+    base_success = ((wr_pass["d_success_total"]
+                      - wr_pass["p_v_d_success"]) / denom)
+    base_yards = ((wr_pass["d_yards_total"]
+                    - wr_pass["p_v_d_yards"]) / denom)
+    base_complete = ((wr_pass["d_complete_total"]
+                       - wr_pass["p_v_d_complete"]) / denom)
+
     wr_pass["adj_epa"] = (wr_pass["epa"]
-                          - wr_pass["opp_epa_allowed"]
-                          + wr_pass["lg_epa"])
+                          - base_epa + wr_pass["lg_epa"])
     wr_pass["adj_success"] = (wr_pass["success"]
-                                - wr_pass["opp_success_allowed"]
-                                + wr_pass["lg_success"])
+                                - base_success + wr_pass["lg_success"])
     wr_pass["adj_yards"] = (wr_pass["receiving_yards"]
-                              - wr_pass["opp_yards_allowed"]
-                              + wr_pass["lg_yards"])
+                              - base_yards + wr_pass["lg_yards"])
     wr_pass["adj_complete"] = (wr_pass["complete_pass"]
-                                 - wr_pass["opp_complete_allowed"]
-                                 + wr_pass["lg_complete"])
+                                 - base_complete + wr_pass["lg_complete"])
 
     # Aggregate per (receiver, season)
     grp = wr_pass.groupby(["receiver_player_id", "season"])

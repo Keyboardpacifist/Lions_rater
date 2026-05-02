@@ -63,50 +63,53 @@ def main() -> None:
     ).reset_index()
     print(f"  league seasons: {len(league)}")
 
-    # Opp pass-defense allowance per (team, season).
-    # NOTE: completion_pct_allowed, sack_rate_forced are 0-1 scaled
-    # in the team_def file. pass_epa_allowed_per_play is the EPA value.
-    td_lite = td[["team", "season", "pass_epa_allowed_per_play",
-                   "completion_pct_allowed", "sack_rate_forced"]].copy()
+    # ── PER-PLAYER LEAVE-ONE-OUT SOS ──────────────────────────────
+    # opp baseline = (D_total − player_v_D_total) / (D_count − player_v_D_count)
+    # — the right way to break the chicken-and-egg.
+    print("→ computing per-defense + per-player season totals...")
+    db["sack_f"] = db["sack"].fillna(0)
+    db["int_f"] = db["interception"].fillna(0)
 
-    # Compute per-team per-season opp success_rate_allowed and
-    # int_rate_forced from raw db (team_def doesn't have these).
-    opp_aux = (db.groupby(["defteam", "season"])
-               .agg(opp_success_allowed=("success", "mean"),
-                    opp_int_forced=("interception", "mean"))
-               .reset_index()
-               .rename(columns={"defteam": "team"}))
-    opp = td_lite.merge(opp_aux, on=["team", "season"], how="outer")
-    print(f"  opp def rows: {len(opp)}")
+    def_totals = db.groupby(["defteam", "season"]).agg(
+        d_epa_total=("epa", "sum"),
+        d_success_total=("success", "sum"),
+        d_complete_total=("complete_pass", "sum"),
+        d_sack_total=("sack_f", "sum"),
+        d_int_total=("int_f", "sum"),
+        d_count=("epa", "size"),
+    ).reset_index()
+    player_v_def = db.groupby(
+        ["passer_player_id", "defteam", "season"]
+    ).agg(
+        p_v_d_epa=("epa", "sum"),
+        p_v_d_success=("success", "sum"),
+        p_v_d_complete=("complete_pass", "sum"),
+        p_v_d_sack=("sack_f", "sum"),
+        p_v_d_int=("int_f", "sum"),
+        p_v_d_count=("epa", "size"),
+    ).reset_index()
+    print(f"  team-season pass-def rows: {len(def_totals)}")
+    print(f"  player-vs-def rows: {len(player_v_def):,}")
 
-    # Attach opp + league baselines to each dropback
-    db = db.merge(opp.rename(columns={"team": "defteam"}),
-                   on=["defteam", "season"], how="left")
+    db = db.merge(def_totals, on=["defteam", "season"], how="left")
+    db = db.merge(player_v_def,
+                    on=["passer_player_id", "defteam", "season"],
+                    how="left")
     db = db.merge(league, on="season", how="left")
 
-    # Per-dropback adjusted values:
-    #   adj = actual - opp_allowance + league_mean
-    # so the centered scale is league mean. A QB carving a top-5 D
-    # at +0.05 EPA/play (when that D allows -0.05 per play league-
-    # wide) gets credited more than the same +0.05 against a soft D.
-    db["adj_epa"] = (db["epa"]
-                      - db["pass_epa_allowed_per_play"]
-                      + db["lg_epa"])
-    db["adj_success"] = (db["success"]
-                          - db["opp_success_allowed"]
-                          + db["lg_success"])
-    db["adj_complete"] = (db["complete_pass"]
-                           - db["completion_pct_allowed"]
-                           + db["lg_complete"])
-    # sacks/INTs: opp's sack_rate_forced is "% they FORCE". For QB
-    # POV, lower opp sack rate forced = easier defense, so adj_sack
-    # = actual_sack - opp_forced + league_mean keeps the convention.
-    db["adj_sack"] = (db["sack"].fillna(0)
-                       - db["sack_rate_forced"].fillna(db["lg_sack"])
-                       + db["lg_sack"])
-    db["adj_int"] = (db["interception"].fillna(0)
-                      - db["opp_int_forced"].fillna(db["lg_int"])
-                      + db["lg_int"])
+    denom = (db["d_count"] - db["p_v_d_count"]).clip(lower=1)
+    base_epa = ((db["d_epa_total"] - db["p_v_d_epa"]) / denom)
+    base_success = ((db["d_success_total"] - db["p_v_d_success"]) / denom)
+    base_complete = ((db["d_complete_total"] - db["p_v_d_complete"]) / denom)
+    base_sack = ((db["d_sack_total"] - db["p_v_d_sack"]) / denom)
+    base_int = ((db["d_int_total"] - db["p_v_d_int"]) / denom)
+
+    db["adj_epa"] = db["epa"] - base_epa + db["lg_epa"]
+    db["adj_success"] = db["success"] - base_success + db["lg_success"]
+    db["adj_complete"] = (db["complete_pass"] - base_complete
+                            + db["lg_complete"])
+    db["adj_sack"] = db["sack_f"] - base_sack + db["lg_sack"]
+    db["adj_int"] = db["int_f"] - base_int + db["lg_int"]
 
     # Aggregate per (passer, season)
     grp = db.groupby(["passer_player_id", "season"])

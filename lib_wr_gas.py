@@ -60,21 +60,15 @@ NEGATIVE_STATS: set[str] = set()
 PER_TARGET_EFFICIENCY = BundleSpec(
     name="Per-target efficiency",
     stats={
-        # NOTE: NOT using SOS-adjusted versions for WR. The SOS
-        # adjustment is circular for top-of-target-tree dominant WRs:
-        # Justin Jefferson / Ja'Marr Chase / etc. ARE most of their
-        # team's WR-target volume. So defenses that face them have
-        # inflated "WR-allowance" numbers BECAUSE these stars exploited
-        # them. Subtracting that inflated baseline makes their adj
-        # stats look average. SOS adjustment works for QB (one player,
-        # not a denominator-of-himself problem); breaks for elite WRs.
-        # Raw z-cols are more honest here. Future v2 fix: leave-one-
-        # out SOS that excludes games involving the player.
-        "epa_per_target_z":   0.30,
-        "yards_per_target_z": 0.25,
-        "racr_z":             0.15,
-        "success_rate_z":     0.15,
-        "avg_cpoe_z":         0.15,
+        # SOS-adjusted via PER-PLAYER leave-one-out (build_wr_sos_adjusted)
+        # The opp baseline excludes ALL of this player's plays vs that
+        # defense, breaking the chicken-and-egg of "elite WRs inflate
+        # their own opponents' allowance baseline."
+        "adj_epa_per_target_z":   0.30,
+        "adj_yards_per_target_z": 0.25,
+        "racr_z":                 0.15,
+        "adj_success_rate_z":     0.15,
+        "avg_cpoe_z":             0.15,
     },
 )
 
@@ -129,9 +123,25 @@ WR_SPEC = PositionGradeSpec(
         "scoring_chains":        SCORING_CHAINS,
         "catch_quality":         CATCH_QUALITY,
     },
+    # Bundle weights calibrated for football importance × YoY stability.
+    # Per-bundle YoY (NFL pooled 2017-2025, ≥10g):
+    #   Volume / role          0.81  ← extremely stable; targets-leader sticky
+    #   Coverage-beating       0.55  (separation = real trait)
+    #   Scoring + chains       0.49
+    #   YAC                    0.37
+    #   Per-target efficiency  0.35  (depends on QB throws, scheme, matchups)
+    #   Catch quality          0.33
+    #
+    # Why volume_role weight is high (30%):
+    # A WR's total value to his team scales with volume × efficiency. A
+    # deep-specialist who's elite per-target on 60 targets isn't a top-5
+    # NFL WR; a high-volume target hog with above-avg per-target IS.
+    # Volume-role captures "is this player actually a #1 in his offense,"
+    # which prevents low-volume efficient role players from ranking
+    # above true alphas.
     bundle_weights={
-        "per_target_efficiency": 0.40,
-        "volume_role":           0.20,
+        "per_target_efficiency": 0.30,
+        "volume_role":           0.30,
         "coverage_beating":      0.10,
         "yac":                   0.10,
         "scoring_chains":        0.15,

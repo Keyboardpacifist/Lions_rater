@@ -78,33 +78,57 @@ def main() -> None:
     ).reset_index()
     print(f"  league seasons: {len(league)}")
 
-    # ── Per-(defteam, season) RUN-DEFENSE allowance
-    opp_def = pbp.groupby(["defteam", "season"]).agg(
-        opp_run_epa_allowed=("epa", "mean"),
-        opp_run_success_allowed=("success", "mean"),
-        opp_run_explosive_allowed=("explosive", "mean"),
+    # ── PER-PLAYER LEAVE-ONE-OUT SOS ──────────────────────────────
+    # See build_wr_sos_adjusted.py for full docstring. Short version:
+    # opp baseline = (D_total − player_v_D_total) / (D_count − player_v_D_count).
+    print("→ computing per-defense + per-player season totals...")
+    def_totals = pbp.groupby(["defteam", "season"]).agg(
+        d_epa_total=("epa", "sum"),
+        d_success_total=("success", "sum"),
+        d_explosive_total=("explosive", "sum"),
+        d_count=("epa", "size"),
     ).reset_index()
-    print(f"  team-season run-def rows: {len(opp_def):,}")
+    player_v_def = pbp.groupby(
+        ["rusher_player_id", "defteam", "season"]
+    ).agg(
+        p_v_d_epa=("epa", "sum"),
+        p_v_d_success=("success", "sum"),
+        p_v_d_explosive=("explosive", "sum"),
+        p_v_d_count=("epa", "size"),
+    ).reset_index()
+    print(f"  team-season run-def rows: {len(def_totals):,}")
+    print(f"  player-vs-def rows: {len(player_v_def):,}")
 
-    # Save the run-def quality table — we'll use it as our team_run_def
     run_def_path = REPO / "data" / "team_run_def_quality.parquet"
-    opp_def.rename(columns={"defteam": "team"}).to_parquet(run_def_path,
-                                                              index=False)
+    save = def_totals.copy()
+    save["opp_run_epa_allowed"] = save["d_epa_total"] / save["d_count"]
+    save["opp_run_success_allowed"] = (save["d_success_total"]
+                                          / save["d_count"])
+    save["opp_run_explosive_allowed"] = (save["d_explosive_total"]
+                                            / save["d_count"])
+    save = save.rename(columns={"defteam": "team"})[[
+        "team", "season", "opp_run_epa_allowed",
+        "opp_run_success_allowed", "opp_run_explosive_allowed"
+    ]]
+    save.to_parquet(run_def_path, index=False)
     print(f"  ✓ side-effect: wrote {run_def_path.relative_to(REPO)}")
 
-    # ── Attach baselines + compute adjusted per-rush values
-    pbp = pbp.merge(opp_def, on=["defteam", "season"], how="left")
+    pbp = pbp.merge(def_totals, on=["defteam", "season"], how="left")
+    pbp = pbp.merge(player_v_def,
+                      on=["rusher_player_id", "defteam", "season"],
+                      how="left")
     pbp = pbp.merge(league, on="season", how="left")
 
-    pbp["adj_epa"] = (pbp["epa"]
-                      - pbp["opp_run_epa_allowed"]
-                      + pbp["lg_epa"])
-    pbp["adj_success"] = (pbp["success"]
-                          - pbp["opp_run_success_allowed"]
-                          + pbp["lg_success"])
+    denom = (pbp["d_count"] - pbp["p_v_d_count"]).clip(lower=1)
+    base_epa = ((pbp["d_epa_total"] - pbp["p_v_d_epa"]) / denom)
+    base_success = ((pbp["d_success_total"] - pbp["p_v_d_success"]) / denom)
+    base_explosive = ((pbp["d_explosive_total"]
+                       - pbp["p_v_d_explosive"]) / denom)
+
+    pbp["adj_epa"] = pbp["epa"] - base_epa + pbp["lg_epa"]
+    pbp["adj_success"] = pbp["success"] - base_success + pbp["lg_success"]
     pbp["adj_explosive"] = (pbp["explosive"]
-                              - pbp["opp_run_explosive_allowed"]
-                              + pbp["lg_explosive"])
+                              - base_explosive + pbp["lg_explosive"])
 
     # Filter to RB-only rushes
     pbp = pbp[pbp["rusher_player_id"].isin(rb_ids)]
