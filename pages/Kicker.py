@@ -11,6 +11,7 @@ from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
 from career_arc import career_arc_section
 from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, radar_season_row, render_combine_chart, render_master_detail_leaderboard, render_player_card, render_player_year_picker, score_players
+import lib_gas_panels as gp
 
 st.set_page_config(page_title="Lions Kicker Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -194,6 +195,9 @@ if total_weight == 0: st.info("All weights are zero — drag some sliders.")
 kickers = kickers.sort_values("score", ascending=False).reset_index(drop=True)
 kickers.index = kickers.index + 1
 
+gp.render_team_gas_section("k", selected_team, selected_season,
+                              title=f"GAS Score · {team_name} K")
+st.caption("⚠️ K stats are inherently volatile year-to-year (low YoY).")
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.subheader("Ranking")
 ranked = kickers.copy()

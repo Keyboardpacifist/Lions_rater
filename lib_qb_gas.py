@@ -146,13 +146,18 @@ QB_SPEC = PositionGradeSpec(
     # outcomes, just doesn't predict next year. We weight it modestly
     # so noisy single-season fluctuations don't dominate. Same logic
     # for clutch: meaningful when it happens, but small-sample noisy.
+    # Mobility lifted 12 → 21 (June 2026 rev): the modern game (Lamar,
+    # Allen, Hurts, Daniels) makes rushing a primary QB skill, and 12%
+    # was undergrading dual-threats vs pocket statues. The 9% comes from
+    # volume (passing yards/TDs are partly captured in efficiency
+    # already, so volume was double-counted at 17%).
     bundle_weights={
-        "efficiency":     0.45,    # up from 0.40 — stable + decisive
-        "volume":         0.17,    # up modestly
-        "ball_security":  0.10,    # down from 0.15 — high noise
-        "pressure":       0.13,    # slightly down
-        "mobility":       0.12,    # up — stable trait
-        "clutch":         0.03,    # down from 0.05 — pure noise
+        "efficiency":     0.45,    # stable + decisive
+        "volume":         0.08,    # trimmed to fund mobility increase
+        "ball_security":  0.10,    # high noise — keep modest
+        "pressure":       0.13,
+        "mobility":       0.21,    # MODERN-GAME WEIGHTING (was 0.12)
+        "clutch":         0.03,    # high noise — keep small
     },
 )
 

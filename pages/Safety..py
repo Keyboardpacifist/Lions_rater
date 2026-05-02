@@ -12,6 +12,7 @@ from scipy.stats import norm
 from team_selector import get_team_and_season, filter_by_team_and_season, NFL_TEAMS
 from career_arc import career_arc_section
 from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, render_combine_chart, render_master_detail_leaderboard, render_player_card, render_player_year_picker, score_players
+import lib_gas_panels as gp
 
 st.set_page_config(page_title="Lions Safety Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
 inject_css()
@@ -228,6 +229,11 @@ if "algo" in st.query_params and st.session_state.safety_loaded_algo is None:
 # PAGE HEADER
 # ══════════════════════════════════════════════════════════════
 st.subheader(f"{team_name} safeties")
+
+gp.render_team_gas_section("safety", selected_team, selected_season,
+                              title=f"GAS Score · {team_name} Safeties")
+st.markdown("---")
+st.markdown("### 🎛️ Build your own algorithm")
 st.markdown("What makes a great safety? **You decide.** Use the sliders on the left to tell us what you value most, and the rankings update instantly.")
 st.caption(f"{selected_season} regular season · Compared to all 93 safeties league-wide with 200+ snaps")
 

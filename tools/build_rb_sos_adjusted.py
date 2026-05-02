@@ -1,30 +1,32 @@
-"""SOS-adjusted RB per-season z-cols.
+"""SOS-adjusted RB per-season z-cols WITH OL-context adjustment.
 
 Output: data/rb_sos_adjusted_z.parquet
 
-Per-rush opponent run-defense subtraction. ONLY the stats that aren't
-already player-isolated get SOS-adjusted:
+Two adjustments per RB rush:
 
+1. **Defense LOO (per-player).** Subtract the defense's typical
+   run-allowance excluding this RB's contribution. Captures
+   schedule-strength.
+
+2. **OL-context credit removal.** A great OL makes any RB look
+   better; a bad OL holds even Saquon back. We estimate the
+   league-wide effect of OL run-block quality on per-rush stats
+   (β > 0) and subtract that contribution. RB grade left over is
+   what the RB did *above what his OL would predict*.
+   OL quality = team-season top-5-starter avg `gas_run_blocking_grade`
+   from ol_gas_seasons.parquet. Centered on 50 (grade midpoint).
+
+Stats adjusted (rushing only):
   epa_per_rush       → adj_epa_per_rush_z
   rush_success_rate  → adj_rush_success_rate_z
   explosive_run_rate → adj_explosive_run_rate_z
 
-Stats SKIPPED for SOS (already opponent-controlled):
+Stats SKIPPED for adjustment (already player-isolated):
   ryoe_per_att          (NGS already controls for box / defender placement)
   yards_after_contact   (player-only effort, post-contact)
   broken_tackles        (player effort)
 
-Receiving stats are NOT SOS-adjusted in v1 — for an RB receiving,
-the QB's quality matters more than opp pass defense, and we don't
-have a clean QB-adjustment substrate.
-
-Methodology
------------
-1. Compute league per-rush mean (epa, success, explosive=run≥10) per season
-2. Compute per-(team, season) defensive allowance (the same metrics
-   averaged over all RUNS faced by that team's defense)
-3. For each rush by an RB: adj = actual − opp_def_allowed + league_mean
-4. Aggregate per (player, season) and z-score within season
+Receiving stats not adjusted in v1.
 
 Min 50 rushes per season for inclusion.
 """
@@ -38,9 +40,11 @@ import pandas as pd
 REPO = Path(__file__).resolve().parent.parent
 PBP = REPO / "data" / "game_pbp.parquet"
 ROSTERS = REPO / "data" / "nfl_rosters.parquet"
+OL_GAS = REPO / "data" / "ol_gas_seasons.parquet"
 OUT = REPO / "data" / "rb_sos_adjusted_z.parquet"
 
 MIN_RUSHES = 50
+TOP_N_OL = 5     # avg the team's top-5 starters by snap share
 
 
 def _z_within_season(df: pd.DataFrame, col: str,
@@ -125,10 +129,61 @@ def main() -> None:
     base_explosive = ((pbp["d_explosive_total"]
                        - pbp["p_v_d_explosive"]) / denom)
 
-    pbp["adj_epa"] = pbp["epa"] - base_epa + pbp["lg_epa"]
-    pbp["adj_success"] = pbp["success"] - base_success + pbp["lg_success"]
-    pbp["adj_explosive"] = (pbp["explosive"]
-                              - base_explosive + pbp["lg_explosive"])
+    pbp["def_adj_epa"] = pbp["epa"] - base_epa + pbp["lg_epa"]
+    pbp["def_adj_success"] = (pbp["success"] - base_success
+                                + pbp["lg_success"])
+    pbp["def_adj_explosive"] = (pbp["explosive"]
+                                  - base_explosive + pbp["lg_explosive"])
+
+    # ── OL-CONTEXT ADJUSTMENT ──────────────────────────────────────
+    # Compute team-season OL run-block quality (top-5-starter avg of
+    # gas_run_blocking_grade). Then estimate β league-wide and net out
+    # OL contribution from per-rush stats.
+    print("→ computing team-season OL run-block quality...")
+    ol = pd.read_parquet(OL_GAS)
+    if "gas_run_blocking_grade" not in ol.columns:
+        raise RuntimeError("ol_gas_seasons.parquet missing "
+                              "gas_run_blocking_grade")
+    # Top-5 starters by snap share per team-season
+    ol_top5 = (ol.sort_values(["team", "season_year",
+                                  "snap_share"], ascending=[True, True,
+                                                              False])
+                 .groupby(["team", "season_year"]).head(TOP_N_OL))
+    team_ol = ol_top5.groupby(["team", "season_year"]).agg(
+        ol_run_grade=("gas_run_blocking_grade", "mean"),
+    ).reset_index().rename(columns={"team": "posteam",
+                                        "season_year": "season"})
+    print(f"  team-season OL run grades: {len(team_ol):,}")
+    # League mean OL grade (centering)
+    lg_ol = team_ol["ol_run_grade"].mean()
+    team_ol["ol_run_grade_centered"] = (team_ol["ol_run_grade"] - lg_ol)
+    print(f"  league mean OL run grade: {lg_ol:.2f}")
+
+    pbp = pbp.merge(team_ol[["posteam", "season",
+                                "ol_run_grade_centered"]],
+                      on=["posteam", "season"], how="left")
+    matched = pbp["ol_run_grade_centered"].notna().sum()
+    print(f"  rushes w/ OL grade: {matched:,}/{len(pbp):,} "
+          f"({matched/len(pbp):.0%})")
+    pbp["ol_centered"] = pbp["ol_run_grade_centered"].fillna(0)
+
+    # Estimate β on def-residuals (cleaner — opponent already removed)
+    var_o = (pbp["ol_centered"] ** 2).mean()
+    betas = {}
+    for stat in ["epa", "success", "explosive"]:
+        col = f"def_adj_{stat}"
+        cov = ((pbp[col] - pbp[col].mean())
+               * pbp["ol_centered"]).mean()
+        betas[stat] = cov / var_o if var_o > 0 else 0.0
+        print(f"  β_{stat} on OL-grade: {betas[stat]:+.5f}")
+
+    # Final adjustment: defense + OL
+    pbp["adj_epa"] = (pbp["def_adj_epa"]
+                        - betas["epa"] * pbp["ol_centered"])
+    pbp["adj_success"] = (pbp["def_adj_success"]
+                            - betas["success"] * pbp["ol_centered"])
+    pbp["adj_explosive"] = (pbp["def_adj_explosive"]
+                              - betas["explosive"] * pbp["ol_centered"])
 
     # Filter to RB-only rushes
     pbp = pbp[pbp["rusher_player_id"].isin(rb_ids)]
