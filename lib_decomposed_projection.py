@@ -162,27 +162,30 @@ def decompose(player_id: str, position: str, team: str, stat: str,
         baseline=baseline,
     )
 
-    # ── Injury (4.1) — multiplicative on baseline via snap-share retention
+    # ── Injury (4.1) — multiplicative on baseline via TRUE retention
+    # `snap_retention_if_played` is the cohort's avg ratio of injured-
+    # game snap share to the player's HEALTHY baseline (1.0 = no shift).
+    # The legacy `snap_share_if_played` is ABSOLUTE share, which would
+    # silently apply a phantom -15% to -50% adjustment to healthy
+    # players (since most players have <100% healthy snap share).
     if injury_status and injury_status.upper() != "NONE":
         cohort = cohort_predict(
             position=position, body_part=injury_body_part,
             report_status=injury_status,
             practice_status=injury_practice,
         )
-        # If Pr(plays) is very low we don't even project — still useful
-        # for the audit log to show what would happen if active.
-        retention = cohort.snap_share_if_played
-        if retention > 0:
-            # Player's typical snap share is ~baseline / max → use 1.0
-            # as the implicit baseline since snap_share_if_played is
-            # the *fraction of his usual workload* he gets when active.
+        retention = cohort.snap_retention_if_played
+        # Clip to sane range. Negative means total shutdown; >1.10
+        # means the player overworked (rare, mostly noise).
+        retention = max(0.0, min(1.10, retention))
+        if abs(retention - 1.0) > 0.01:
             adj = baseline * (retention - 1.0)
             decomp.contributions.append(DecompContribution(
                 label="Injury cohort",
                 delta=adj,
                 note=(f"{injury_status}/{injury_practice}, "
-                      f"{injury_body_part}: snap retention "
-                      f"{retention:.0%}, p_play "
+                      f"{injury_body_part}: usage retention "
+                      f"{retention:.0%} of healthy baseline, p_play "
                       f"{cohort.p_played:.0%} (n={cohort.n})"),
             ))
 

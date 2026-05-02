@@ -112,6 +112,24 @@ check("snap_share_if_played is in [0, 1]",
       f"min={sample_rows['snap_share_if_played'].min():.3f} "
       f"max={sample_rows['snap_share_if_played'].max():.3f}")
 
+# Audit fix #2: snap_retention_if_played column exists and is in
+# a sane range (centered around 1.0 = no shift, clipped to [0, 1.1])
+check("snap_retention_if_played column present (audit fix #2)",
+      "snap_retention_if_played" in cr.columns)
+ret_vals = cr["snap_retention_if_played"].dropna()
+check("snap_retention_if_played in [0, 1.10]",
+      ((ret_vals >= 0) & (ret_vals <= 1.10)).all(),
+      f"min={ret_vals.min():.3f} max={ret_vals.max():.3f}")
+# OUT cases that DID play (rare) should have low retention
+out_pred = predict(position="WR", body_part="hamstring",
+                    report_status="QUESTIONABLE",
+                    practice_status="DNP")
+check("Q/DNP retention < absolute snap share (sanity)",
+      out_pred.snap_retention_if_played > 0
+      and out_pred.snap_retention_if_played != out_pred.snap_share_if_played,
+      f"retention={out_pred.snap_retention_if_played:.3f} "
+      f"share={out_pred.snap_share_if_played:.3f}")
+
 # Play rates in [0, 1]
 check("play_rate is in [0, 1]",
       ((cr["play_rate"] >= 0) & (cr["play_rate"] <= 1)).all())

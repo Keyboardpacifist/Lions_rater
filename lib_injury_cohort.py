@@ -204,7 +204,10 @@ def enrich_archive(df: pd.DataFrame) -> pd.DataFrame:
 class CohortResult:
     n: int                       # cohort sample size
     p_played: float              # Pr(plays Sunday) — empirical
-    snap_share_if_played: float  # avg snap share when active (0–1)
+    snap_share_if_played: float  # avg ABSOLUTE snap share when active (0-1)
+    snap_retention_if_played: float  # avg retention vs player's healthy
+                                     # baseline (1.0 = no shift); use this
+                                     # as the multiplier on player projection
     cohort_level: str            # "tight" / "loose" / "fallback" / "marginal"
     body_part: str
     position: str
@@ -228,9 +231,10 @@ def _lookup_cohort(rates: pd.DataFrame, position: str, body_part: str,
 
 
 def _lookup_loose(rates: pd.DataFrame, position: str, body_part: str,
-                  report_code: str) -> tuple[int, float, float] | None:
+                  report_code: str) -> tuple[int, float, float, float] | None:
     """Loose cohort: aggregate across all practice_codes for this
-    (pos, body, report). Returns (n, play_rate, snap_share_if_played)."""
+    (pos, body, report). Returns (n, play_rate, snap_share_if_played,
+    snap_retention_if_played)."""
     if rates.empty:
         return None
     mask = ((rates["position"] == position)
@@ -246,14 +250,26 @@ def _lookup_loose(rates: pd.DataFrame, position: str, body_part: str,
     if played:
         ssip = ((sub["snap_share_if_played"].fillna(0)
                  * sub["n_played"]).sum() / played)
+        # Weight retention by n_retention (the count of cases that had
+        # a valid healthy baseline)
+        rcol = sub.get("snap_retention_if_played")
+        ncol = sub.get("n_retention")
+        if rcol is not None and ncol is not None:
+            num = (rcol.fillna(0) * ncol.fillna(0)).sum()
+            den = ncol.fillna(0).sum()
+            retention = (num / den) if den > 0 else 1.0
+        else:
+            retention = 1.0
     else:
         ssip = 0.0
-    return n, rate, float(ssip)
+        retention = 1.0
+    return n, rate, float(ssip), float(retention)
 
 
 def _lookup_fallback(rates: pd.DataFrame, position: str,
-                     body_part: str) -> tuple[int, float, float] | None:
-    """Fallback: aggregate across all report+practice for (pos, body)."""
+                     body_part: str) -> tuple[int, float, float, float] | None:
+    """Fallback: aggregate across all report+practice for (pos, body).
+    Returns (n, play_rate, snap_share_if_played, snap_retention_if_played)."""
     if rates.empty:
         return None
     mask = ((rates["position"] == position)
@@ -267,9 +283,18 @@ def _lookup_fallback(rates: pd.DataFrame, position: str,
     if played:
         ssip = ((sub["snap_share_if_played"].fillna(0)
                  * sub["n_played"]).sum() / played)
+        rcol = sub.get("snap_retention_if_played")
+        ncol = sub.get("n_retention")
+        if rcol is not None and ncol is not None:
+            num = (rcol.fillna(0) * ncol.fillna(0)).sum()
+            den = ncol.fillna(0).sum()
+            retention = (num / den) if den > 0 else 1.0
+        else:
+            retention = 1.0
     else:
         ssip = 0.0
-    return n, rate, float(ssip)
+        retention = 1.0
+    return n, rate, float(ssip), float(retention)
 
 
 def predict(position: str, body_part: str,
@@ -291,15 +316,20 @@ def predict(position: str, body_part: str,
     rep = report_status_code(report_status)
     pr = practice_status_code(practice_status)
 
+    def _safe(x, default=1.0):
+        return default if x is None or pd.isna(x) else float(x)
+
     # Tier 1: exact tight cohort
     row = _lookup_cohort(rates, pos, body, rep, pr)
     if row is not None and int(row["n_cases"]) >= min_tight_n:
-        ssip_raw = row.get("snap_share_if_played")
-        ssip = 0.0 if pd.isna(ssip_raw) else float(ssip_raw)
+        ssip = _safe(row.get("snap_share_if_played"), default=0.0)
+        retention = _safe(row.get("snap_retention_if_played"),
+                           default=1.0)
         return CohortResult(
             n=int(row["n_cases"]),
             p_played=float(row["play_rate"]),
             snap_share_if_played=ssip,
+            snap_retention_if_played=retention,
             cohort_level="tight",
             body_part=body, position=pos,
             report_status=rep, practice_status=pr,
@@ -308,9 +338,11 @@ def predict(position: str, body_part: str,
     # Tier 2: loose (aggregate practice codes)
     loose = _lookup_loose(rates, pos, body, rep)
     if loose and loose[0] >= min_tight_n:
-        n, rate, ssip = loose
+        n, rate, ssip, retention = loose
         return CohortResult(
-            n=n, p_played=rate, snap_share_if_played=ssip,
+            n=n, p_played=rate,
+            snap_share_if_played=ssip,
+            snap_retention_if_played=retention,
             cohort_level="loose",
             body_part=body, position=pos,
             report_status=rep, practice_status=pr,
@@ -319,9 +351,11 @@ def predict(position: str, body_part: str,
     # Tier 3: fallback (aggregate report+practice for pos+body)
     fb = _lookup_fallback(rates, pos, body)
     if fb and fb[0] >= 10:
-        n, rate, ssip = fb
+        n, rate, ssip, retention = fb
         return CohortResult(
-            n=n, p_played=rate, snap_share_if_played=ssip,
+            n=n, p_played=rate,
+            snap_share_if_played=ssip,
+            snap_retention_if_played=retention,
             cohort_level="fallback",
             body_part=body, position=pos,
             report_status=rep, practice_status=pr,
@@ -331,7 +365,9 @@ def predict(position: str, body_part: str,
     marg_rate = _PLAY_RATE_BY_REPORT_PRACTICE.get((rep, pr))
     if marg_rate is not None:
         return CohortResult(
-            n=0, p_played=marg_rate, snap_share_if_played=0.0,
+            n=0, p_played=marg_rate,
+            snap_share_if_played=0.0,
+            snap_retention_if_played=1.0,
             cohort_level="marginal",
             body_part=body, position=pos,
             report_status=rep, practice_status=pr,
@@ -342,6 +378,7 @@ def predict(position: str, body_part: str,
         n=0,
         p_played=_PLAY_RATE_BY_REPORT.get(rep, 0.5),
         snap_share_if_played=0.0,
+        snap_retention_if_played=1.0,
         cohort_level="marginal",
         body_part=body, position=pos,
         report_status=rep, practice_status=pr,

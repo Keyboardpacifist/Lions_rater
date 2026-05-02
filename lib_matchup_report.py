@@ -216,7 +216,7 @@ def _team_injuries(team: str, season: int, week: int) -> list[InjuryNote]:
             status=status,
             practice=practice,
             p_play=float(result.p_played),
-            snap_retention=float(result.snap_share_if_played),
+            snap_retention=float(result.snap_retention_if_played),
             role=role,
             cohort_n=int(result.n),
         ))

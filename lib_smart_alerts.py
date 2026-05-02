@@ -150,8 +150,8 @@ def fuse_alert(player_name: str, team: str, position: str,
     cohort_line = (
         f"Cohort: {cohort.n} comparable cases ({cohort.cohort_level}). "
         f"Pr(plays Sunday) = {_format_pct(cohort.p_played)}. "
-        f"If active, snap share retention "
-        f"= {_format_pct(cohort.snap_share_if_played)}."
+        f"If active, usage retention vs healthy baseline "
+        f"= {_format_pct(cohort.snap_retention_if_played)}."
     )
     bullets.append(
         f"**Play probability:** {_format_pct(cohort.p_played)} "

@@ -155,6 +155,60 @@ def main() -> None:
     join.loc[join["player"].isna(), "played"] = 0
     join["snap_share"] = join.apply(_snap_share_for_position, axis=1)
 
+    # ── Compute per-player healthy-baseline snap share ──
+    # The cohort's snap_share_if_played is in absolute units (e.g., 0.85
+    # = 85% of team snaps). To use it as a usage-retention multiplier,
+    # we need to normalize against the player's own typical snap share
+    # when healthy. Healthy = NOT on the injury report (or PROBABLE).
+    print("→ computing per-player healthy-baseline snap shares...")
+    snp_full = pd.read_parquet(SNAPS)
+    snp_full["snap_share"] = snp_full.apply(_snap_share_for_position, axis=1)
+    snp_full["name_n"] = _norm_name(snp_full["player"])
+    snp_full["team_n"] = _norm_team(snp_full["team"])
+    # Identify which (season, week, team, name) cells are HEALTHY
+    # (not on the injury report, or PROBABLE). Easier path: anti-join to
+    # the injury list with status of OUT/DOUBTFUL/QUESTIONABLE/NONE.
+    inj_active = inj[inj["report_status"].astype(str).str.upper()
+                       .isin(["OUT", "DOUBTFUL", "QUESTIONABLE"])][
+        ["season", "week", "team_n", "name_n"]
+    ].copy()
+    inj_active["season_i"] = inj_active["season"].astype(int)
+    inj_active["week_i"]   = inj_active["week"].astype(int)
+    inj_active["_on_inj_report"] = True
+    snp_full["season_i"] = snp_full["season"].astype(int)
+    snp_full["week_i"]   = snp_full["week"].astype(int)
+    snp_check = snp_full.merge(
+        inj_active[["season_i", "week_i", "team_n", "name_n",
+                     "_on_inj_report"]],
+        on=["season_i", "week_i", "team_n", "name_n"],
+        how="left",
+    )
+    healthy_only = snp_check[
+        snp_check["_on_inj_report"].isna()
+        & (snp_check["snap_share"] > 0.05)  # filter out garbage-snap
+    ]
+    # Per-player baseline: median (more robust than mean) of healthy snap shares
+    baseline_per_player = (healthy_only
+                            .groupby(["name_n", "team_n"])["snap_share"]
+                            .median()
+                            .reset_index()
+                            .rename(columns={
+                                "snap_share": "_player_baseline_share"}))
+    print(f"  baseline rows: {len(baseline_per_player):,}")
+
+    # ── Compute per-case retention ratio ──
+    # Only meaningful for rows where the player ACTUALLY played
+    # AND we have a healthy baseline. Otherwise leave as NaN.
+    join = join.merge(baseline_per_player, on=["name_n", "team_n"],
+                       how="left")
+    # Retention = injured_snap_share / baseline_snap_share, clipped to a
+    # sane range so a player with 5% baseline doesn't produce 12.0× retention.
+    join["retention"] = (
+        join["snap_share"] / join["_player_baseline_share"]
+    ).clip(lower=0, upper=1.10)
+    # Only valid for played rows
+    join.loc[join["played"] != 1, "retention"] = pd.NA
+
     # Cohort key columns
     join["body_part"]   = join["report_primary_injury"].apply(body_part_normalize)
     join["report_code"] = join["report_status"].apply(_report_code)
@@ -166,12 +220,11 @@ def main() -> None:
                .groupby(["pos_clean", "body_part", "report_code",
                          "practice_code"], dropna=False)
                .agg(n_cases=("played", "size"),
-                    n_played=("played", "sum"),
-                    snap_share_sum=("snap_share", "sum"))
+                    n_played=("played", "sum"))
                .reset_index())
     grouped["play_rate"] = grouped["n_played"] / grouped["n_cases"].clip(lower=1)
-    # snap_share_if_played: avg snap share among those who DID play.
-    # Build this with a second groupby on the played-only subset.
+    # snap_share_if_played: legacy column — avg ABSOLUTE snap share
+    # among those who DID play. Kept for backwards-compat.
     played_only = join[join["played"] == 1]
     played_grp = (played_only
                   .groupby(["pos_clean", "body_part", "report_code",
@@ -184,7 +237,21 @@ def main() -> None:
         on=["pos_clean", "body_part", "report_code", "practice_code"],
         how="left",
     )
-    grouped = grouped.drop(columns=["snap_share_sum"])
+    # snap_retention_if_played: TRUE retention = avg(injured_share /
+    # baseline_share) for cases where the player played AND has a
+    # healthy baseline. THIS is the multiplier the projection engine
+    # should apply against the player's own baseline production.
+    retention_grp = (played_only.dropna(subset=["retention"])
+                     .groupby(["pos_clean", "body_part", "report_code",
+                                "practice_code"], dropna=False)
+                     .agg(snap_retention_if_played=("retention", "mean"),
+                          n_retention=("retention", "size"))
+                     .reset_index())
+    grouped = grouped.merge(
+        retention_grp,
+        on=["pos_clean", "body_part", "report_code", "practice_code"],
+        how="left",
+    )
     grouped = grouped.rename(columns={"pos_clean": "position"})
 
     # Sort by sample size descending so head() is the most-trusted cohorts
