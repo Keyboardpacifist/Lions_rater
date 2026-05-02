@@ -1459,13 +1459,15 @@ with tab_proprep:
             Path(__file__).resolve().parent.parent
             / "data" / "nfl_player_stats_weekly.parquet"
         )
-        recent = df[df["season"] >= 2023].copy()
-        # Total games per player_id (across all teams if traded)
+        # Prop-bet-relevant positions only. Excludes OL/DEF/special
+        # teams since those don't have prop markets.
+        recent = df[(df["season"] >= 2023)
+                    & df["position"].isin(["QB", "RB", "FB", "WR",
+                                              "TE"])].copy()
         n_games = (recent.groupby(["player_id", "player_display_name",
                                       "position"])
                     .size().reset_index().rename(columns={0: "n_games"}))
         n_games = n_games[n_games["n_games"] >= 4]
-        # Most-recent team per player_id
         recent_sorted = recent.sort_values(["season", "week"],
                                             ascending=[False, False])
         teams = (recent_sorted.drop_duplicates(["player_id"])[
@@ -1479,19 +1481,32 @@ with tab_proprep:
 
     def _run_player_report_tab():
         p_opts = _player_options()
-        c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-        player_label = player_picker(p_opts["_label"].tolist(), key="pr_player")
+        # Player picker spans full width (renders cleanly whether in
+        # "search" or "selected" state)
+        player_label = player_picker(p_opts["_label"].tolist(),
+                                       key="pr_player")
         if not player_label:
             st.info("Pick a player.")
             return
-        chosen = p_opts[p_opts["_label"] == player_label].iloc[0]
+        try:
+            chosen = p_opts[p_opts["_label"] == player_label].iloc[0]
+        except IndexError:
+            # Stale session state from an old label format. Reset.
+            st.warning("This player isn't in the current option list. "
+                        "Click 'Change' and pick again.")
+            return
 
+        # Season / week / stat in a 3-column row UNDER the picker
+        c_season, c_week, c_stat = st.columns(3)
         seasons_avail = list(range(2025, 2015, -1))
-        season_pick = c2.selectbox("Season", seasons_avail, index=1,
-                                     key="pr_season")
-        week_pick = c3.number_input("Week", 1, 22, 10, key="pr_week")
-
-        # Stat pick depends on position
+        with c_season:
+            season_pick = st.selectbox(
+                "Season", seasons_avail, index=1, key="pr_season",
+            )
+        with c_week:
+            week_pick = st.number_input(
+                "Week", 1, 22, 10, key="pr_week",
+            )
         stat_options = {
             "QB": ["passing_yards"],
             "WR": ["receiving_yards"],
@@ -1499,9 +1514,12 @@ with tab_proprep:
             "RB": ["rushing_yards", "receiving_yards"],
         }
         pos = str(chosen["position"])
-        stat_pick = c4.selectbox("Stat",
-                                  stat_options.get(pos, ["receiving_yards"]),
-                                  key="pr_stat")
+        with c_stat:
+            stat_pick = st.selectbox(
+                "Stat",
+                stat_options.get(pos, ["receiving_yards"]),
+                key="pr_stat",
+            )
 
         if st.button("Generate player report", type="primary",
                       use_container_width=True, key="pr_run"):
