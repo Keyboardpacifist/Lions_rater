@@ -203,11 +203,54 @@ with tab_matchup:
                     f"**Ref:** {r.headline.get('referee', '—')}"
                 )
 
-                # ── Bottom Line (top of report — the lazy-mode TL;DR) ──
+                # ── 📍 OUR TAKE (narrative at the very top) ──
+                if r.narrative:
+                    n = r.narrative
+                    st.markdown("---")
+                    st.markdown("## 📍 OUR TAKE")
+                    st.markdown(f"### {n.one_liner}")
+                    if n.secondary_lean:
+                        sec_stars = ("★" * (n.secondary_confidence or 0)
+                                     + "☆" * (5 - (n.secondary_confidence or 0)))
+                        st.markdown(
+                            f"**Secondary lean:** {n.secondary_lean}  "
+                            f"{sec_stars}"
+                        )
+
+                    col_why, col_risk = st.columns([1.4, 1])
+                    with col_why:
+                        st.markdown("#### Why we like it")
+                        for w in n.why_bullets:
+                            st.markdown(f"- {w}")
+                        if n.inefficiencies:
+                            with st.expander("📐 Inefficiencies we're "
+                                              "exploiting"):
+                                for i in n.inefficiencies:
+                                    st.markdown(f"- {i}")
+                    with col_risk:
+                        st.markdown("#### ⚠️ Risk flags")
+                        if n.risk_flags:
+                            for x in n.risk_flags:
+                                st.markdown(f"- {x}")
+                        else:
+                            st.caption("No major red flags identified.")
+
+                    st.caption(
+                        "📊 *The data sections below are the receipts. "
+                        "Each bullet above points to a specific data row.*"
+                    )
+
+                # ── Quick-glance bullets (kept as backup TL;DR) ──
                 st.markdown("---")
-                st.markdown("### 🎯 Bottom line")
+                st.markdown("### 🎯 Quick-glance bullets")
                 for b in r.bottom_line_bullets:
                     st.markdown(f"- {b}")
+
+                # ── 📊 The evidence (data sections) ──
+                st.markdown("---")
+                st.markdown("## 📊 The evidence")
+                st.caption("Every data section below backs up a "
+                            "specific bullet from the take above.")
 
                 # ── Game environment ──
                 st.markdown("---")
@@ -1397,11 +1440,54 @@ with tab_proprep:
             ctx_bits.append(f"roof: {roof}")
             st.caption("  ·  ".join(str(b) for b in ctx_bits))
 
-            # ── Bottom line ──
+            # ── 📍 OUR TAKE (narrative at the very top) ──
+            if r.narrative:
+                n = r.narrative
+                st.markdown("---")
+                st.markdown("## 📍 OUR TAKE")
+                st.markdown(f"### {n.one_liner}")
+                if n.secondary_lean:
+                    sec_stars = ("★" * (n.secondary_confidence or 0)
+                                 + "☆" * (5 - (n.secondary_confidence or 0)))
+                    st.markdown(
+                        f"**Secondary lean:** {n.secondary_lean}  "
+                        f"{sec_stars}"
+                    )
+
+                col_why, col_risk = st.columns([1.4, 1])
+                with col_why:
+                    st.markdown("#### Why we like it")
+                    for w in n.why_bullets:
+                        st.markdown(f"- {w}")
+                    if n.inefficiencies:
+                        with st.expander("📐 Inefficiencies we're "
+                                          "exploiting"):
+                            for i in n.inefficiencies:
+                                st.markdown(f"- {i}")
+                with col_risk:
+                    st.markdown("#### ⚠️ Risk flags")
+                    if n.risk_flags:
+                        for x in n.risk_flags:
+                            st.markdown(f"- {x}")
+                    else:
+                        st.caption("No major red flags identified.")
+
+                st.caption(
+                    "📊 *The data sections below are the receipts. "
+                    "Each bullet above points to a specific data row.*"
+                )
+
+            # ── Quick-glance bullets ──
             st.markdown("---")
-            st.markdown("### 🎯 Bottom line")
+            st.markdown("### 🎯 Quick-glance bullets")
             for b in r.bottom_line_bullets:
                 st.markdown(f"- {b}")
+
+            # ── 📊 The evidence (data sections) ──
+            st.markdown("---")
+            st.markdown("## 📊 The evidence")
+            st.caption("Every data section below backs up a specific "
+                        "bullet from the take above.")
 
             # ── Recent form ──
             st.markdown("---")

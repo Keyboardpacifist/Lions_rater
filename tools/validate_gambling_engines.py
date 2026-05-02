@@ -543,6 +543,17 @@ check("coaching outliers present for both teams",
       len(r.home_coaching) >= 1 and len(r.away_coaching) >= 1)
 check("bottom_line returns ≥1 bullet",
       len(r.bottom_line_bullets) >= 1)
+check("narrative generated",
+      r.narrative is not None)
+check("narrative has one_liner + primary_lean + confidence label",
+      bool(r.narrative.one_liner)
+      and bool(r.narrative.primary_lean)
+      and bool(r.narrative.primary_confidence_label))
+check("narrative confidence in [0, 5]",
+      0 <= r.narrative.primary_confidence <= 5)
+check("narrative has why bullets and inefficiencies + risk flags",
+      len(r.narrative.why_bullets) >= 1
+      and len(r.narrative.inefficiencies) >= 1)
 
 
 # ── 18. Player Prop Report (auto) ────────────────────────────────
@@ -575,6 +586,20 @@ check("SGP partners do NOT include the player himself",
           for p in r.sgp_partners))
 check("bottom_line returns ≥1 bullet",
       len(r.bottom_line_bullets) >= 1)
+check("player narrative generated",
+      r.narrative is not None)
+check("player narrative has confidence + lean",
+      bool(r.narrative.one_liner)
+      and bool(r.narrative.primary_lean)
+      and 0 <= r.narrative.primary_confidence <= 5)
+check("player narrative has why + inefficiencies",
+      len(r.narrative.why_bullets) >= 1
+      and len(r.narrative.inefficiencies) >= 1)
+# For Chase 2024 W10 — should detect a non-pass lean given the
+# strong EV signal in the alt-line ladder
+check("Chase 2024 W10 yields a non-PASS lean",
+      "PASS" not in r.narrative.primary_lean,
+      f"got: {r.narrative.primary_lean!r}")
 
 
 # ── Summary ──────────────────────────────────────────────────────

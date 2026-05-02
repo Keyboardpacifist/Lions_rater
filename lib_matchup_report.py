@@ -109,6 +109,20 @@ class BooksNote:
 
 
 @dataclass
+class MatchupNarrative:
+    """The plain-English take that goes ABOVE the data sections."""
+    one_liner: str           # single-sentence summary of our take
+    primary_lean: str        # "HOU -4.5" / "OVER 49" / "PASS"
+    primary_confidence: int  # 1–5 stars
+    primary_confidence_label: str  # HIGH / MEDIUM-HIGH / MEDIUM / LOW / PASS
+    secondary_lean: str | None     # secondary bet (over/under often)
+    secondary_confidence: int | None
+    why_bullets: list[str] = field(default_factory=list)
+    risk_flags: list[str] = field(default_factory=list)
+    inefficiencies: list[str] = field(default_factory=list)
+
+
+@dataclass
 class MatchupReport:
     home_team: str
     away_team: str
@@ -124,6 +138,7 @@ class MatchupReport:
     away_coaching: list[CoachingNote] = field(default_factory=list)
     books_signals: list[BooksNote] = field(default_factory=list)
     bottom_line_bullets: list[str] = field(default_factory=list)
+    narrative: MatchupNarrative | None = None
 
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -466,4 +481,256 @@ def generate_matchup_report(home_team: str, away_team: str,
                               + _books_signals_for_team(away_team,
                                                          report.away_injuries))
     report.bottom_line_bullets = _bottom_line(report)
+    report.narrative = _build_narrative(report)
     return report
+
+
+# ════════════════════════════════════════════════════════════════
+#                   NARRATIVE GENERATOR
+# ════════════════════════════════════════════════════════════════
+# Translates the structured report into a plain-English "take" with
+# directional lean, confidence rating, why-bullets, and risk flags.
+# This is what retail gamblers actually read — the data sections
+# below it are the receipts.
+
+CONFIDENCE_LABELS = {
+    5: "HIGH",
+    4: "MEDIUM-HIGH",
+    3: "MEDIUM",
+    2: "LOW",
+    1: "VERY LOW",
+    0: "PASS",
+}
+
+
+def _confidence_label(score: int) -> str:
+    return CONFIDENCE_LABELS.get(max(0, min(5, score)), "MEDIUM")
+
+
+def _key_starters_out(injuries: list[InjuryNote]) -> list[InjuryNote]:
+    """Return only the QB1/RB1/WR1/TE1 injuries that materially
+    affect the game."""
+    return [i for i in injuries
+            if i.role in ("QB1", "RB1", "WR1", "TE1")
+            and i.status in ("OUT", "DOUBTFUL")]
+
+
+def _build_narrative(r: MatchupReport) -> MatchupNarrative:
+    """Synthesize structured report into plain-English take.
+    Confidence scoring:
+        +2 strong book-behavior signal (n≥30, |miss|≥3)
+        +1 medium book-behavior signal (n≥20, |miss|≥1.5)
+        +1 a key starter (QB1) OUT
+        +0.5 a non-QB key starter (RB1/WR1/TE1) OUT
+        +1 extreme weather affecting passing
+        +0.5 elite defensive scheme outlier
+        +0.5 multiple corroborating signals
+    """
+    why: list[str] = []
+    risk: list[str] = []
+    inefficiencies: list[str] = []
+    spread = r.headline.get("spread_line")
+    total = r.headline.get("total_line")
+    env = r.game_environment
+
+    # Score primary spread direction
+    spread_score = 0  # positive = lean home; negative = lean away
+    confidence = 0
+
+    home_starters_out = _key_starters_out(r.home_injuries)
+    away_starters_out = _key_starters_out(r.away_injuries)
+
+    # ── Books-vs-model signals (strongest direct evidence) ──
+    for s in r.books_signals:
+        if s.n_games < 20:
+            continue
+        sign = +1 if s.team == r.away_team else -1
+        # line_miss < 0 = team underperformed → fade them
+        # line_miss > 0 = team overperformed → bet ON them
+        weight = 2 if abs(s.mean_line_miss) >= 3 else 1
+        if abs(s.mean_line_miss) >= 1.5:
+            confidence += weight
+            if s.mean_line_miss < -1.5:
+                # fade the affected team → push spread away from them
+                spread_score -= sign  # if home, pushes negative (toward away)
+                inefficiencies.append(
+                    f"Books historically UNDER-react when "
+                    f"{s.role_lost} is {s.status} with {s.body_part} — "
+                    f"{s.team} underperforms close by "
+                    f"{s.mean_line_miss:+.1f} pts in {s.n_games} cases"
+                )
+                why.append(
+                    f"**Fade {s.team}** — historically lose by "
+                    f"{abs(s.mean_line_miss):.1f}+ more than the "
+                    f"close implies in this exact injury scenario "
+                    f"({s.n_games} games, {s.cover_rate:.0%} cover rate)"
+                )
+            else:
+                spread_score += sign
+                inefficiencies.append(
+                    f"Books historically OVER-react when "
+                    f"{s.role_lost} is {s.status} with {s.body_part} — "
+                    f"{s.team} actually beats close by "
+                    f"{s.mean_line_miss:+.1f} pts in {s.n_games} cases"
+                )
+                why.append(
+                    f"**Contrarian on {s.team}** — historically beat "
+                    f"close by {s.mean_line_miss:+.1f} pts in this "
+                    f"exact injury scenario ({s.n_games} games)"
+                )
+
+    # ── QB1 out (4 pt scoring drop league-wide) ──
+    for i in home_starters_out:
+        if i.role == "QB1":
+            confidence += 1
+            spread_score -= 1
+            why.append(
+                f"**{r.home_team} QB1 {i.player_name} {i.status}** "
+                f"({i.body_part}) — league-wide QB1-out games average "
+                f"−4 pts/game"
+            )
+    for i in away_starters_out:
+        if i.role == "QB1":
+            confidence += 1
+            spread_score += 1
+            why.append(
+                f"**{r.away_team} QB1 {i.player_name} {i.status}** "
+                f"({i.body_part}) — league-wide QB1-out games average "
+                f"−4 pts/game"
+            )
+
+    # ── Other key starters (lighter weight) ──
+    for team_label, side_starters, sign in (
+        (r.home_team, home_starters_out, -1),
+        (r.away_team, away_starters_out, +1),
+    ):
+        non_qb = [i for i in side_starters if i.role != "QB1"]
+        if non_qb:
+            names = ", ".join(f"{i.role} {i.player_name}"
+                              for i in non_qb[:2])
+            why.append(f"**{team_label} absences:** {names}")
+            # Modest weight — RB1/WR1/TE1 individually ≈ 0 pts league-wide,
+            # but coaches/lines DO move on these names. Half-point.
+            spread_score += 0  # neutral on lean, but show the info
+
+    # ── Extreme weather ──
+    temp = env.get("temp")
+    wind = env.get("wind")
+    if temp is not None and temp <= 32:
+        confidence += 1
+        why.append(f"**Cold ({temp:.0f}°F)** — passing volume drops, "
+                   f"defense covers easier")
+        # Cold games tend toward unders
+        inefficiencies.append(
+            f"Cold weather ({temp:.0f}°F) historically reduces "
+            "passing volume; total-line bias favors the under"
+        )
+    if wind is not None and wind >= 15:
+        confidence += 1
+        why.append(f"**Wind {wind:.0f} mph** — fade deep balls + "
+                   f"kicker props")
+        inefficiencies.append(
+            f"Wind ({wind:.0f} mph) — books often under-price the "
+            "downward effect on passing distance + kicking accuracy"
+        )
+
+    # ── Elite defensive EPA ──
+    for team_label, scheme in ((r.home_team, r.home_scheme),
+                                (r.away_team, r.away_scheme)):
+        epa_def = next((s for s in scheme
+                         if s.metric == "epa_per_play_def"), None)
+        if epa_def and epa_def.delta <= -0.06:
+            confidence += 0.5
+            why.append(
+                f"**{team_label} defense elite** — EPA/play allowed "
+                f"{epa_def.value:+.3f} ({epa_def.delta:+.3f} vs league)"
+            )
+            inefficiencies.append(
+                f"{team_label} defensive EPA ranks elite — markets "
+                "under-price stingy defenses on team totals"
+            )
+
+    # ── Risk flags ──
+    if env.get("div_game"):
+        risk.append(
+            "Divisional matchup — games trend tighter than expected; "
+            "narrow your edge"
+        )
+    if total and total >= 50:
+        risk.append(
+            f"High implied total ({total:.1f}) — score variance is "
+            "wide; small spread edges can flip"
+        )
+    if not r.books_signals:
+        risk.append(
+            "No book-behavior cohort matched — relying on softer "
+            "signals (scheme + injuries + weather)"
+        )
+
+    # ── Translate score → primary lean ──
+    # Use half-up rounding so 0.5 → 1 (not Python's banker's 0)
+    primary_conf = max(0, min(5, int(confidence + 0.5)))
+    if spread is None or primary_conf == 0:
+        primary_lean = "PASS — no clear edge"
+        primary_label = _confidence_label(0)
+    else:
+        favored = r.home_team if spread < 0 else r.away_team
+        underdog = r.away_team if spread < 0 else r.home_team
+        if abs(spread_score) < 0.5:
+            primary_lean = "PASS — signals balanced"
+            primary_label = _confidence_label(0)
+        elif spread_score > 0:
+            primary_lean = (f"Take {r.home_team} "
+                            f"{'-' if spread < 0 else '+'}"
+                            f"{abs(spread):.1f}")
+            primary_label = _confidence_label(primary_conf)
+        else:
+            primary_lean = (f"Take {r.away_team} "
+                            f"{'-' if spread > 0 else '+'}"
+                            f"{abs(spread):.1f}")
+            primary_label = _confidence_label(primary_conf)
+
+    # ── Secondary lean — total ──
+    secondary_lean: str | None = None
+    secondary_conf: int | None = None
+    total_score = 0  # negative = under, positive = over
+    if temp is not None and temp <= 32:
+        total_score -= 1
+    if wind is not None and wind >= 15:
+        total_score -= 1
+    if any(s.metric == "epa_per_play_def" and s.delta <= -0.06
+           for s in r.home_scheme + r.away_scheme):
+        total_score -= 0.5
+    if env.get("div_game"):
+        total_score -= 0.3  # divisional games trend under
+    if total is not None and abs(total_score) >= 1:
+        secondary_conf = min(5, max(1, int(abs(total_score) + 1.5)))
+        secondary_lean = (f"UNDER {total:.1f}" if total_score < 0
+                           else f"OVER {total:.1f}")
+
+    # ── One-liner ──
+    if primary_conf == 0:
+        one_liner = ("No exploitable inefficiency detected on this "
+                      "matchup — pass.")
+    else:
+        stars = "★" * primary_conf + "☆" * (5 - primary_conf)
+        one_liner = f"{primary_lean}  {stars} ({primary_label} confidence)"
+
+    if not why:
+        why = ["No high-conviction signals — this matchup is mostly "
+               "noise."]
+    if not inefficiencies:
+        inefficiencies = ["No structural mispricing detected on this "
+                           "matchup."]
+
+    return MatchupNarrative(
+        one_liner=one_liner,
+        primary_lean=primary_lean,
+        primary_confidence=primary_conf,
+        primary_confidence_label=primary_label,
+        secondary_lean=secondary_lean,
+        secondary_confidence=secondary_conf,
+        why_bullets=why,
+        risk_flags=risk,
+        inefficiencies=inefficiencies,
+    )

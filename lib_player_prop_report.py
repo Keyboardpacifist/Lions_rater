@@ -56,6 +56,20 @@ def _load(path: Path) -> pd.DataFrame:
 
 
 @dataclass
+class PlayerPropNarrative:
+    """Plain-English take that goes ABOVE the data sections."""
+    one_liner: str
+    primary_lean: str            # "OVER 66.5 receiving yards"
+    primary_confidence: int      # 1–5 stars
+    primary_confidence_label: str
+    secondary_lean: str | None   # often a TD prop or alt-line rung
+    secondary_confidence: int | None
+    why_bullets: list[str] = field(default_factory=list)
+    inefficiencies: list[str] = field(default_factory=list)
+    risk_flags: list[str] = field(default_factory=list)
+
+
+@dataclass
 class PlayerPropReport:
     player_id: str
     player_name: str
@@ -75,6 +89,7 @@ class PlayerPropReport:
     longest_play: dict | None
     sgp_partners: list[dict]
     bottom_line_bullets: list[str] = field(default_factory=list)
+    narrative: PlayerPropNarrative | None = None
 
 
 def _pick_primary_stat(position: str) -> str:
@@ -383,4 +398,229 @@ def generate_player_report(player_id: str, position: str,
         sgp_partners=sgp_partners,
     )
     report.bottom_line_bullets = _bottom_line(report)
+    report.narrative = _build_narrative(report)
     return report
+
+
+# ════════════════════════════════════════════════════════════════
+#                   NARRATIVE GENERATOR
+# ════════════════════════════════════════════════════════════════
+# Translates the structured prop report into a plain-English take
+# with directional lean, confidence rating, why-bullets, risk flags.
+
+CONFIDENCE_LABELS = {
+    5: "HIGH",
+    4: "MEDIUM-HIGH",
+    3: "MEDIUM",
+    2: "LOW",
+    1: "VERY LOW",
+    0: "PASS",
+}
+
+
+def _conf_label(score: int) -> str:
+    return CONFIDENCE_LABELS.get(max(0, min(5, score)), "MEDIUM")
+
+
+def _build_narrative(r: PlayerPropReport) -> PlayerPropNarrative:
+    """Confidence scoring:
+        +2  best-EV alt-line rung has EV ≥ 25%
+        +1  best-EV alt-line rung has EV ≥ 8%
+        +1  decomposition adjusts >15% from baseline (real signal)
+        +0.5 trend divergence flag in this stat
+        +0.5 elevated TD probability (≥40%)
+        +0.5 RZ usage > 25% (target hog)
+        −1  small sample (decomposition n_games < 8)
+        −1  weather cohort < 6 (low confidence) — only when used
+    """
+    why: list[str] = []
+    inefficiencies: list[str] = []
+    risk: list[str] = []
+    confidence = 0
+    primary_lean: str | None = None
+
+    # ── Best-EV alt-line rung ──
+    best_rung = None
+    if not r.alt_ladder.empty:
+        best_rung = r.alt_ladder.iloc[0]
+        ev = float(best_rung["ev"])
+        if ev >= 0.25:
+            confidence += 2
+        elif ev >= 0.08:
+            confidence += 1
+        # Build the lean only if EV is meaningful
+        if ev >= 0.08:
+            primary_lean = (
+                f"{best_rung['side'].upper()} "
+                f"{best_rung['threshold']:.1f} {r.primary_stat} "
+                f"@ {best_rung['american_odds']:+d}"
+            )
+            why.append(
+                f"**+{ev:.0%} EV** at the {best_rung['side']} "
+                f"{best_rung['threshold']:.1f} rung — model says "
+                f"{best_rung['p_model']:.0%} vs implied "
+                f"{best_rung['p_implied']:.0%}"
+            )
+            inefficiencies.append(
+                f"Book line implies {best_rung['p_implied']:.0%} "
+                f"probability the {best_rung['side']} hits — empirical "
+                f"data over the player's last "
+                f"{int(best_rung['n_games'])} games shows "
+                f"{best_rung['p_model']:.0%}"
+            )
+
+    # ── Decomposition delta ──
+    d = r.decomposition or {}
+    base = d.get("baseline", 0)
+    proj = d.get("projection", 0)
+    if base > 0:
+        pct_shift = (proj - base) / base
+        if abs(pct_shift) >= 0.15:
+            confidence += 1
+            direction = "DOWN" if pct_shift < 0 else "UP"
+            why.append(
+                f"**Projection {pct_shift:+.0%}** vs. recent baseline "
+                f"({base:.1f} → {proj:.1f}) — this is a real shift, "
+                f"not noise"
+            )
+            # Decomposed factors → inefficiency callouts
+            for c in d.get("contributions", []):
+                if abs(c["delta"]) >= max(5, base * 0.07):
+                    why.append(
+                        f"  └ {c['label']}: {c['delta']:+.1f} yds — "
+                        f"{c['note']}"
+                    )
+
+    # ── Recent form sample size ──
+    if d.get("n_games_baseline", 0) < 8:
+        risk.append(
+            f"Baseline drawn from only "
+            f"{d.get('n_games_baseline', 0)} prior games — small "
+            "sample"
+        )
+
+    # ── Trend divergence ──
+    if r.trend_flags:
+        big = max(r.trend_flags, key=lambda x: abs(x["delta_z"]))
+        # Only flag if it matches the primary stat or a clearly
+        # related usage stat
+        relevant = (big["stat"] == r.primary_stat
+                    or big["stat"] in ("targets", "carries",
+                                         "receptions", "attempts"))
+        if relevant and abs(big["delta_z"]) >= 1.0:
+            confidence += 0.5
+            direction = "expanded" if big["delta"] > 0 else "shrunk"
+            why.append(
+                f"**Role {direction} recently** — {big['stat']} went "
+                f"from {big['season_avg']:.1f}/g (season prior) to "
+                f"{big['recent_avg']:.1f}/g (last 3), "
+                f"z={big['delta_z']:+.1f}"
+            )
+            inefficiencies.append(
+                "Books typically anchor to season averages and lag "
+                "recent role shifts — that lag is the edge here"
+            )
+
+    # ── TD probability ──
+    td = r.td_vector or {}
+    p_any = td.get("p_any_td", 0)
+    if p_any >= 0.45:
+        confidence += 0.5
+        why.append(
+            f"**Elevated TD upside** — {p_any:.0%} anytime TD over "
+            f"last {td.get('n_games', 0)} games "
+            f"(rush {td.get('p_rush_td', 0):.0%} / rec "
+            f"{td.get('p_rec_td', 0):.0%})"
+        )
+
+    # ── RZ usage ──
+    rz = r.rz_usage or {}
+    rz_target = rz.get("rz_targets_share", 0)
+    rz_carry = rz.get("rz_carries_share", 0)
+    rz_gl = rz.get("goal_line_carries_share", 0)
+    if rz_target >= 0.25 or rz_carry >= 0.30 or rz_gl >= 0.40:
+        confidence += 0.5
+        why.append(
+            f"**Target-hog inside the 20** — "
+            f"{rz_target:.0%} RZ targets, {rz_carry:.0%} RZ carries, "
+            f"{rz_gl:.0%} goal-line carries"
+        )
+
+    # ── Risks ──
+    if d.get("contributions"):
+        # Look for low-confidence weather cohort note
+        for c in d["contributions"]:
+            if c["label"] == "Weather" and "MEDIUM" in c["note"]:
+                risk.append(
+                    "Weather adjustment is MEDIUM confidence — "
+                    "based on a thinner cohort"
+                )
+            if c["label"] == "Weather" and "LOW" in c["note"]:
+                risk.append(
+                    "Weather adjustment is LOW confidence — wide "
+                    "uncertainty in the projection"
+                )
+
+    if r.recent_form is not None and not r.recent_form.empty:
+        # Check if recent stat values are very volatile
+        if r.primary_stat in r.recent_form.columns:
+            vals = r.recent_form[r.primary_stat].astype(float)
+            if vals.std() > 0 and len(vals) >= 3:
+                cv = vals.std() / max(vals.mean(), 1)
+                if cv > 0.6:
+                    risk.append(
+                        f"High recent volatility (CV={cv:.1f}) — "
+                        f"recent {r.primary_stat} swings widely "
+                        f"game-to-game"
+                    )
+
+    # ── Secondary lean: TD prop or another alt rung ──
+    secondary_lean: str | None = None
+    secondary_conf: int | None = None
+    if p_any >= 0.45:
+        # If anytime TD is elevated, suggest checking the line
+        secondary_lean = f"Check anytime TD prop ({p_any:.0%} model)"
+        secondary_conf = min(5, int(p_any * 5))
+    elif (not r.alt_ladder.empty and len(r.alt_ladder) > 1
+            and r.alt_ladder.iloc[1]["ev"] >= 0.05):
+        rung = r.alt_ladder.iloc[1]
+        secondary_lean = (f"{rung['side'].upper()} "
+                          f"{rung['threshold']:.1f} {r.primary_stat} "
+                          f"@ {rung['american_odds']:+d} "
+                          f"(EV {float(rung['ev']):+.0%})")
+        secondary_conf = 3 if float(rung['ev']) >= 0.10 else 2
+
+    # ── Translate score → primary lean ──
+    primary_conf = max(0, min(5, int(confidence + 0.5)))
+    if not primary_lean or primary_conf == 0:
+        primary_lean = "PASS — no clear edge at any rung"
+        primary_label = _conf_label(0)
+    else:
+        primary_label = _conf_label(primary_conf)
+
+    if not why:
+        why = ["No high-conviction signals — model and book are "
+               "aligned on this prop."]
+    if not inefficiencies:
+        inefficiencies = ["No structural mispricing detected — "
+                           "fair-value market on this prop."]
+
+    if primary_conf == 0:
+        one_liner = ("Model agrees with the book on this prop — pass "
+                      "unless you have outside info.")
+    else:
+        stars = "★" * primary_conf + "☆" * (5 - primary_conf)
+        one_liner = (f"{primary_lean}  {stars} "
+                      f"({primary_label} confidence)")
+
+    return PlayerPropNarrative(
+        one_liner=one_liner,
+        primary_lean=primary_lean,
+        primary_confidence=primary_conf,
+        primary_confidence_label=primary_label,
+        secondary_lean=secondary_lean,
+        secondary_confidence=secondary_conf,
+        why_bullets=why,
+        inefficiencies=inefficiencies,
+        risk_flags=risk,
+    )
