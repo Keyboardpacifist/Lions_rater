@@ -89,17 +89,19 @@ def infer_bucket_from_spread(spread_pov: float | None,
                               total: float | None = None
                               ) -> GameScriptBucket:
     """Default expected bucket based on closing spread (from team's POV).
-    -7+ favorite → MODERATE_LEAD; -3 to -7 → CLOSE; etc.
+    Positive spread_pov = team is favored by that many points.
+    +15 favorite → BLOWOUT_WIN; +7-14 → MODERATE_LEAD;
+    +/-7 → CLOSE; -7-14 → MODERATE_TRAIL; -15+ → BLOWOUT_LOSS.
     Useful as a sane default when the user opens the dropdown."""
     if spread_pov is None:
         return GameScriptBucket.CLOSE
-    if spread_pov <= -10:
-        return GameScriptBucket.MODERATE_LEAD
-    if spread_pov <= -7:
-        return GameScriptBucket.MODERATE_LEAD
-    if spread_pov >= 10:
-        return GameScriptBucket.MODERATE_TRAIL
+    if spread_pov >= 15:
+        return GameScriptBucket.BLOWOUT_WIN
     if spread_pov >= 7:
+        return GameScriptBucket.MODERATE_LEAD
+    if spread_pov <= -15:
+        return GameScriptBucket.BLOWOUT_LOSS
+    if spread_pov <= -7:
         return GameScriptBucket.MODERATE_TRAIL
     return GameScriptBucket.CLOSE
 

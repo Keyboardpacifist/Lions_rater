@@ -302,9 +302,12 @@ def generate_player_report(player_id: str, position: str,
                    | (sch["away_team"] == team))]
         if not g.empty:
             r = g.iloc[0]
-            spread_pov = (-float(r["spread_line"])
+            # nflverse spread_line = home team's expected margin
+            # (positive = home favored). spread_pov is from the player's
+            # team perspective — same sign for home, flipped for away.
+            spread_pov = (float(r["spread_line"])
                            if r["home_team"] == team
-                           else float(r["spread_line"]))
+                           else -float(r["spread_line"]))
             headline.update({
                 "spread": spread_pov,
                 "total": (float(r["total_line"])

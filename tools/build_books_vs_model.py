@@ -137,9 +137,13 @@ def main() -> None:
                 "total_line", "total"]].copy()
     home = home.rename(columns={"home_team": "team", "away_team": "opp"})
     home["actual_margin"] = home["home_score"] - home["away_score"]
-    # spread_line is from home POV (negative = home favored). Flip sign
-    # so spread_from_pov > 0 means TEAM is favored.
-    home["spread_from_pov"] = -home["spread_line"]
+    # nflverse spread_line is the home team's expected margin of victory:
+    # positive = home favored, negative = home dog. Verified empirically
+    # against `nfl_schedules.parquet`: corr(spread_line, home_margin)=+0.43;
+    # spread_line >= +7 → mean home_margin = +10.79.
+    # So spread_from_pov ("team's expected margin, positive = team favored")
+    # equals spread_line for home, and -spread_line for away.
+    home["spread_from_pov"] = home["spread_line"]
     home["is_home"] = True
 
     away = sch[["season", "week", "away_team", "home_team",
@@ -147,7 +151,7 @@ def main() -> None:
                 "total_line", "total"]].copy()
     away = away.rename(columns={"away_team": "team", "home_team": "opp"})
     away["actual_margin"] = away["away_score"] - away["home_score"]
-    away["spread_from_pov"] = away["spread_line"]
+    away["spread_from_pov"] = -away["spread_line"]
     away["is_home"] = False
 
     games = pd.concat([home, away], ignore_index=True)

@@ -289,6 +289,26 @@ if not none_row.empty:
 section("7. Books vs Model (4.3)")
 BV = REPO / "data" / "books_vs_model.parquet"
 bv = pd.read_parquet(BV)
+
+# Spread-sign regression test (audit fix #1):
+# nflverse spread_line is the home margin (positive = home favored).
+# Confirm empirically against the schedule itself.
+sch_check = pd.read_parquet(REPO / "data" / "nfl_schedules.parquet")
+sch_check = sch_check.dropna(subset=["spread_line", "home_score", "away_score"])
+sch_check["home_margin"] = sch_check["home_score"] - sch_check["away_score"]
+corr = sch_check["spread_line"].corr(sch_check["home_margin"])
+check("spread_line correlates POSITIVELY with home_margin (nflverse convention)",
+      corr > 0.30,
+      f"corr={corr:.3f}")
+# QB OUT shoulder cohort should be NEGATIVE line miss (books under-react)
+qb_out_shoulder = bv[(bv["position_lost"] == "QB")
+                     & (bv["status"] == "OUT")
+                     & (bv["body_part"] == "shoulder")]
+if not qb_out_shoulder.empty:
+    miss = qb_out_shoulder.iloc[0]["mean_line_miss"]
+    check("QB OUT shoulder has NEGATIVE line miss (team underperforms close)",
+          miss < -1.0,
+          f"got {miss:+.2f}")
 check("books_vs_model table loads", not bv.empty,
       f"{len(bv):,} cohorts")
 

@@ -182,7 +182,8 @@ with tab_matchup:
                 )
                 m1, m2, m3, m4 = st.columns(4)
                 spread = r.headline.get("spread_line")
-                fav = r.home_team if (spread or 0) < 0 else r.away_team
+                # nflverse: positive spread = home favored.
+                fav = r.home_team if (spread or 0) > 0 else r.away_team
                 m1.metric("Spread", f"{fav} -{abs(spread):.1f}"
                           if spread is not None else "—")
                 m2.metric("Total",
@@ -1756,8 +1757,9 @@ with tab_decomp:
         )
         line_bits = []
         if sched.get("spread_line") is not None:
-            spread_pov = (-sched["spread_line"] if sched["is_home"]
-                          else sched["spread_line"])
+            # nflverse: positive spread_line = home favored.
+            spread_pov = (sched["spread_line"] if sched["is_home"]
+                          else -sched["spread_line"])
             line_bits.append(f"Line: {team_for_season} "
                               f"{'-' if spread_pov < 0 else '+'}"
                               f"{abs(spread_pov):.1f}")
@@ -1821,8 +1823,9 @@ with tab_decomp:
         )
         default_bucket = _GSB.CLOSE
         if sched.get("spread_line") is not None:
-            spread_pov = (-sched["spread_line"] if sched["is_home"]
-                          else sched["spread_line"])
+            # nflverse: positive spread_line = home favored.
+            spread_pov = (sched["spread_line"] if sched["is_home"]
+                          else -sched["spread_line"])
             default_bucket = infer_bucket_from_spread(spread_pov)
         bucket_options = ["(none — skip game-script adj)"] + [
             BUCKET_LABEL[b] for b in BUCKET_ORDER]

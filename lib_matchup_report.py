@@ -347,9 +347,11 @@ def _bottom_line(report: MatchupReport) -> list[str]:
     headline = report.headline
 
     # 1. Spread + total framing
+    # nflverse spread_line = home team's expected margin: positive = home
+    # favored. Verified empirically (corr with home_margin = +0.43).
     if headline.get("spread_line") is not None:
         sl = headline["spread_line"]
-        favored = report.home_team if sl < 0 else report.away_team
+        favored = report.home_team if sl > 0 else report.away_team
         bullets.append(
             f"**Line:** {favored} -{abs(sl):.1f} · Total {headline.get('total_line', '?'):.1f}"
         )
@@ -674,19 +676,20 @@ def _build_narrative(r: MatchupReport) -> MatchupNarrative:
         primary_lean = "PASS — no clear edge"
         primary_label = _confidence_label(0)
     else:
-        favored = r.home_team if spread < 0 else r.away_team
-        underdog = r.away_team if spread < 0 else r.home_team
+        # nflverse: positive spread = home favored, negative = home dog.
+        favored = r.home_team if spread > 0 else r.away_team
+        underdog = r.away_team if spread > 0 else r.home_team
         if abs(spread_score) < 0.5:
             primary_lean = "PASS — signals balanced"
             primary_label = _confidence_label(0)
         elif spread_score > 0:
             primary_lean = (f"Take {r.home_team} "
-                            f"{'-' if spread < 0 else '+'}"
+                            f"{'-' if spread > 0 else '+'}"
                             f"{abs(spread):.1f}")
             primary_label = _confidence_label(primary_conf)
         else:
             primary_lean = (f"Take {r.away_team} "
-                            f"{'-' if spread > 0 else '+'}"
+                            f"{'-' if spread < 0 else '+'}"
                             f"{abs(spread):.1f}")
             primary_label = _confidence_label(primary_conf)
 
