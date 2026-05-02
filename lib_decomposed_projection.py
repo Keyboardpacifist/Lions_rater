@@ -167,26 +167,34 @@ def decompose(player_id: str, position: str, team: str, stat: str,
     )
 
     # ── Injury (4.1) — try PLAYER-OWN retention first, fall back to
-    # cohort. The player's own historical retention (when sample is
-    # ≥5) is a sharper signal than the league-position cohort.
+    # cohort. With V2.2 shrinkage, even small-sample cells produce
+    # sensible numbers (the cell is pulled toward the position-level
+    # prior with weight tau=5).
     if injury_status and injury_status.upper() != "NONE":
         bucket = injury_bucket_for(injury_status, injury_practice)
-        # Try player's own self-delta in this bucket (opp-adjusted)
         own = lookup_player_self_delta(
-            player_id=player_id, stat=stat, bucket=bucket, min_n=5,
+            player_id=player_id, stat=stat, bucket=bucket, min_n=3,
         )
         if own is not None:
-            retention = max(0.0, min(1.10, own.retention_adj))
+            # Use the SHRUNK retention (V2.2) — pulled toward cohort
+            # prior with tau=5 effective games of evidence.
+            retention = max(0.0, min(1.10, own.shrunk_retention))
             if abs(retention - 1.0) > 0.01:
                 adj = baseline * (retention - 1.0)
+                # Compose a transparent note showing the shrinkage:
+                # cell rate → blended with prior → final shrunk.
+                note = (f"{injury_status}/{injury_practice}, "
+                        f"{injury_body_part}: shrunk retention "
+                        f"= {retention:.0%}  "
+                        f"(player cell {own.retention_adj:.0%} from n="
+                        f"{own.n}, blended with "
+                        f"{own.prior_retention:.0%} cohort prior; "
+                        f"player has {own.n_total} total games "
+                        f"at this stat)")
                 decomp.contributions.append(DecompContribution(
-                    label="Injury — player's own history",
+                    label="Injury — player's own history (shrunk)",
                     delta=adj,
-                    note=(f"{injury_status}/{injury_practice}, "
-                          f"{injury_body_part}: this player's own "
-                          f"retention in this bucket = {retention:.0%} "
-                          f"(opp-adjusted, n={own.n} prior games "
-                          f"out of {own.n_total} total)"),
+                    note=note,
                 ))
         else:
             # Fall back to league-cohort (existing behavior)

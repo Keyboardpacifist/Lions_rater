@@ -285,12 +285,57 @@ def main() -> None:
         return
     out = pd.concat(rows, ignore_index=True)
 
+    # ── V2.2 SHRINKAGE: blend each cell's retention toward a
+    # position-level prior. Small-sample cells (n < 5) become noisy
+    # estimates; e.g., a player's 0-receptions in 6 Q/Limited games
+    # naively reads as 0% retention. Shrinkage pulls those numbers
+    # toward the cohort prior so projections aren't whipsawed by
+    # sample noise.
+    #
+    # Formula (Beta-Binomial style):
+    #   shrunk_rate = (n × cell_rate + tau × prior_rate) / (n + tau)
+    # tau=5 says "the prior counts as 5 effective games of evidence."
+    # As n grows, the shrunk rate converges to the cell rate.
+    TAU = 5.0
+    print("→ computing position-level priors for shrinkage...")
+    # Position-level prior = n-weighted mean retention across all
+    # players for each (position, stat, bucket). Compute on the
+    # subset where retention is finite (i.e., baseline > 0.5).
+    cell_valid = out.dropna(subset=["retention_adj"]).copy()
+    prior = (cell_valid.groupby(["position", "stat", "bucket"])
+             .apply(lambda g: pd.Series({
+                 "prior_retention": ((g["retention_adj"] * g["n"]).sum()
+                                       / max(g["n"].sum(), 1)),
+                 "prior_n": int(g["n"].sum()),
+             }), include_groups=False)
+             .reset_index())
+    out = out.merge(prior, on=["position", "stat", "bucket"], how="left")
+    # Apply shrinkage. For HEALTHY bucket the prior_retention should
+    # be ~1.0 (everyone's healthy retention is 1.0 by definition),
+    # so the shrinkage there is a no-op.
+    out["shrunk_retention"] = (
+        (out["n"].fillna(0) * out["retention_adj"].fillna(0)
+         + TAU * out["prior_retention"].fillna(1.0))
+        / (out["n"].fillna(0) + TAU)
+    ).clip(lower=0.0, upper=1.10)
+    # For HEALTHY rows, lock to 1.0 explicitly.
+    out.loc[out["bucket"] == "HEALTHY", "shrunk_retention"] = 1.0
+    # For rows with no valid retention_adj (mean_raw NaN, etc.),
+    # fall back to the prior alone.
+    no_cell = out["retention_adj"].isna()
+    out.loc[no_cell, "shrunk_retention"] = out.loc[
+        no_cell, "prior_retention"].fillna(1.0)
+
     # Reorder
     out = out[["player_id", "player_display_name", "position", "stat",
                 "bucket", "n", "n_total_player",
                 "mean_raw", "mean_adj",
                 "healthy_raw", "healthy_adj",
-                "delta_raw", "delta_adj", "retention_adj"]]
+                "delta_raw", "delta_adj",
+                "retention_adj",          # raw cell rate
+                "prior_retention",        # position-level prior
+                "prior_n",
+                "shrunk_retention"]]      # ← USE THIS in projections
     out = out.sort_values(["player_id", "stat", "bucket"]).reset_index(drop=True)
 
     OUT.parent.mkdir(parents=True, exist_ok=True)

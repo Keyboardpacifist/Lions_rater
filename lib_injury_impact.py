@@ -87,19 +87,29 @@ def bucket_for(report, practice) -> str:
 
 @dataclass
 class PlayerSelfDeltaResult:
-    retention_adj: float    # mean_raw / healthy_raw (clipped)
-    delta_adj: float        # mean_adj - healthy_adj (yards)
-    n: int                  # bucket sample size
-    n_total: int            # player's overall sample
-    source: str             # "player" / "none"
+    retention_adj: float          # raw cell rate (V2.1 — pre-shrinkage)
+    shrunk_retention: float       # ← V2.2: cohort-prior-shrunk number,
+                                   #   USE THIS in projections
+    prior_retention: float        # the position-level prior used
+    prior_n: int                  # n behind the prior
+    delta_adj: float
+    n: int                        # bucket sample size for THIS player
+    n_total: int                  # player's overall sample at this stat
+    source: str                   # "player" / "none"
 
 
 def lookup_player_self_delta(player_id: str, stat: str,
                                bucket: str,
-                               min_n: int = 5
+                               min_n: int = 3
                                ) -> PlayerSelfDeltaResult | None:
-    """Return the player's own retention multiplier for this bucket.
-    None if sample is too thin or table not loaded."""
+    """Return the player's own (shrunk) retention multiplier.
+
+    With V2.2 shrinkage, even small-sample cells produce sensible
+    numbers — they get pulled toward the cohort prior. So the min_n
+    threshold can be lower (3 vs the previous 5). The returned
+    `shrunk_retention` is the multiplier that should be applied;
+    `retention_adj` is the raw cell rate kept for inspection.
+    """
     df = _load_player_self()
     if df.empty:
         return None
@@ -113,10 +123,18 @@ def lookup_player_self_delta(player_id: str, stat: str,
     if n < min_n:
         return None
     return PlayerSelfDeltaResult(
-        retention_adj=float(row["retention_adj"]),
-        delta_adj=float(row["delta_adj"]),
+        retention_adj=float(row["retention_adj"])
+                       if pd.notna(row["retention_adj"]) else 1.0,
+        shrunk_retention=float(row.get("shrunk_retention",
+                                          row["retention_adj"])),
+        prior_retention=float(row.get("prior_retention", 1.0))
+                          if pd.notna(row.get("prior_retention")) else 1.0,
+        prior_n=int(row.get("prior_n", 0)) if pd.notna(row.get("prior_n")) else 0,
+        delta_adj=float(row["delta_adj"])
+                    if pd.notna(row["delta_adj"]) else 0.0,
         n=n,
-        n_total=int(row.get("n_total_player", 0)),
+        n_total=int(row.get("n_total_player", 0))
+                  if pd.notna(row.get("n_total_player")) else 0,
         source="player",
     )
 

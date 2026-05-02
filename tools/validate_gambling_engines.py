@@ -642,9 +642,14 @@ res = lookup_player_self_delta(saq, "rushing_yards",
 check("Saquon Q/Limited rushing self-delta found (n>=5)",
       res is not None)
 if res is not None:
-    check("Saquon Q/Limited retention < 0.80 (real signal)",
-          res.retention_adj < 0.80,
-          f"got {res.retention_adj:.3f} (n={res.n})")
+    check("Saquon Q/Limited shrunk retention < 0.80 (real signal)",
+          res.shrunk_retention < 0.80,
+          f"got {res.shrunk_retention:.3f} (n={res.n})")
+    # V2.2 shrinkage: shrunk should be BETWEEN raw cell and prior
+    check("V2.2 shrinkage: shrunk is between cell and prior",
+          (min(res.retention_adj, res.prior_retention)
+           <= res.shrunk_retention
+           <= max(res.retention_adj, res.prior_retention) + 1e-9))
 
 # Team starter-absence — Aaron Rodgers GB 2013
 res = lookup_team_starter_absence("GB", 2013, "QB1", min_n_out=3)
