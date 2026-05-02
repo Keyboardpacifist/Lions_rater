@@ -1098,9 +1098,9 @@ with tab_scheme:
                     profile_rows.append({
                         "metric": METRIC_LABELS.get(m, m),
                         "value": (f"{raw:.1%}" if (is_rate and pd.notna(raw))
-                                   else (round(raw, 3) if pd.notna(raw) else "—")),
+                                   else (f"{raw:.3f}" if pd.notna(raw) else "—")),
                         "vs league": (f"{delta:+.1%}" if (is_rate and pd.notna(delta))
-                                       else (round(delta, 3) if pd.notna(delta) else "—")),
+                                       else (f"{delta:+.3f}" if pd.notna(delta) else "—")),
                     })
                 st.dataframe(pd.DataFrame(profile_rows),
                              use_container_width=True, hide_index=True)
@@ -1316,9 +1316,9 @@ with tab_coach:
                 profile_rows.append({
                     "Metric": label,
                     "Value": (f"{val:.1%}" if (is_rate and pd.notna(val))
-                               else (round(val, 2) if pd.notna(val) else "—")),
+                               else (f"{val:.2f}" if pd.notna(val) else "—")),
                     "vs league": (f"{delta:+.1%}" if (is_rate and pd.notna(delta))
-                                   else (round(delta, 2) if pd.notna(delta) else "—")),
+                                   else (f"{delta:+.2f}" if pd.notna(delta) else "—")),
                 })
             st.dataframe(pd.DataFrame(profile_rows),
                          use_container_width=True, hide_index=True)
