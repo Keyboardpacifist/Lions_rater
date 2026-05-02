@@ -495,12 +495,16 @@ def generate_matchup_report(home_team: str, away_team: str,
 # This is what retail gamblers actually read — the data sections
 # below it are the receipts.
 
+# Confidence rubric is heuristic — it counts corroborating signals,
+# it is NOT a backtested win probability. Labels reframe the score as
+# "how many independent signals point this way" rather than "X% chance
+# the bet wins."
 CONFIDENCE_LABELS = {
-    5: "HIGH",
-    4: "MEDIUM-HIGH",
-    3: "MEDIUM",
-    2: "LOW",
-    1: "VERY LOW",
+    5: "STRONG SIGNAL CLUSTER",
+    4: "MULTIPLE SIGNALS",
+    3: "SIGNAL DETECTED",
+    2: "WEAK SIGNAL",
+    1: "MARGINAL SIGNAL",
     0: "PASS",
 }
 

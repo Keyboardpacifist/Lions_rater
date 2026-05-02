@@ -240,6 +240,13 @@ with tab_matchup:
                         "📊 *The data sections below are the receipts. "
                         "Each bullet above points to a specific data row.*"
                     )
+                    st.caption(
+                        "ℹ️ *Confidence labels (STRONG SIGNAL CLUSTER → "
+                        "MARGINAL) count corroborating signals — they "
+                        "are heuristic, not backtested win probabilities. "
+                        "More signals = more reasons to lean, not "
+                        "higher win odds.*"
+                    )
 
                 # ── Quick-glance bullets (kept as backup TL;DR) ──
                 st.markdown("---")
@@ -1476,6 +1483,13 @@ with tab_proprep:
                 st.caption(
                     "📊 *The data sections below are the receipts. "
                     "Each bullet above points to a specific data row.*"
+                )
+                st.caption(
+                    "ℹ️ *Confidence labels (STRONG SIGNAL CLUSTER → "
+                    "MARGINAL) count corroborating signals — they "
+                    "are heuristic, not backtested win probabilities. "
+                    "More signals = more reasons to lean, not "
+                    "higher win odds.*"
                 )
 
             # ── Quick-glance bullets ──
