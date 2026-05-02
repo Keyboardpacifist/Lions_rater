@@ -40,6 +40,11 @@ from lib_alt_line_ev import (
     decimal_to_implied_prob,
     p_over_threshold,
 )
+from lib_game_script_player import (
+    BUCKET_LABEL,
+    GameScriptBucket,
+    multiplier_for_game_script,
+)
 from lib_injury_cohort import predict as cohort_predict
 from lib_weather import primary_stat_for_position, weather_cohort
 
@@ -131,6 +136,7 @@ def decompose(player_id: str, position: str, team: str, stat: str,
                injury_body_part: str = "unknown",
                injury_practice: str = "DNP",
                key_starter_out: str | None = None,
+               expected_game_script: GameScriptBucket | str | None = None,
                target_temp: float | None = None,
                target_wind: float | None = None,
                target_roof: str | None = None,
@@ -230,7 +236,7 @@ def decompose(player_id: str, position: str, team: str, stat: str,
                                   f"(allocated {share:.0%} share)"),
                         ))
 
-    # ── Game-script (4.2) — when a teammate is out
+    # ── Key starter unavailable (4.2) — when a teammate is OUT
     if key_starter_out and key_starter_out.upper() in ("QB1", "RB1",
                                                         "WR1", "TE1",
                                                         "MULTI"):
@@ -238,31 +244,45 @@ def decompose(player_id: str, position: str, team: str, stat: str,
         if not gs.empty:
             row = gs[gs["scenario"] == key_starter_out.upper()]
             if not row.empty:
-                # Rough: shift the baseline by the league-wide
-                # pass-rate delta scaled to the player's per-game
-                # opportunity rate. Simple v1 — use points/game delta
-                # as a proxy for production shift, scaled by the
-                # player's share of team production.
-                # For v1 we keep it intuitive: a +/- pass rate delta
-                # times the player's per-game baseline.
                 pass_rate_delta = float(
                     row.iloc[0].get("pass_rate_delta") or 0)
-                # Skill positions tied to pass rate
                 if stat in ("receiving_yards", "passing_yards"):
                     sign = 1 if stat == "receiving_yards" else 1
-                    # Rough multiplier: 1% pass-rate shift ≈ 1.5%
-                    # production shift for receivers/QBs
                     adj = baseline * pass_rate_delta * 1.5 * sign
                 elif stat == "rushing_yards":
                     adj = baseline * (-pass_rate_delta) * 1.5
                 else:
                     adj = 0
                 decomp.contributions.append(DecompContribution(
-                    label="Game-script",
+                    label="Key starter unavailable",
                     delta=adj,
                     note=(f"{key_starter_out} OUT: league pass-rate "
                           f"shift {pass_rate_delta:+.1%} (n="
                           f"{int(row.iloc[0]['n_games'])})"),
                 ))
+
+    # ── Expected game-script — usage shift based on game flow
+    # Multiplier comes from the player's own historical splits in
+    # games that ended in the target margin bucket (or league-wide
+    # position fallback when sample is thin).
+    if expected_game_script:
+        bucket = (expected_game_script
+                   if isinstance(expected_game_script, GameScriptBucket)
+                   else GameScriptBucket(str(expected_game_script).upper()))
+        mult, source, n = multiplier_for_game_script(
+            player_id=player_id, stat=stat,
+            target_bucket=bucket, fallback_position=position,
+        )
+        if abs(mult - 1.0) > 0.005:
+            adj = baseline * (mult - 1.0)
+            label_pretty = BUCKET_LABEL.get(bucket, bucket.value)
+            decomp.contributions.append(DecompContribution(
+                label="Game-script",
+                delta=adj,
+                note=(f"Expected: {label_pretty}. "
+                      f"Player avg in this bucket = "
+                      f"{mult:.2f}x baseline "
+                      f"({source} cohort, n={n})"),
+            ))
 
     return decomp

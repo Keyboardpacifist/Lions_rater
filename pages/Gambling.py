@@ -1799,12 +1799,47 @@ with tab_decomp:
             w_temp = sched.get("temp")
             w_wind = sched.get("wind")
 
-        st.markdown("**Game-script (optional)**")
+        st.markdown("**Key starter unavailable (optional)**")
+        st.caption("Pick a teammate role that's OUT this week — the "
+                    "engine applies the league-wide scoring/scheme "
+                    "shift when that role is missing.")
         starter_out = st.selectbox(
-            "Key starter out",
+            "Teammate OUT",
             ["none", "QB1", "RB1", "WR1", "TE1", "MULTI"],
             key="dec_starter",
         )
+
+        st.markdown("**Expected game-script**")
+        st.caption("How do you expect the game to flow? Engine "
+                    "applies the player's own historical usage "
+                    "multiplier in this bucket (with league-wide "
+                    "fallback when sample is thin).")
+        # Default suggested by the spread
+        from lib_game_script_player import (
+            BUCKET_LABEL, BUCKET_ORDER, infer_bucket_from_spread,
+            GameScriptBucket as _GSB,
+        )
+        default_bucket = _GSB.CLOSE
+        if sched.get("spread_line") is not None:
+            spread_pov = (-sched["spread_line"] if sched["is_home"]
+                          else sched["spread_line"])
+            default_bucket = infer_bucket_from_spread(spread_pov)
+        bucket_options = ["(none — skip game-script adj)"] + [
+            BUCKET_LABEL[b] for b in BUCKET_ORDER]
+        default_idx = (BUCKET_ORDER.index(default_bucket) + 1
+                        if default_bucket in BUCKET_ORDER else 0)
+        bucket_label_pick = st.selectbox(
+            "Game flow", bucket_options, index=default_idx,
+            key="dec_gs_bucket",
+        )
+        if bucket_label_pick.startswith("(none"):
+            picked_bucket = None
+        else:
+            # Reverse-lookup
+            picked_bucket = next(
+                b for b in BUCKET_ORDER
+                if BUCKET_LABEL[b] == bucket_label_pick
+            )
 
         run_d = st.button("Run decomposition", type="primary",
                           use_container_width=True, key="dec_run")
@@ -1825,6 +1860,7 @@ with tab_decomp:
                 injury_practice=inj_practice,
                 key_starter_out=(starter_out if starter_out != "none"
                                   else None),
+                expected_game_script=picked_bucket,
                 target_temp=w_temp, target_wind=w_wind,
             )
             st.markdown(f"#### {d.player_display_name} — {d.stat}")

@@ -462,6 +462,35 @@ check("projection = baseline + sum(deltas)",
 check("contributions list is non-empty when context provided",
       len(d.contributions) >= 1)
 
+# Game-script bucket integration
+from lib_game_script_player import (
+    GameScriptBucket, classify_margin, multiplier_for_game_script,
+)
+check("classify_margin handles BLOWOUT_WIN at +20",
+      classify_margin(20) == GameScriptBucket.BLOWOUT_WIN)
+check("classify_margin handles CLOSE at -3",
+      classify_margin(-3) == GameScriptBucket.CLOSE)
+check("classify_margin handles BLOWOUT_LOSS at -21",
+      classify_margin(-21) == GameScriptBucket.BLOWOUT_LOSS)
+
+# Pacheco BLOWOUT_WIN multiplier should be > 1 (clock kill)
+mult, src, n = multiplier_for_game_script(
+    "00-0037197", "rushing_yards", GameScriptBucket.BLOWOUT_WIN,
+    fallback_position="RB",
+)
+check("Pacheco BLOWOUT_WIN rushing multiplier > 1.0 (clock-kill role)",
+      mult > 1.0, f"got {mult:.2f} ({src} cohort, n={n})")
+
+# decompose with bucket should add a Game-script row
+d2 = decompose(player_id="00-0037197", position="RB", team="KC",
+               stat="rushing_yards",
+               opponent="LV", season=2024, week=10,
+               expected_game_script=GameScriptBucket.BLOWOUT_WIN,
+               lookback_games=12)
+gs_rows = [c for c in d2.contributions if c.label == "Game-script"]
+check("decompose adds Game-script row when bucket provided",
+      len(gs_rows) == 1, f"got {len(gs_rows)} rows")
+
 
 # ── 15. Smart Parlay Builder (Feature 5.4) ───────────────────────
 
