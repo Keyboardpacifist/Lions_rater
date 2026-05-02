@@ -27,29 +27,32 @@ sys.path.insert(0, str(REPO))
 
 MASTER = REPO / "data" / "league_qb_all_seasons.parquet"
 PRESSURE = REPO / "data" / "qb_pressure_clutch_z.parquet"
+SOS = REPO / "data" / "qb_sos_adjusted_z.parquet"
 OUT = REPO / "data" / "qb_gas_seasons.parquet"
 
 from lib_qb_gas import compute_qb_gas  # noqa: E402
 
 
 def main() -> None:
-    print("→ loading master + pressure z-cols...")
+    print("→ loading master + pressure + SOS z-cols...")
     master = pd.read_parquet(MASTER)
     pressure = pd.read_parquet(PRESSURE)
+    sos = pd.read_parquet(SOS)
     print(f"  master rows: {len(master):,}")
     print(f"  pressure rows: {len(pressure):,}")
+    print(f"  SOS rows: {len(sos):,}")
 
-    # Merge on (player_id, season_year)
-    merged = master.merge(
-        pressure,
-        on=["player_id", "season_year"],
-        how="left",
-    )
+    merged = master.merge(pressure, on=["player_id", "season_year"],
+                           how="left")
+    merged = merged.merge(sos, on=["player_id", "season_year"],
+                            how="left")
     print(f"  merged rows: {len(merged):,}")
-    matched = merged["epa_under_pressure_z"].notna().sum()
-    print(f"  with pressure data: {matched:,} ({matched / max(len(merged), 1):.0%})")
+    matched = merged["adj_pass_epa_per_play_z"].notna().sum()
+    print(f"  with SOS data: {matched:,} "
+          f"({matched / max(len(merged), 1):.0%})")
 
-    # Apply GAS scoring
+    # Apply GAS scoring (SOS-adjusted; uses adj_*_z cols for efficiency
+    # + ball-security per the lib_qb_gas spec)
     graded = compute_qb_gas(merged)
     print(f"  graded rows: {len(graded):,}")
 

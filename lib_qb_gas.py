@@ -43,6 +43,7 @@ from lib_grade import (
     bundle_grade,
     composite_grade,
     grade_label,
+    shrunk_z,
     z_to_grade,
 )
 
@@ -64,10 +65,13 @@ NEGATIVE_STATS: set[str] = set()
 EFFICIENCY = BundleSpec(
     name="Per-dropback efficiency",
     stats={
-        "pass_epa_per_play_z":   0.45,    # the single best QB stat
-        "passing_cpoe_z":        0.20,    # accuracy adjusted for difficulty
-        "pass_success_rate_z":   0.20,    # consistency-of-positive plays
-        "sack_rate_z":           0.15,    # quick decision-making (negative stat)
+        # SOS-adjusted (per-dropback opponent-defense subtraction).
+        # Original unadjusted z-cols kept available in the master file
+        # for the slider/community algorithms.
+        "adj_pass_epa_per_play_z": 0.45,    # the single best QB stat
+        "passing_cpoe_z":          0.20,    # already difficulty-adj at play level
+        "adj_pass_success_rate_z": 0.20,    # consistency-of-positive plays
+        "adj_sack_rate_z":         0.15,    # quick decisions / pocket awareness
     },
 )
 
@@ -82,8 +86,8 @@ VOLUME = BundleSpec(
 BALL_SECURITY = BundleSpec(
     name="Ball security",
     stats={
-        "int_rate_z":      0.55,
-        "turnover_rate_z": 0.45,
+        "adj_int_rate_z":  0.55,    # SOS-adjusted INT rate
+        "turnover_rate_z": 0.45,    # not yet SOS-adjusted (fumbles)
     },
 )
 
@@ -124,13 +128,31 @@ QB_SPEC = PositionGradeSpec(
         "mobility":       MOBILITY,
         "clutch":         CLUTCH,
     },
+    # Bundle weights calibrated to balance two principles:
+    # (a) football importance to winning football games
+    # (b) the stat's actual season-to-season stability
+    #
+    # Per-bundle YoY (NFL pooled 2017-2025, ≥14 games):
+    #   Mobility       0.71  ← very stable trait
+    #   Volume         0.48
+    #   Efficiency     0.34
+    #   Pressure       0.29
+    #   Clutch         0.16  ← sparse-situation noise
+    #   Ball security  0.05  ← essentially random YoY (well-documented
+    #                          in football analytics — INT rate is the
+    #                          single noisiest core QB stat)
+    #
+    # We DON'T zero out ball security — it does affect this-season
+    # outcomes, just doesn't predict next year. We weight it modestly
+    # so noisy single-season fluctuations don't dominate. Same logic
+    # for clutch: meaningful when it happens, but small-sample noisy.
     bundle_weights={
-        "efficiency":     0.40,
-        "volume":         0.15,
-        "ball_security":  0.15,
-        "pressure":       0.15,
-        "mobility":       0.10,
-        "clutch":         0.05,
+        "efficiency":     0.45,    # up from 0.40 — stable + decisive
+        "volume":         0.17,    # up modestly
+        "ball_security":  0.10,    # down from 0.15 — high noise
+        "pressure":       0.13,    # slightly down
+        "mobility":       0.12,    # up — stable trait
+        "clutch":         0.03,    # down from 0.05 — pure noise
     },
 )
 
@@ -156,12 +178,20 @@ def _stat_grade(z_value: float, stat_name: str) -> float:
 def compute_qb_gas(df: pd.DataFrame,
                      spec: PositionGradeSpec = QB_SPEC,
                      min_games_full_grade: int = 8,
+                     shrinkage_tau: float = 4.0,
                      ) -> pd.DataFrame:
     """For a DataFrame of (player, season) rows with z-score columns,
     add bundle-grade columns and the composite GAS Score column.
 
+    Sample-size shrinkage: each stat z is shrunk toward 0 (=league
+    average) with weight `tau / (n + tau)` where n is games played.
+    Tau=4 means a 17-game season gets 81% weight on the actual z, 19%
+    on the league-mean prior. A 10-game season gets 71%/29%. This is
+    Path A integrity — thin samples regress to mean honestly rather
+    than producing wild grades that overreact to small-sample noise.
+
     Required input columns: every z-column referenced by any bundle in
-    `spec.bundles`. Missing columns are treated as 50 grade (= avg).
+    `spec.bundles`, plus `games`. Missing z-columns → grade of 50.
 
     Adds these columns:
         gas_efficiency_grade, gas_volume_grade, gas_ball_security_grade,
@@ -170,7 +200,8 @@ def compute_qb_gas(df: pd.DataFrame,
     """
     out = df.copy()
 
-    # 1. Compute each stat's individual grade once
+    # 1. Compute each stat's individual grade once.
+    # Each stat z is shrunk by sample size before scoring.
     all_stats = set()
     for bundle in spec.bundles.values():
         all_stats.update(bundle.stats.keys())
@@ -179,7 +210,16 @@ def compute_qb_gas(df: pd.DataFrame,
         if stat not in out.columns:
             out[col] = 50.0
         else:
-            out[col] = out[stat].apply(lambda z: _stat_grade(z, stat))
+            def _grade_one(row, _stat=stat):
+                z = row.get(_stat)
+                games = row.get("games", 16)
+                if games is None or games != games:
+                    games = 16
+                z_shrunk = shrunk_z(z, int(games),
+                                       prior_z=0.0,
+                                       tau=shrinkage_tau)
+                return _stat_grade(z_shrunk, _stat)
+            out[col] = out.apply(_grade_one, axis=1)
 
     # 2. For each row, compute each bundle's grade
     bundle_grade_cols: list[str] = []
