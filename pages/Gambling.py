@@ -428,76 +428,79 @@ with tab_matchup:
 # ════════════════════════════════════════════════════════════════
 
 with tab_alerts:
-    st.markdown("### Smart Alerts — fusion engine")
-    st.caption(
-        "Drop in a single news event (player + status + body part) and "
-        "the engine fuses every other feature: cohort play probability "
-        "(4.1), team scoring shift (4.2), book over/under-reaction "
-        "history (4.3), and weather context (4.5). This is what a "
-        "Bet School push notification will read like in production."
-    )
+    def _run_alerts_tab():
+        st.markdown("### Smart Alerts — fusion engine")
+        st.caption(
+            "Drop in a single news event (player + status + body part) and "
+            "the engine fuses every other feature: cohort play probability "
+            "(4.1), team scoring shift (4.2), book over/under-reaction "
+            "history (4.3), and weather context (4.5). This is what a "
+            "Bet School push notification will read like in production."
+        )
 
-    arch = load_archive()
-    if arch.empty:
-        st.error("Missing data — pull injuries first.")
-    else:
-        c1, c2, c3 = st.columns([1, 1, 1])
-        seasons = sorted(arch["season"].dropna().astype(int).unique(),
-                         reverse=True)
-        season_pick = c1.selectbox("Season", seasons, index=0,
-                                    key="al_season")
-        weeks = sorted(arch[arch["season"] == season_pick]
-                       ["week"].dropna().astype(int).unique())
-        week_pick = c2.selectbox("Week", weeks,
-                                  index=len(weeks) - 1 if weeks else 0,
-                                  key="al_week")
-
-        slate = arch[(arch["season"] == season_pick)
-                     & (arch["week"] == week_pick)
-                     & (arch["report_status"].notna())].copy()
-        if slate.empty:
-            st.info("No injury report rows for that week.")
+        arch = load_archive()
+        if arch.empty:
+            st.error("Missing data — pull injuries first.")
         else:
-            slate["_label"] = (
-                slate["full_name"].fillna("?")
-                + "  ·  " + slate["team"].astype(str)
-                + "  ·  " + slate["position"].astype(str)
-                + "  ·  " + slate["report_primary_injury"].fillna("?")
-                + "  ·  " + slate["report_status"].fillna("None")
-                + " / " + slate["practice_status"].fillna("None")
-            )
-            pick = c3.selectbox("Player", slate["_label"].tolist(),
-                                 key="al_pick")
-            row = slate[slate["_label"] == pick].iloc[0]
+            c1, c2, c3 = st.columns([1, 1, 1])
+            seasons = sorted(arch["season"].dropna().astype(int).unique(),
+                             reverse=True)
+            season_pick = c1.selectbox("Season", seasons, index=0,
+                                        key="al_season")
+            weeks = sorted(arch[arch["season"] == season_pick]
+                           ["week"].dropna().astype(int).unique())
+            week_pick = c2.selectbox("Week", weeks,
+                                      index=len(weeks) - 1 if weeks else 0,
+                                      key="al_week")
 
-            if st.button("Generate alert", type="primary",
-                         use_container_width=True, key="al_run"):
-                bundle = fuse_alert(
-                    player_name=row["full_name"],
-                    team=str(row["team"]),
-                    position=str(row["position"]),
-                    status=report_status_code(row["report_status"]),
-                    body_part=body_part_normalize(
-                        row["report_primary_injury"]),
-                    practice_status=practice_status_code(
-                        row["practice_status"]),
-                    season=int(row["season"]),
-                    week=int(row["week"]),
+            slate = arch[(arch["season"] == season_pick)
+                         & (arch["week"] == week_pick)
+                         & (arch["report_status"].notna())].copy()
+            if slate.empty:
+                st.info("No injury report rows for that week.")
+            else:
+                slate["_label"] = (
+                    slate["full_name"].fillna("?")
+                    + "  ·  " + slate["team"].astype(str)
+                    + "  ·  " + slate["position"].astype(str)
+                    + "  ·  " + slate["report_primary_injury"].fillna("?")
+                    + "  ·  " + slate["report_status"].fillna("None")
+                    + " / " + slate["practice_status"].fillna("None")
                 )
-                st.markdown(f"### {bundle.headline}")
-                st.markdown("---")
-                for b in bundle.bullet_points:
-                    st.markdown(f"- {b}")
-                st.markdown("---")
-                st.markdown("**Cohort (4.1):** " + bundle.cohort_line)
-                st.markdown("**Game-script (4.2):** "
-                            + bundle.game_script_line)
-                st.markdown("**Book behavior (4.3):** "
-                            + bundle.book_behavior_line)
-                if bundle.weather_line:
-                    st.markdown("**Weather (4.5):** "
-                                + bundle.weather_line)
+                pick = c3.selectbox("Player", slate["_label"].tolist(),
+                                     key="al_pick")
+                row = slate[slate["_label"] == pick].iloc[0]
 
+                if st.button("Generate alert", type="primary",
+                             use_container_width=True, key="al_run"):
+                    bundle = fuse_alert(
+                        player_name=row["full_name"],
+                        team=str(row["team"]),
+                        position=str(row["position"]),
+                        status=report_status_code(row["report_status"]),
+                        body_part=body_part_normalize(
+                            row["report_primary_injury"]),
+                        practice_status=practice_status_code(
+                            row["practice_status"]),
+                        season=int(row["season"]),
+                        week=int(row["week"]),
+                    )
+                    st.markdown(f"### {bundle.headline}")
+                    st.markdown("---")
+                    for b in bundle.bullet_points:
+                        st.markdown(f"- {b}")
+                    st.markdown("---")
+                    st.markdown("**Cohort (4.1):** " + bundle.cohort_line)
+                    st.markdown("**Game-script (4.2):** "
+                                + bundle.game_script_line)
+                    st.markdown("**Book behavior (4.3):** "
+                                + bundle.book_behavior_line)
+                    if bundle.weather_line:
+                        st.markdown("**Weather (4.5):** "
+                                    + bundle.weather_line)
+
+
+    _run_alerts_tab()
 
 # ════════════════════════════════════════════════════════════════
 # Tab 1 — Injury Cohort
@@ -834,81 +837,86 @@ with tab_weather:
         "LOW (<5, falls back to player baseline)."
     )
 
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        position_pick = st.selectbox(
-            "Position", ["QB", "WR", "RB", "TE"], index=0,
-            key="w_pos",
-        )
-        opts = all_player_options(position=position_pick, min_games=20)
-        if opts.empty:
-            st.info("No players found at this position.")
-            st.stop()
-        opts["_label"] = (opts["player_display_name"]
-                          + "  ·  " + opts["team"].fillna("?"))
-        player_label = st.selectbox(
-            "Player", opts["_label"].tolist(),
-            index=None,
-            placeholder="Search player by name...",
-            key="w_player",
-        )
-        if not player_label:
-            st.info("Pick a player.")
-            st.stop()
-        chosen = opts[opts["_label"] == player_label].iloc[0]
-
-        st.markdown("**Target weather**")
-        target_temp = st.slider("Temperature (°F)", -5, 100, 50,
-                                key="w_temp")
-        target_wind = st.slider("Wind (mph)", 0, 35, 5, key="w_wind")
-        target_roof = st.selectbox(
-            "Roof", ["any", "outdoors", "dome", "closed", "open"],
-            index=0, key="w_roof",
-        )
-        target_surface = st.selectbox(
-            "Surface", ["any", "grass", "turf", "fieldturf",
-                        "a_turf", "sportturf"],
-            index=0, key="w_surf",
-        )
-        run_w = st.button("Run weather cohort", type="primary",
-                          use_container_width=True, key="w_run")
-
-    with c2:
-        if run_w:
-            r = weather_cohort(
-                player_id=chosen["player_id"],
-                position=position_pick,
-                target_temp=target_temp,
-                target_wind=target_wind,
-                target_roof=None if target_roof == "any" else target_roof,
-                target_surface=None if target_surface == "any"
-                                else target_surface,
+    def _run_weather_tab():
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            position_pick = st.selectbox(
+                "Position", ["QB", "WR", "RB", "TE"], index=0,
+                key="w_pos",
             )
+            opts = all_player_options(position=position_pick,
+                                        min_games=20)
+            if opts.empty:
+                st.info("No players found at this position.")
+                return
+            opts["_label"] = (opts["player_display_name"]
+                              + "  ·  " + opts["team"].fillna("?"))
+            player_label = st.selectbox(
+                "Player", opts["_label"].tolist(),
+                index=None,
+                placeholder="Search player by name...",
+                key="w_player",
+            )
+            if not player_label:
+                st.info("Pick a player.")
+                return
+            chosen = opts[opts["_label"] == player_label].iloc[0]
 
-            st.markdown(f"#### {chosen['player_display_name']} — {r.stat}")
+            st.markdown("**Target weather**")
+            target_temp = st.slider("Temperature (°F)", -5, 100, 50,
+                                    key="w_temp")
+            target_wind = st.slider("Wind (mph)", 0, 35, 5, key="w_wind")
+            target_roof = st.selectbox(
+                "Roof", ["any", "outdoors", "dome", "closed", "open"],
+                index=0, key="w_roof",
+            )
+            target_surface = st.selectbox(
+                "Surface", ["any", "grass", "turf", "fieldturf",
+                            "a_turf", "sportturf"],
+                index=0, key="w_surf",
+            )
+            run_w = st.button("Run weather cohort", type="primary",
+                              use_container_width=True, key="w_run")
 
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("P10", f"{r.p10:.0f}")
-            m2.metric("P50 (median)", f"{r.p50:.0f}")
-            m3.metric("P90", f"{r.p90:.0f}")
-            m4.metric("Mean", f"{r.mean:.0f}")
+        with c2:
+            if run_w:
+                r = weather_cohort(
+                    player_id=chosen["player_id"],
+                    position=position_pick,
+                    target_temp=target_temp,
+                    target_wind=target_wind,
+                    target_roof=None if target_roof == "any" else target_roof,
+                    target_surface=None if target_surface == "any"
+                                    else target_surface,
+                )
 
-            m1, m2 = st.columns(2)
-            m1.metric("Cohort size", f"{r.n_games} games")
-            m2.metric("Confidence", r.confidence)
+                st.markdown(f"#### {chosen['player_display_name']} — "
+                             f"{r.stat}")
 
-            mode_blurb = {
-                "player": "Cohort drawn from this player's own historical "
-                          "games matching the target conditions.",
-                "tier_blend": "Player's specific weather cohort was thin "
-                              "(<5 games). Falling back to all of his "
-                              "games as the baseline.",
-                "league": "No matching games at all. Showing league-wide "
-                          "distribution at this position.",
-            }.get(r.cohort_mode, "")
-            st.caption(mode_blurb)
-        else:
-            st.info("Pick a player and target weather, then click **Run**.")
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("P10", f"{r.p10:.0f}")
+                m2.metric("P50 (median)", f"{r.p50:.0f}")
+                m3.metric("P90", f"{r.p90:.0f}")
+                m4.metric("Mean", f"{r.mean:.0f}")
+
+                m1, m2 = st.columns(2)
+                m1.metric("Cohort size", f"{r.n_games} games")
+                m2.metric("Confidence", r.confidence)
+
+                mode_blurb = {
+                    "player": "Cohort drawn from this player's own historical "
+                              "games matching the target conditions.",
+                    "tier_blend": "Player's specific weather cohort was thin "
+                                  "(<5 games). Falling back to all of his "
+                                  "games as the baseline.",
+                    "league": "No matching games at all. Showing league-wide "
+                              "distribution at this position.",
+                }.get(r.cohort_mode, "")
+                st.caption(mode_blurb)
+            else:
+                st.info("Pick a player and target weather, then click "
+                         "**Run**.")
+    _run_weather_tab()
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1438,550 +1446,556 @@ with tab_proprep:
         return opts.sort_values("n_games",
                                  ascending=False).reset_index(drop=True)
 
-    p_opts = _player_options()
-    c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-    player_label = c1.selectbox(
-        "Player", p_opts["_label"].tolist(),
-        index=None,
-        placeholder="Search player by name...",
-        key="pr_player",
-    )
-    if not player_label:
-        st.info("Pick a player.")
-        st.stop()
-    chosen = p_opts[p_opts["_label"] == player_label].iloc[0]
+    def _run_player_report_tab():
+        p_opts = _player_options()
+        c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+        player_label = c1.selectbox(
+            "Player", p_opts["_label"].tolist(),
+            index=None,
+            placeholder="Search player by name...",
+            key="pr_player",
+        )
+        if not player_label:
+            st.info("Pick a player.")
+            return
+        chosen = p_opts[p_opts["_label"] == player_label].iloc[0]
 
-    seasons_avail = list(range(2025, 2015, -1))
-    season_pick = c2.selectbox("Season", seasons_avail, index=1,
-                                 key="pr_season")
-    week_pick = c3.number_input("Week", 1, 22, 10, key="pr_week")
+        seasons_avail = list(range(2025, 2015, -1))
+        season_pick = c2.selectbox("Season", seasons_avail, index=1,
+                                     key="pr_season")
+        week_pick = c3.number_input("Week", 1, 22, 10, key="pr_week")
 
-    # Stat pick depends on position
-    stat_options = {
-        "QB": ["passing_yards"],
-        "WR": ["receiving_yards"],
-        "TE": ["receiving_yards"],
-        "RB": ["rushing_yards", "receiving_yards"],
-    }
-    pos = str(chosen["position"])
-    stat_pick = c4.selectbox("Stat",
-                              stat_options.get(pos, ["receiving_yards"]),
-                              key="pr_stat")
+        # Stat pick depends on position
+        stat_options = {
+            "QB": ["passing_yards"],
+            "WR": ["receiving_yards"],
+            "TE": ["receiving_yards"],
+            "RB": ["rushing_yards", "receiving_yards"],
+        }
+        pos = str(chosen["position"])
+        stat_pick = c4.selectbox("Stat",
+                                  stat_options.get(pos, ["receiving_yards"]),
+                                  key="pr_stat")
 
-    if st.button("Generate player report", type="primary",
-                  use_container_width=True, key="pr_run"):
-        try:
-            r = generate_player_report(
-                player_id=chosen["player_id"],
-                position=pos,
-                season=int(season_pick), week=int(week_pick),
-                primary_stat=stat_pick,
-            )
-        except Exception as e:
-            st.error(f"Report generation failed: {e}")
-        else:
-            # ── Headline ──
-            st.markdown(
-                f"## {r.player_name}  ({r.position}, {r.team})"
-            )
-            opp_str = f"vs {r.opponent}" if r.opponent else "(no opponent)"
-            roof = r.headline.get("roof", "?")
-            temp = r.headline.get("temp")
-            wind = r.headline.get("wind")
-            ctx_bits = [opp_str, f"Week {r.week} {r.season}"]
-            spread = r.headline.get("spread")
-            if spread is not None:
-                fav_str = (f"{r.team} -{abs(spread):.1f}" if spread < 0
-                            else f"{r.team} +{spread:.1f}")
-                ctx_bits.append(fav_str)
-            total = r.headline.get("total")
-            if total is not None:
-                ctx_bits.append(f"O/U {total:.1f}")
-            if temp is not None:
-                ctx_bits.append(f"{temp:.0f}°F")
-            if wind is not None:
-                ctx_bits.append(f"{wind:.0f}mph wind")
-            ctx_bits.append(f"roof: {roof}")
-            st.caption("  ·  ".join(str(b) for b in ctx_bits))
+        if st.button("Generate player report", type="primary",
+                      use_container_width=True, key="pr_run"):
+            try:
+                r = generate_player_report(
+                    player_id=chosen["player_id"],
+                    position=pos,
+                    season=int(season_pick), week=int(week_pick),
+                    primary_stat=stat_pick,
+                )
+            except Exception as e:
+                st.error(f"Report generation failed: {e}")
+            else:
+                # ── Headline ──
+                st.markdown(
+                    f"## {r.player_name}  ({r.position}, {r.team})"
+                )
+                opp_str = f"vs {r.opponent}" if r.opponent else "(no opponent)"
+                roof = r.headline.get("roof", "?")
+                temp = r.headline.get("temp")
+                wind = r.headline.get("wind")
+                ctx_bits = [opp_str, f"Week {r.week} {r.season}"]
+                spread = r.headline.get("spread")
+                if spread is not None:
+                    fav_str = (f"{r.team} -{abs(spread):.1f}" if spread < 0
+                                else f"{r.team} +{spread:.1f}")
+                    ctx_bits.append(fav_str)
+                total = r.headline.get("total")
+                if total is not None:
+                    ctx_bits.append(f"O/U {total:.1f}")
+                if temp is not None:
+                    ctx_bits.append(f"{temp:.0f}°F")
+                if wind is not None:
+                    ctx_bits.append(f"{wind:.0f}mph wind")
+                ctx_bits.append(f"roof: {roof}")
+                st.caption("  ·  ".join(str(b) for b in ctx_bits))
 
-            # ── 📍 OUR TAKE (narrative at the very top) ──
-            if r.narrative:
-                n = r.narrative
-                st.markdown("---")
-                st.markdown("## 📍 OUR TAKE")
-                st.markdown(f"### {n.one_liner}")
-                if n.secondary_lean:
-                    sec_stars = ("★" * (n.secondary_confidence or 0)
-                                 + "☆" * (5 - (n.secondary_confidence or 0)))
-                    st.markdown(
-                        f"**Secondary lean:** {n.secondary_lean}  "
-                        f"{sec_stars}"
+                # ── 📍 OUR TAKE (narrative at the very top) ──
+                if r.narrative:
+                    n = r.narrative
+                    st.markdown("---")
+                    st.markdown("## 📍 OUR TAKE")
+                    st.markdown(f"### {n.one_liner}")
+                    if n.secondary_lean:
+                        sec_stars = ("★" * (n.secondary_confidence or 0)
+                                     + "☆" * (5 - (n.secondary_confidence or 0)))
+                        st.markdown(
+                            f"**Secondary lean:** {n.secondary_lean}  "
+                            f"{sec_stars}"
+                        )
+
+                    col_why, col_risk = st.columns([1.4, 1])
+                    with col_why:
+                        st.markdown("#### Why we like it")
+                        for w in n.why_bullets:
+                            st.markdown(f"- {w}")
+                        if n.inefficiencies:
+                            with st.expander("📐 Inefficiencies we're "
+                                              "exploiting"):
+                                for i in n.inefficiencies:
+                                    st.markdown(f"- {i}")
+                    with col_risk:
+                        st.markdown("#### ⚠️ Risk flags")
+                        if n.risk_flags:
+                            for x in n.risk_flags:
+                                st.markdown(f"- {x}")
+                        else:
+                            st.caption("No major red flags identified.")
+
+                    st.caption(
+                        "📊 *The data sections below are the receipts. "
+                        "Each bullet above points to a specific data row.*"
+                    )
+                    st.caption(
+                        "ℹ️ *Confidence labels (STRONG SIGNAL CLUSTER → "
+                        "MARGINAL) count corroborating signals — they "
+                        "are heuristic, not backtested win probabilities. "
+                        "More signals = more reasons to lean, not "
+                        "higher win odds.*"
                     )
 
-                col_why, col_risk = st.columns([1.4, 1])
-                with col_why:
-                    st.markdown("#### Why we like it")
-                    for w in n.why_bullets:
-                        st.markdown(f"- {w}")
-                    if n.inefficiencies:
-                        with st.expander("📐 Inefficiencies we're "
-                                          "exploiting"):
-                            for i in n.inefficiencies:
-                                st.markdown(f"- {i}")
-                with col_risk:
-                    st.markdown("#### ⚠️ Risk flags")
-                    if n.risk_flags:
-                        for x in n.risk_flags:
-                            st.markdown(f"- {x}")
-                    else:
-                        st.caption("No major red flags identified.")
-
-                st.caption(
-                    "📊 *The data sections below are the receipts. "
-                    "Each bullet above points to a specific data row.*"
-                )
-                st.caption(
-                    "ℹ️ *Confidence labels (STRONG SIGNAL CLUSTER → "
-                    "MARGINAL) count corroborating signals — they "
-                    "are heuristic, not backtested win probabilities. "
-                    "More signals = more reasons to lean, not "
-                    "higher win odds.*"
-                )
-
-            # ── Quick-glance bullets ──
-            st.markdown("---")
-            st.markdown("### 🎯 Quick-glance bullets")
-            for b in r.bottom_line_bullets:
-                st.markdown(f"- {b}")
-
-            # ── 📊 The evidence (data sections) ──
-            st.markdown("---")
-            st.markdown("## 📊 The evidence")
-            st.caption("Every data section below backs up a specific "
-                        "bullet from the take above.")
-
-            # ── Recent form ──
-            st.markdown("---")
-            st.markdown("### 📋 Recent form (last 5)")
-            if r.recent_form.empty:
-                st.caption("No prior games before this date.")
-            else:
-                st.dataframe(r.recent_form,
-                              use_container_width=True, hide_index=True)
-
-            # ── Decomposition ──
-            st.markdown("---")
-            st.markdown("### 🔬 Decomposed projection")
-            d = r.decomposition or {}
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Baseline (median)",
-                       f"{d.get('baseline', 0):.1f}")
-            adj = sum(c["delta"] for c in d.get("contributions", []))
-            m2.metric("Adjustments", f"{adj:+.1f}")
-            m3.metric("Projection",
-                       f"{d.get('projection', 0):.1f}")
-            if d.get("contributions"):
-                rows = [{
-                    "Adjustment": c["label"],
-                    "Δ yards": f"{c['delta']:+.1f}",
-                    "Note": c["note"],
-                } for c in d["contributions"]]
-                st.dataframe(pd.DataFrame(rows),
-                              use_container_width=True, hide_index=True)
-            else:
-                st.caption("No adjustments — projection = baseline.")
-
-            # ── Alt-line ladder ──
-            st.markdown("---")
-            st.markdown("### 🎲 Alt-line ladder (at -110 each side, "
-                         "ranked by EV)")
-            if r.alt_ladder.empty:
-                st.caption("Not enough data for ladder.")
-            else:
-                view = r.alt_ladder.copy()
-                view["p_model"] = view["p_model"].apply(
-                    lambda x: f"{x:.0%}")
-                view["p_implied"] = view["p_implied"].apply(
-                    lambda x: f"{x:.0%}")
-                view["edge"] = view["edge"].apply(lambda x: f"{x:+.0%}")
-                view["ev"] = view["ev"].apply(lambda x: f"{x:+.0%}")
-                view = view[["threshold", "side", "american_odds",
-                              "p_model", "p_implied", "edge", "ev",
-                              "n_games"]]
-                view.columns = ["Line", "Side", "Odds", "Model P",
-                                 "Implied P", "Edge", "EV", "n"]
-                st.dataframe(view, use_container_width=True,
-                              hide_index=True)
-
-            # ── TD vector + RZ usage ──
-            st.markdown("---")
-            st.markdown("### 🎯 TD probability + red-zone usage")
-            t = r.td_vector
-            rz = r.rz_usage
-            m1, m2, m3 = st.columns(3)
-            m1.metric("P(rushing TD)",
-                       f"{t.get('p_rush_td', 0):.0%}")
-            m2.metric("P(receiving TD)",
-                       f"{t.get('p_rec_td', 0):.0%}")
-            m3.metric("P(anytime TD)",
-                       f"{t.get('p_any_td', 0):.0%}")
-            m1, m2, m3 = st.columns(3)
-            m1.metric("RZ carries share",
-                       f"{rz.get('rz_carries_share', 0):.0%}")
-            m2.metric("RZ targets share",
-                       f"{rz.get('rz_targets_share', 0):.0%}")
-            m3.metric("Goal-line share",
-                       f"{rz.get('goal_line_carries_share', 0):.0%}")
-
-            # ── Trend flags ──
-            if r.trend_flags:
+                # ── Quick-glance bullets ──
                 st.markdown("---")
-                st.markdown("### 📈 Recent trend flags (|z| ≥ 0.7)")
-                rows = [{
-                    "Stat": t["stat"],
-                    "Recent (last 3)": f"{t['recent_avg']:.2f}",
-                    "Season prior": f"{t['season_avg']:.2f}",
-                    "Δ": f"{t['delta']:+.2f}",
-                    "z": f"{t['delta_z']:+.2f}",
-                } for t in r.trend_flags]
-                st.dataframe(pd.DataFrame(rows),
-                              use_container_width=True, hide_index=True)
+                st.markdown("### 🎯 Quick-glance bullets")
+                for b in r.bottom_line_bullets:
+                    st.markdown(f"- {b}")
 
-            # ── Longest play ──
-            if r.longest_play:
+                # ── 📊 The evidence (data sections) ──
                 st.markdown("---")
-                st.markdown(f"### 💥 Longest {r.longest_play['kind']} "
-                             "distribution")
-                lp = r.longest_play
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric(f"P(≥ {lp['threshold']:.0f} yds)",
-                           f"{lp['p_at_least']:.0%}")
-                m2.metric("Median longest",
-                           f"{lp['median_longest']:.0f}")
-                m3.metric("P10",
-                           f"{lp['p10_longest']:.0f}")
-                m4.metric("P90",
-                           f"{lp['p90_longest']:.0f}")
-                st.caption(f"Sample: {lp['n_games']} games")
+                st.markdown("## 📊 The evidence")
+                st.caption("Every data section below backs up a specific "
+                            "bullet from the take above.")
 
-            # ── SGP partners ──
-            if r.sgp_partners:
+                # ── Recent form ──
                 st.markdown("---")
-                st.markdown("### 🔗 SGP stack candidates "
-                             "(this team, this season)")
-                rows = [{
-                    "Partner": p.get("partner_name"),
-                    "Role": p.get("partner_role"),
-                    "QB": p.get("qb_name"),
-                    "Corr (yds)": f"{p.get('corr_qb_yds_partner_yds', 0):.2f}",
-                    "Lift @ 75/300": f"{p.get('lift_partner_75_given_qb_300', 0):+.0%}"
-                                       if p.get("lift_partner_75_given_qb_300") is not None
-                                       else "—",
-                    "Games": int(p.get("n_games_both", 0)),
-                } for p in r.sgp_partners[:5]]
-                st.dataframe(pd.DataFrame(rows),
-                              use_container_width=True, hide_index=True)
+                st.markdown("### 📋 Recent form (last 5)")
+                if r.recent_form.empty:
+                    st.caption("No prior games before this date.")
+                else:
+                    st.dataframe(r.recent_form,
+                                  use_container_width=True, hide_index=True)
 
+                # ── Decomposition ──
+                st.markdown("---")
+                st.markdown("### 🔬 Decomposed projection")
+                d = r.decomposition or {}
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Baseline (median)",
+                           f"{d.get('baseline', 0):.1f}")
+                adj = sum(c["delta"] for c in d.get("contributions", []))
+                m2.metric("Adjustments", f"{adj:+.1f}")
+                m3.metric("Projection",
+                           f"{d.get('projection', 0):.1f}")
+                if d.get("contributions"):
+                    rows = [{
+                        "Adjustment": c["label"],
+                        "Δ yards": f"{c['delta']:+.1f}",
+                        "Note": c["note"],
+                    } for c in d["contributions"]]
+                    st.dataframe(pd.DataFrame(rows),
+                                  use_container_width=True, hide_index=True)
+                else:
+                    st.caption("No adjustments — projection = baseline.")
+
+                # ── Alt-line ladder ──
+                st.markdown("---")
+                st.markdown("### 🎲 Alt-line ladder (at -110 each side, "
+                             "ranked by EV)")
+                if r.alt_ladder.empty:
+                    st.caption("Not enough data for ladder.")
+                else:
+                    view = r.alt_ladder.copy()
+                    view["p_model"] = view["p_model"].apply(
+                        lambda x: f"{x:.0%}")
+                    view["p_implied"] = view["p_implied"].apply(
+                        lambda x: f"{x:.0%}")
+                    view["edge"] = view["edge"].apply(lambda x: f"{x:+.0%}")
+                    view["ev"] = view["ev"].apply(lambda x: f"{x:+.0%}")
+                    view = view[["threshold", "side", "american_odds",
+                                  "p_model", "p_implied", "edge", "ev",
+                                  "n_games"]]
+                    view.columns = ["Line", "Side", "Odds", "Model P",
+                                     "Implied P", "Edge", "EV", "n"]
+                    st.dataframe(view, use_container_width=True,
+                                  hide_index=True)
+
+                # ── TD vector + RZ usage ──
+                st.markdown("---")
+                st.markdown("### 🎯 TD probability + red-zone usage")
+                t = r.td_vector
+                rz = r.rz_usage
+                m1, m2, m3 = st.columns(3)
+                m1.metric("P(rushing TD)",
+                           f"{t.get('p_rush_td', 0):.0%}")
+                m2.metric("P(receiving TD)",
+                           f"{t.get('p_rec_td', 0):.0%}")
+                m3.metric("P(anytime TD)",
+                           f"{t.get('p_any_td', 0):.0%}")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("RZ carries share",
+                           f"{rz.get('rz_carries_share', 0):.0%}")
+                m2.metric("RZ targets share",
+                           f"{rz.get('rz_targets_share', 0):.0%}")
+                m3.metric("Goal-line share",
+                           f"{rz.get('goal_line_carries_share', 0):.0%}")
+
+                # ── Trend flags ──
+                if r.trend_flags:
+                    st.markdown("---")
+                    st.markdown("### 📈 Recent trend flags (|z| ≥ 0.7)")
+                    rows = [{
+                        "Stat": t["stat"],
+                        "Recent (last 3)": f"{t['recent_avg']:.2f}",
+                        "Season prior": f"{t['season_avg']:.2f}",
+                        "Δ": f"{t['delta']:+.2f}",
+                        "z": f"{t['delta_z']:+.2f}",
+                    } for t in r.trend_flags]
+                    st.dataframe(pd.DataFrame(rows),
+                                  use_container_width=True, hide_index=True)
+
+                # ── Longest play ──
+                if r.longest_play:
+                    st.markdown("---")
+                    st.markdown(f"### 💥 Longest {r.longest_play['kind']} "
+                                 "distribution")
+                    lp = r.longest_play
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric(f"P(≥ {lp['threshold']:.0f} yds)",
+                               f"{lp['p_at_least']:.0%}")
+                    m2.metric("Median longest",
+                               f"{lp['median_longest']:.0f}")
+                    m3.metric("P10",
+                               f"{lp['p10_longest']:.0f}")
+                    m4.metric("P90",
+                               f"{lp['p90_longest']:.0f}")
+                    st.caption(f"Sample: {lp['n_games']} games")
+
+                # ── SGP partners ──
+                if r.sgp_partners:
+                    st.markdown("---")
+                    st.markdown("### 🔗 SGP stack candidates "
+                                 "(this team, this season)")
+                    rows = [{
+                        "Partner": p.get("partner_name"),
+                        "Role": p.get("partner_role"),
+                        "QB": p.get("qb_name"),
+                        "Corr (yds)": f"{p.get('corr_qb_yds_partner_yds', 0):.2f}",
+                        "Lift @ 75/300": f"{p.get('lift_partner_75_given_qb_300', 0):+.0%}"
+                                           if p.get("lift_partner_75_given_qb_300") is not None
+                                           else "—",
+                        "Games": int(p.get("n_games_both", 0)),
+                    } for p in r.sgp_partners[:5]]
+                    st.dataframe(pd.DataFrame(rows),
+                                  use_container_width=True, hide_index=True)
+
+
+    _run_player_report_tab()
 
 # ════════════════════════════════════════════════════════════════
 # Tab — Decomposed Projection (Feature 5.1)
 # ════════════════════════════════════════════════════════════════
 
 with tab_decomp:
-    st.markdown("### Decomposed Prop Projection")
-    st.caption(
-        "**The transparency feature.** Pick a player and a stat, "
-        "configure the matchup context, and the engine returns a "
-        "row-by-row decomposition: baseline + each adjustment "
-        "(injury / weather / matchup / game-script) shown as its own "
-        "labeled contribution. Every yard is auditable."
-    )
-
-    @st.cache_data(show_spinner=False)
-    def _decomp_player_options(position: str) -> pd.DataFrame:
-        df = pd.read_parquet(
-            Path(__file__).resolve().parent.parent
-            / "data" / "nfl_player_stats_weekly.parquet"
-        )
-        recent = df[df["season"] >= 2016].copy()
-        if position:
-            recent = recent[recent["position"] == position]
-        n_games = (recent.groupby(["player_id", "player_display_name",
-                                       "position"])
-                    .size().reset_index().rename(columns={0: "n_games"}))
-        n_games = n_games[n_games["n_games"] >= 6]
-        # Most-recent team per player
-        recent_sorted = recent.sort_values(["season", "week"],
-                                            ascending=[False, False])
-        teams = (recent_sorted.drop_duplicates(["player_id"])[
-            ["player_id", "team"]
-        ])
-        opts = n_games.merge(teams, on="player_id", how="left")
-        return opts.sort_values("n_games",
-                                 ascending=False).reset_index(drop=True)
-
-    @st.cache_data(show_spinner=False)
-    def _decomp_player_seasons(player_id: str) -> list[int]:
-        """Seasons this player has weekly stats in (2016+)."""
-        df = pd.read_parquet(
-            Path(__file__).resolve().parent.parent
-            / "data" / "nfl_player_stats_weekly.parquet"
-        )
-        return sorted(
-            df[(df["player_id"] == player_id) & (df["season"] >= 2016)]
-              ["season"].dropna().astype(int).unique().tolist(),
-            reverse=True,
+    def _run_decomp_tab():
+        st.markdown("### Decomposed Prop Projection")
+        st.caption(
+            "**The transparency feature.** Pick a player and a stat, "
+            "configure the matchup context, and the engine returns a "
+            "row-by-row decomposition: baseline + each adjustment "
+            "(injury / weather / matchup / game-script) shown as its own "
+            "labeled contribution. Every yard is auditable."
         )
 
-    @st.cache_data(show_spinner=False)
-    def _decomp_team_for_season(player_id: str, season: int) -> str:
-        """Player's most-played team in a given season."""
-        df = pd.read_parquet(
-            Path(__file__).resolve().parent.parent
-            / "data" / "nfl_player_stats_weekly.parquet"
-        )
-        sub = df[(df["player_id"] == player_id)
-                 & (df["season"] == int(season))]
-        if sub.empty:
-            return ""
-        return str(sub["team"].mode().iloc[0])
+        @st.cache_data(show_spinner=False)
+        def _decomp_player_options(position: str) -> pd.DataFrame:
+            df = pd.read_parquet(
+                Path(__file__).resolve().parent.parent
+                / "data" / "nfl_player_stats_weekly.parquet"
+            )
+            recent = df[df["season"] >= 2016].copy()
+            if position:
+                recent = recent[recent["position"] == position]
+            n_games = (recent.groupby(["player_id", "player_display_name",
+                                           "position"])
+                        .size().reset_index().rename(columns={0: "n_games"}))
+            n_games = n_games[n_games["n_games"] >= 6]
+            # Most-recent team per player
+            recent_sorted = recent.sort_values(["season", "week"],
+                                                ascending=[False, False])
+            teams = (recent_sorted.drop_duplicates(["player_id"])[
+                ["player_id", "team"]
+            ])
+            opts = n_games.merge(teams, on="player_id", how="left")
+            return opts.sort_values("n_games",
+                                     ascending=False).reset_index(drop=True)
 
-    @st.cache_data(show_spinner=False)
-    def _decomp_schedule_lookup(team: str, season: int, week: int) -> dict:
-        """Look up the (team, season, week) game from schedule and
-        return opponent + actual weather + line context."""
-        sch = pd.read_parquet(
-            Path(__file__).resolve().parent.parent
-            / "data" / "nfl_schedules.parquet"
-        )
-        g = sch[(sch["season"] == int(season))
-                & (sch["week"] == int(week))
-                & ((sch["home_team"] == team)
-                   | (sch["away_team"] == team))]
-        if g.empty:
-            return {}
-        row = g.iloc[0]
-        opponent = (row["away_team"] if row["home_team"] == team
-                    else row["home_team"])
-        return {
-            "opponent": str(opponent),
-            "is_home": (row["home_team"] == team),
-            "stadium": str(row.get("stadium", "?")),
-            "roof": str(row.get("roof", "?")),
-            "surface": str(row.get("surface", "?")),
-            "temp": (float(row["temp"])
-                     if pd.notna(row.get("temp")) else None),
-            "wind": (float(row["wind"])
-                     if pd.notna(row.get("wind")) else None),
-            "spread_line": (float(row["spread_line"])
-                            if pd.notna(row.get("spread_line")) else None),
-            "total_line": (float(row["total_line"])
-                            if pd.notna(row.get("total_line")) else None),
-            "gameday": str(row.get("gameday", "")),
-        }
-
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        pos_pick = st.selectbox("Position", ["QB", "WR", "TE", "RB"],
-                                 key="dec_pos")
-        stat_choices = {
-            "QB": ["passing_yards"],
-            "WR": ["receiving_yards"],
-            "TE": ["receiving_yards"],
-            "RB": ["rushing_yards", "receiving_yards"],
-        }
-        stat_pick = st.selectbox("Stat", stat_choices[pos_pick],
-                                  key="dec_stat")
-        opts = _decomp_player_options(pos_pick)
-        opts["_label"] = (opts["player_display_name"]
-                          + "  ·  " + opts["team"].fillna("?"))
-        player_label = st.selectbox(
-            "Player", opts["_label"].tolist(),
-            index=None,
-            placeholder="Search player by name...",
-            key="dec_player",
-        )
-        if not player_label:
-            st.info("Pick a player.")
-            st.stop()
-        chosen = opts[opts["_label"] == player_label].iloc[0]
-
-        st.markdown("**Pick a game**")
-        seasons_for_player = _decomp_player_seasons(chosen["player_id"])
-        if not seasons_for_player:
-            st.warning("No seasons available for this player.")
-            st.stop()
-        season_pick = st.selectbox(
-            "Season", seasons_for_player, index=0,
-            key="dec_season",
-        )
-        team_for_season = _decomp_team_for_season(
-            chosen["player_id"], int(season_pick))
-        # Slider over weeks the team played that season (1-18 modern era)
-        max_week = 18 if int(season_pick) >= 2021 else 17
-        week_pick = st.slider(
-            "Week", 1, max_week, min(10, max_week),
-            key="dec_week",
-        )
-        sched = _decomp_schedule_lookup(team_for_season,
-                                          int(season_pick),
-                                          int(week_pick))
-        if not sched:
-            st.info(f"{team_for_season} had a bye / no game in W{week_pick} "
-                     f"{season_pick}. Pick another week.")
-            st.stop()
-
-        # Auto-filled context summary
-        opp_pick = sched["opponent"]
-        ha = "vs" if sched["is_home"] else "@"
-        st.markdown(
-            f"**{team_for_season} {ha} {opp_pick}**  ·  "
-            f"{sched['gameday']}  ·  "
-            f"{sched['stadium']} ({sched['roof']})"
-        )
-        line_bits = []
-        if sched.get("spread_line") is not None:
-            # nflverse: positive spread_line = home favored.
-            spread_pov = (sched["spread_line"] if sched["is_home"]
-                          else -sched["spread_line"])
-            line_bits.append(f"Line: {team_for_season} "
-                              f"{'-' if spread_pov < 0 else '+'}"
-                              f"{abs(spread_pov):.1f}")
-        if sched.get("total_line") is not None:
-            line_bits.append(f"O/U {sched['total_line']:.1f}")
-        if sched.get("temp") is not None:
-            line_bits.append(f"{sched['temp']:.0f}°F")
-        if sched.get("wind") is not None:
-            line_bits.append(f"{sched['wind']:.0f}mph wind")
-        if line_bits:
-            st.caption("  ·  ".join(line_bits))
-
-        st.markdown("**Injury status (optional)**")
-        inj_status = st.selectbox(
-            "Status", ["NONE", "PROBABLE", "QUESTIONABLE",
-                      "DOUBTFUL", "OUT"],
-            key="dec_status",
-        )
-        inj_body = st.text_input("Body part",
-                                  key="dec_body", value="unknown")
-        inj_practice = st.selectbox(
-            "Practice", ["FULL", "LIMITED", "DNP"],
-            key="dec_practice",
-        )
-
-        st.markdown("**Weather override (optional)**")
-        st.caption("Schedule weather is auto-applied. Toggle to "
-                    "manually override (useful for what-if scenarios).")
-        use_weather_override = st.checkbox(
-            "Override weather", key="dec_useweather")
-        if use_weather_override:
-            w_temp = st.slider("Temp (°F)", -5, 100,
-                                int(sched.get("temp") or 50),
-                                key="dec_temp")
-            w_wind = st.slider("Wind (mph)", 0, 35,
-                                int(sched.get("wind") or 5),
-                                key="dec_wind")
-        else:
-            w_temp = sched.get("temp")
-            w_wind = sched.get("wind")
-
-        st.markdown("**Key starter unavailable (optional)**")
-        st.caption("Pick a teammate role that's OUT this week — the "
-                    "engine applies the league-wide scoring/scheme "
-                    "shift when that role is missing.")
-        starter_out = st.selectbox(
-            "Teammate OUT",
-            ["none", "QB1", "RB1", "WR1", "TE1", "MULTI"],
-            key="dec_starter",
-        )
-
-        st.markdown("**Expected game-script**")
-        st.caption("How do you expect the game to flow? Engine "
-                    "applies the player's own historical usage "
-                    "multiplier in this bucket (with league-wide "
-                    "fallback when sample is thin).")
-        # Default suggested by the spread
-        from lib_game_script_player import (
-            BUCKET_LABEL, BUCKET_ORDER, infer_bucket_from_spread,
-            GameScriptBucket as _GSB,
-        )
-        default_bucket = _GSB.CLOSE
-        if sched.get("spread_line") is not None:
-            # nflverse: positive spread_line = home favored.
-            spread_pov = (sched["spread_line"] if sched["is_home"]
-                          else -sched["spread_line"])
-            default_bucket = infer_bucket_from_spread(spread_pov)
-        bucket_options = ["(none — skip game-script adj)"] + [
-            BUCKET_LABEL[b] for b in BUCKET_ORDER]
-        default_idx = (BUCKET_ORDER.index(default_bucket) + 1
-                        if default_bucket in BUCKET_ORDER else 0)
-        bucket_label_pick = st.selectbox(
-            "Game flow", bucket_options, index=default_idx,
-            key="dec_gs_bucket",
-        )
-        if bucket_label_pick.startswith("(none"):
-            picked_bucket = None
-        else:
-            # Reverse-lookup
-            picked_bucket = next(
-                b for b in BUCKET_ORDER
-                if BUCKET_LABEL[b] == bucket_label_pick
+        @st.cache_data(show_spinner=False)
+        def _decomp_player_seasons(player_id: str) -> list[int]:
+            """Seasons this player has weekly stats in (2016+)."""
+            df = pd.read_parquet(
+                Path(__file__).resolve().parent.parent
+                / "data" / "nfl_player_stats_weekly.parquet"
+            )
+            return sorted(
+                df[(df["player_id"] == player_id) & (df["season"] >= 2016)]
+                  ["season"].dropna().astype(int).unique().tolist(),
+                reverse=True,
             )
 
-        run_d = st.button("Run decomposition", type="primary",
-                          use_container_width=True, key="dec_run")
-
-    with c2:
-        if c1 and "dec_run" in st.session_state and \
-                st.session_state.get("dec_run"):
-            d = decompose(
-                player_id=chosen["player_id"],
-                position=pos_pick,
-                team=team_for_season,
-                stat=stat_pick,
-                opponent=opp_pick,
-                season=int(season_pick),
-                week=int(week_pick),
-                injury_status=(inj_status if inj_status != "NONE" else None),
-                injury_body_part=inj_body,
-                injury_practice=inj_practice,
-                key_starter_out=(starter_out if starter_out != "none"
-                                  else None),
-                expected_game_script=picked_bucket,
-                target_temp=w_temp, target_wind=w_wind,
+        @st.cache_data(show_spinner=False)
+        def _decomp_team_for_season(player_id: str, season: int) -> str:
+            """Player's most-played team in a given season."""
+            df = pd.read_parquet(
+                Path(__file__).resolve().parent.parent
+                / "data" / "nfl_player_stats_weekly.parquet"
             )
-            st.markdown(f"#### {d.player_display_name} — {d.stat}")
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Baseline (median)", f"{d.baseline:.1f}")
-            m2.metric("Adjustments",
-                       f"{sum(c.delta for c in d.contributions):+.1f}")
-            m3.metric("Projection", f"{d.projection:.1f}")
+            sub = df[(df["player_id"] == player_id)
+                     & (df["season"] == int(season))]
+            if sub.empty:
+                return ""
+            return str(sub["team"].mode().iloc[0])
 
-            if d.contributions:
-                rows = [{"Adjustment": c.label,
-                         "Δ yards": f"{c.delta:+.1f}",
-                         "Note": c.note} for c in d.contributions]
-                st.dataframe(pd.DataFrame(rows),
-                              use_container_width=True, hide_index=True)
+        @st.cache_data(show_spinner=False)
+        def _decomp_schedule_lookup(team: str, season: int, week: int) -> dict:
+            """Look up the (team, season, week) game from schedule and
+            return opponent + actual weather + line context."""
+            sch = pd.read_parquet(
+                Path(__file__).resolve().parent.parent
+                / "data" / "nfl_schedules.parquet"
+            )
+            g = sch[(sch["season"] == int(season))
+                    & (sch["week"] == int(week))
+                    & ((sch["home_team"] == team)
+                       | (sch["away_team"] == team))]
+            if g.empty:
+                return {}
+            row = g.iloc[0]
+            opponent = (row["away_team"] if row["home_team"] == team
+                        else row["home_team"])
+            return {
+                "opponent": str(opponent),
+                "is_home": (row["home_team"] == team),
+                "stadium": str(row.get("stadium", "?")),
+                "roof": str(row.get("roof", "?")),
+                "surface": str(row.get("surface", "?")),
+                "temp": (float(row["temp"])
+                         if pd.notna(row.get("temp")) else None),
+                "wind": (float(row["wind"])
+                         if pd.notna(row.get("wind")) else None),
+                "spread_line": (float(row["spread_line"])
+                                if pd.notna(row.get("spread_line")) else None),
+                "total_line": (float(row["total_line"])
+                                if pd.notna(row.get("total_line")) else None),
+                "gameday": str(row.get("gameday", "")),
+            }
+
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            pos_pick = st.selectbox("Position", ["QB", "WR", "TE", "RB"],
+                                     key="dec_pos")
+            stat_choices = {
+                "QB": ["passing_yards"],
+                "WR": ["receiving_yards"],
+                "TE": ["receiving_yards"],
+                "RB": ["rushing_yards", "receiving_yards"],
+            }
+            stat_pick = st.selectbox("Stat", stat_choices[pos_pick],
+                                      key="dec_stat")
+            opts = _decomp_player_options(pos_pick)
+            opts["_label"] = (opts["player_display_name"]
+                              + "  ·  " + opts["team"].fillna("?"))
+            player_label = st.selectbox(
+                "Player", opts["_label"].tolist(),
+                index=None,
+                placeholder="Search player by name...",
+                key="dec_player",
+            )
+            if not player_label:
+                st.info("Pick a player.")
+                return
+            chosen = opts[opts["_label"] == player_label].iloc[0]
+
+            st.markdown("**Pick a game**")
+            seasons_for_player = _decomp_player_seasons(chosen["player_id"])
+            if not seasons_for_player:
+                st.warning("No seasons available for this player.")
+                return
+            season_pick = st.selectbox(
+                "Season", seasons_for_player, index=0,
+                key="dec_season",
+            )
+            team_for_season = _decomp_team_for_season(
+                chosen["player_id"], int(season_pick))
+            # Slider over weeks the team played that season (1-18 modern era)
+            max_week = 18 if int(season_pick) >= 2021 else 17
+            week_pick = st.slider(
+                "Week", 1, max_week, min(10, max_week),
+                key="dec_week",
+            )
+            sched = _decomp_schedule_lookup(team_for_season,
+                                              int(season_pick),
+                                              int(week_pick))
+            if not sched:
+                st.info(f"{team_for_season} had a bye / no game in W{week_pick} "
+                         f"{season_pick}. Pick another week.")
+                return
+
+            # Auto-filled context summary
+            opp_pick = sched["opponent"]
+            ha = "vs" if sched["is_home"] else "@"
+            st.markdown(
+                f"**{team_for_season} {ha} {opp_pick}**  ·  "
+                f"{sched['gameday']}  ·  "
+                f"{sched['stadium']} ({sched['roof']})"
+            )
+            line_bits = []
+            if sched.get("spread_line") is not None:
+                # nflverse: positive spread_line = home favored.
+                spread_pov = (sched["spread_line"] if sched["is_home"]
+                              else -sched["spread_line"])
+                line_bits.append(f"Line: {team_for_season} "
+                                  f"{'-' if spread_pov < 0 else '+'}"
+                                  f"{abs(spread_pov):.1f}")
+            if sched.get("total_line") is not None:
+                line_bits.append(f"O/U {sched['total_line']:.1f}")
+            if sched.get("temp") is not None:
+                line_bits.append(f"{sched['temp']:.0f}°F")
+            if sched.get("wind") is not None:
+                line_bits.append(f"{sched['wind']:.0f}mph wind")
+            if line_bits:
+                st.caption("  ·  ".join(line_bits))
+
+            st.markdown("**Injury status (optional)**")
+            inj_status = st.selectbox(
+                "Status", ["NONE", "PROBABLE", "QUESTIONABLE",
+                          "DOUBTFUL", "OUT"],
+                key="dec_status",
+            )
+            inj_body = st.text_input("Body part",
+                                      key="dec_body", value="unknown")
+            inj_practice = st.selectbox(
+                "Practice", ["FULL", "LIMITED", "DNP"],
+                key="dec_practice",
+            )
+
+            st.markdown("**Weather override (optional)**")
+            st.caption("Schedule weather is auto-applied. Toggle to "
+                        "manually override (useful for what-if scenarios).")
+            use_weather_override = st.checkbox(
+                "Override weather", key="dec_useweather")
+            if use_weather_override:
+                w_temp = st.slider("Temp (°F)", -5, 100,
+                                    int(sched.get("temp") or 50),
+                                    key="dec_temp")
+                w_wind = st.slider("Wind (mph)", 0, 35,
+                                    int(sched.get("wind") or 5),
+                                    key="dec_wind")
             else:
-                st.info("No adjustments applied — projection equals baseline.")
+                w_temp = sched.get("temp")
+                w_wind = sched.get("wind")
 
-            st.markdown("**Compare to a book line**")
-            book_line = st.number_input(
-                "Book line", 0.0, 500.0, float(round(d.baseline)),
-                step=0.5, key="dec_book_line",
+            st.markdown("**Key starter unavailable (optional)**")
+            st.caption("Pick a teammate role that's OUT this week — the "
+                        "engine applies the league-wide scoring/scheme "
+                        "shift when that role is missing.")
+            starter_out = st.selectbox(
+                "Teammate OUT",
+                ["none", "QB1", "RB1", "WR1", "TE1", "MULTI"],
+                key="dec_starter",
             )
-            edge_yards = d.projection - book_line
-            verdict = ("📈 LEAN OVER" if edge_yards > 3
-                        else "📉 LEAN UNDER" if edge_yards < -3
-                        else "≈ pass — within 3 yds of model")
-            st.metric("Model − book line",
-                       f"{edge_yards:+.1f} yds",
-                       delta=verdict)
-        else:
-            st.info("Pick a player on the left and click "
-                     "**Run decomposition**.")
 
+            st.markdown("**Expected game-script**")
+            st.caption("How do you expect the game to flow? Engine "
+                        "applies the player's own historical usage "
+                        "multiplier in this bucket (with league-wide "
+                        "fallback when sample is thin).")
+            # Default suggested by the spread
+            from lib_game_script_player import (
+                BUCKET_LABEL, BUCKET_ORDER, infer_bucket_from_spread,
+                GameScriptBucket as _GSB,
+            )
+            default_bucket = _GSB.CLOSE
+            if sched.get("spread_line") is not None:
+                # nflverse: positive spread_line = home favored.
+                spread_pov = (sched["spread_line"] if sched["is_home"]
+                              else -sched["spread_line"])
+                default_bucket = infer_bucket_from_spread(spread_pov)
+            bucket_options = ["(none — skip game-script adj)"] + [
+                BUCKET_LABEL[b] for b in BUCKET_ORDER]
+            default_idx = (BUCKET_ORDER.index(default_bucket) + 1
+                            if default_bucket in BUCKET_ORDER else 0)
+            bucket_label_pick = st.selectbox(
+                "Game flow", bucket_options, index=default_idx,
+                key="dec_gs_bucket",
+            )
+            if bucket_label_pick.startswith("(none"):
+                picked_bucket = None
+            else:
+                # Reverse-lookup
+                picked_bucket = next(
+                    b for b in BUCKET_ORDER
+                    if BUCKET_LABEL[b] == bucket_label_pick
+                )
+
+            run_d = st.button("Run decomposition", type="primary",
+                              use_container_width=True, key="dec_run")
+
+        with c2:
+            if c1 and "dec_run" in st.session_state and \
+                    st.session_state.get("dec_run"):
+                d = decompose(
+                    player_id=chosen["player_id"],
+                    position=pos_pick,
+                    team=team_for_season,
+                    stat=stat_pick,
+                    opponent=opp_pick,
+                    season=int(season_pick),
+                    week=int(week_pick),
+                    injury_status=(inj_status if inj_status != "NONE" else None),
+                    injury_body_part=inj_body,
+                    injury_practice=inj_practice,
+                    key_starter_out=(starter_out if starter_out != "none"
+                                      else None),
+                    expected_game_script=picked_bucket,
+                    target_temp=w_temp, target_wind=w_wind,
+                )
+                st.markdown(f"#### {d.player_display_name} — {d.stat}")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Baseline (median)", f"{d.baseline:.1f}")
+                m2.metric("Adjustments",
+                           f"{sum(c.delta for c in d.contributions):+.1f}")
+                m3.metric("Projection", f"{d.projection:.1f}")
+
+                if d.contributions:
+                    rows = [{"Adjustment": c.label,
+                             "Δ yards": f"{c.delta:+.1f}",
+                             "Note": c.note} for c in d.contributions]
+                    st.dataframe(pd.DataFrame(rows),
+                                  use_container_width=True, hide_index=True)
+                else:
+                    st.info("No adjustments applied — projection equals baseline.")
+
+                st.markdown("**Compare to a book line**")
+                book_line = st.number_input(
+                    "Book line", 0.0, 500.0, float(round(d.baseline)),
+                    step=0.5, key="dec_book_line",
+                )
+                edge_yards = d.projection - book_line
+                verdict = ("📈 LEAN OVER" if edge_yards > 3
+                            else "📉 LEAN UNDER" if edge_yards < -3
+                            else "≈ pass — within 3 yds of model")
+                st.metric("Model − book line",
+                           f"{edge_yards:+.1f} yds",
+                           delta=verdict)
+            else:
+                st.info("Pick a player on the left and click "
+                         "**Run decomposition**.")
+
+
+    _run_decomp_tab()
 
 # ════════════════════════════════════════════════════════════════
 # Tab — Alt-Line EV Finder (Feature 5.3)
