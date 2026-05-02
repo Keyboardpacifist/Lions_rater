@@ -90,26 +90,35 @@ st.caption("Internal playground for the gambling-product engines. "
            "live odds, no real bets. This is a validation harness.")
 
 
-(tab_alerts, tab_injury, tab_gscript, tab_books, tab_weather,
- tab_scheme, tab_coach,
- tab_decomp, tab_sgp, tab_alt, tab_parlay, tab_td, tab_trend,
- tab_long, tab_dvp) = st.tabs([
-    "⭐ Smart Alerts (4.4)",
-    "🩹 Injury Cohort (4.1)",
-    "🎯 Game-Script (4.2)",
-    "📊 Books vs Model (4.3)",
-    "🌧️ Weather Window (4.5)",
-    "🧪 Scheme Deltas (4.6)",
-    "📋 Coaching Tendencies",
-    "🔬 Decomposed Projection (5.1)",
-    "🔗 SGP Correlations (5.2)",
-    "🎲 Alt-Line EV (5.3)",
-    "🎰 Smart Parlay (5.4)",
-    "🎯 Anytime / First TD (5.5)",
-    "📈 Trend Divergence (5.6)",
-    "💥 Longest-Play Edge (5.7)",
-    "🛡️ DvP (5.8)",
+section_game, section_props = st.tabs([
+    "🏟️  GAME BETS  —  spread / total / moneyline",
+    "👤  PLAYER PROPS  —  yards / TDs / receptions / parlays",
 ])
+
+with section_game:
+    (tab_alerts, tab_injury, tab_gscript, tab_books, tab_weather,
+     tab_scheme, tab_coach) = st.tabs([
+        "⭐ Smart Alerts (4.4)",
+        "🩹 Injury Cohort (4.1)",
+        "🎯 Game-Script (4.2)",
+        "📊 Books vs Model (4.3)",
+        "🌧️ Weather Window (4.5)",
+        "🧪 Scheme Deltas (4.6)",
+        "📋 Coaching Tendencies",
+    ])
+
+with section_props:
+    (tab_decomp, tab_sgp, tab_alt, tab_parlay, tab_td, tab_trend,
+     tab_long, tab_dvp) = st.tabs([
+        "🔬 Decomposed Projection (5.1)",
+        "🔗 SGP Correlations (5.2)",
+        "🎲 Alt-Line EV (5.3)",
+        "🎰 Smart Parlay (5.4)",
+        "🎯 Anytime / First TD (5.5)",
+        "📈 Trend Divergence (5.6)",
+        "💥 Longest-Play Edge (5.7)",
+        "🛡️ DvP (5.8)",
+    ])
 
 
 # ════════════════════════════════════════════════════════════════
