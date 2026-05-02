@@ -1,17 +1,21 @@
 """Internal gambling-product playground.
 
-This page is the testbed for the gambling-product engines we're building
-toward launch. It is intentionally NOT polished for end-users — it's a
-validation harness to confirm each engine produces sensible numbers on
-historical and live data before we wire them into a public Bet School
-flow.
+Validation harness for the engines we're building toward launch. Not
+polished for end-users — every tab is a data inspector that lets us
+confirm each engine produces sensible numbers before we wire it into
+the public Bet School flow.
 
-Tabs (built incrementally):
-  • Injury Cohort — Feature 1: Pr(plays Sunday) + usage retention
-  • Scheme Deltas — coming soon
-  • DvP — coming soon
-  • Coaching Tendencies — coming soon
-  • SGP Correlations — coming soon
+Game-bet engines (4.x):
+  • 4.1 Injury Cohort — Pr(plays Sunday) + usage retention
+  • 4.2 Game-Script Simulator — team scoring/scheme delta when starter out
+  • 4.3 Books vs Model — historical line miss by injury cohort
+  • 4.4 Smart Alerts — fusion of all four into one bet-actionable update
+  • 4.5 Weather Window — empirical P10/P50/P90 by weather conditions
+  • 4.6 Scheme Deltas + Coaching Tendencies (foundation tables)
+
+Prop-bet engines (5.x):
+  • 5.2 SGP Correlations
+  • 5.8 DvP
 """
 from __future__ import annotations
 
@@ -37,6 +41,13 @@ from lib_scheme_deltas import (
     rank_teams,
     season_year_over_year,
 )
+from lib_smart_alerts import fuse_alert
+from lib_weather import (
+    all_player_options,
+    confidence_for_n,
+    primary_stat_for_position,
+    weather_cohort,
+)
 from lib_shared import inject_css
 
 
@@ -55,13 +66,94 @@ st.caption("Internal playground for the gambling-product engines. "
            "live odds, no real bets. This is a validation harness.")
 
 
-tab_injury, tab_scheme, tab_dvp, tab_coach, tab_sgp = st.tabs([
-    "🩹 Injury Cohort",
-    "🧪 Scheme Deltas",
-    "🛡️ DvP",
+(tab_alerts, tab_injury, tab_gscript, tab_books, tab_weather,
+ tab_scheme, tab_dvp, tab_coach, tab_sgp) = st.tabs([
+    "⭐ Smart Alerts (4.4)",
+    "🩹 Injury Cohort (4.1)",
+    "🎯 Game-Script (4.2)",
+    "📊 Books vs Model (4.3)",
+    "🌧️ Weather Window (4.5)",
+    "🧪 Scheme Deltas (4.6)",
+    "🛡️ DvP (5.8)",
     "📋 Coaching Tendencies",
-    "🔗 SGP Correlations",
+    "🔗 SGP Correlations (5.2)",
 ])
+
+
+# ════════════════════════════════════════════════════════════════
+# Tab — Smart Alerts (Feature 4.4) — showcase tab
+# ════════════════════════════════════════════════════════════════
+
+with tab_alerts:
+    st.markdown("### Smart Alerts — fusion engine")
+    st.caption(
+        "Drop in a single news event (player + status + body part) and "
+        "the engine fuses every other feature: cohort play probability "
+        "(4.1), team scoring shift (4.2), book over/under-reaction "
+        "history (4.3), and weather context (4.5). This is what a "
+        "Bet School push notification will read like in production."
+    )
+
+    arch = load_archive()
+    if arch.empty:
+        st.error("Missing data — pull injuries first.")
+    else:
+        c1, c2, c3 = st.columns([1, 1, 1])
+        seasons = sorted(arch["season"].dropna().astype(int).unique(),
+                         reverse=True)
+        season_pick = c1.selectbox("Season", seasons, index=0,
+                                    key="al_season")
+        weeks = sorted(arch[arch["season"] == season_pick]
+                       ["week"].dropna().astype(int).unique())
+        week_pick = c2.selectbox("Week", weeks,
+                                  index=len(weeks) - 1 if weeks else 0,
+                                  key="al_week")
+
+        slate = arch[(arch["season"] == season_pick)
+                     & (arch["week"] == week_pick)
+                     & (arch["report_status"].notna())].copy()
+        if slate.empty:
+            st.info("No injury report rows for that week.")
+        else:
+            slate["_label"] = (
+                slate["full_name"].fillna("?")
+                + "  ·  " + slate["team"].astype(str)
+                + "  ·  " + slate["position"].astype(str)
+                + "  ·  " + slate["report_primary_injury"].fillna("?")
+                + "  ·  " + slate["report_status"].fillna("None")
+                + " / " + slate["practice_status"].fillna("None")
+            )
+            pick = c3.selectbox("Player", slate["_label"].tolist(),
+                                 key="al_pick")
+            row = slate[slate["_label"] == pick].iloc[0]
+
+            if st.button("Generate alert", type="primary",
+                         use_container_width=True, key="al_run"):
+                bundle = fuse_alert(
+                    player_name=row["full_name"],
+                    team=str(row["team"]),
+                    position=str(row["position"]),
+                    status=report_status_code(row["report_status"]),
+                    body_part=body_part_normalize(
+                        row["report_primary_injury"]),
+                    practice_status=practice_status_code(
+                        row["practice_status"]),
+                    season=int(row["season"]),
+                    week=int(row["week"]),
+                )
+                st.markdown(f"### {bundle.headline}")
+                st.markdown("---")
+                for b in bundle.bullet_points:
+                    st.markdown(f"- {b}")
+                st.markdown("---")
+                st.markdown("**Cohort (4.1):** " + bundle.cohort_line)
+                st.markdown("**Game-script (4.2):** "
+                            + bundle.game_script_line)
+                st.markdown("**Book behavior (4.3):** "
+                            + bundle.book_behavior_line)
+                if bundle.weather_line:
+                    st.markdown("**Weather (4.5):** "
+                                + bundle.weather_line)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -241,7 +333,239 @@ with tab_injury:
 
 
 # ════════════════════════════════════════════════════════════════
-# Tab 2 — Scheme Deltas (placeholder)
+# Tab — Game-Script Simulator (Feature 4.2)
+# ════════════════════════════════════════════════════════════════
+
+with tab_gscript:
+    st.markdown("### Game-Script Simulator")
+    st.caption(
+        "League-wide game-script shifts when a key starter is out. "
+        "Built from 2013+ pbp + snap counts — for every team-game, we "
+        "classify which key starters (QB1/RB1/WR1/TE1) were active vs. "
+        "missing, then compute scheme + scoring deltas vs. the 'all "
+        "starters playing' baseline."
+    )
+
+    GS_PATH = (Path(__file__).resolve().parent.parent
+               / "data" / "game_script_deltas.parquet")
+    if not GS_PATH.exists():
+        st.error("Missing data. Run `python tools/build_game_script_deltas.py` first.")
+    else:
+        @st.cache_data(show_spinner=False)
+        def _load_gs() -> pd.DataFrame:
+            return pd.read_parquet(GS_PATH)
+        gs = _load_gs()
+
+        view = gs.copy()
+        view = view[view["scenario"].isin(["NONE", "QB1", "RB1", "WR1",
+                                            "TE1", "MULTI"])]
+        # Reorder so NONE (baseline) is first
+        order = {"NONE": 0, "QB1": 1, "RB1": 2, "WR1": 3,
+                 "TE1": 4, "MULTI": 5}
+        view = view.sort_values("scenario", key=lambda s: s.map(order))
+
+        # Friendly column names + percent formatting
+        display = view.copy()
+        display["scenario"] = display["scenario"].replace({
+            "NONE": "All starters playing (baseline)",
+            "QB1": "QB1 OUT",
+            "RB1": "RB1 OUT",
+            "WR1": "WR1 OUT",
+            "TE1": "TE1 OUT",
+            "MULTI": "Multiple starters OUT",
+        })
+        for col in ("pass_rate", "early_down_pass_rate",
+                    "shotgun_rate", "no_huddle_rate"):
+            display[col] = display[col].apply(
+                lambda x: f"{x:.1%}" if pd.notna(x) else "—")
+            display[f"{col}_delta"] = display[f"{col}_delta"].apply(
+                lambda x: f"{x:+.1%}" if pd.notna(x) else "—")
+        for col in ("plays_per_game", "points_per_game"):
+            display[col] = display[col].apply(
+                lambda x: f"{x:.1f}" if pd.notna(x) else "—")
+            display[f"{col}_delta"] = display[f"{col}_delta"].apply(
+                lambda x: f"{x:+.1f}" if pd.notna(x) else "—")
+
+        display = display[[
+            "scenario", "n_games", "points_per_game",
+            "points_per_game_delta", "plays_per_game",
+            "plays_per_game_delta", "pass_rate", "pass_rate_delta",
+            "early_down_pass_rate_delta", "shotgun_rate_delta",
+            "no_huddle_rate_delta",
+        ]]
+        display.columns = ["Scenario", "n", "Pts/G", "Δ Pts",
+                           "Plays/G", "Δ Plays", "Pass rate",
+                           "Δ Pass rate", "Δ Early pass",
+                           "Δ Shotgun", "Δ No-huddle"]
+        st.dataframe(display, use_container_width=True, hide_index=True)
+
+        st.info(
+            "**Read it like this.** When a team's QB1 is out, league-wide "
+            "they score ~4.1 fewer points per game. Losing a WR1 / TE1 / "
+            "RB1 is nearly zero scoring impact (committee absorbs). "
+            "RB1 out → pass rate +2.2% (committee leans pass-heavier). "
+            "Multi-starter outages scale closer to QB1-out impact."
+        )
+
+
+# ════════════════════════════════════════════════════════════════
+# Tab — Books vs Model (Feature 4.3)
+# ════════════════════════════════════════════════════════════════
+
+with tab_books:
+    st.markdown("### Books vs Model — Behavioral Baseline")
+    st.caption(
+        "For each historical (role_lost, status, body_part) cohort: how "
+        "did the affected team perform vs. the closing spread? **Mean "
+        "line miss > 0** = team beat the close = books OVER-reacted "
+        "(contrarian: bet ON the affected team). **Mean line miss < 0** "
+        "= team underperformed = books UNDER-reacted (fade the team)."
+    )
+
+    BV_PATH = (Path(__file__).resolve().parent.parent
+               / "data" / "books_vs_model.parquet")
+    if not BV_PATH.exists():
+        st.error("Missing data. Run `python tools/build_books_vs_model.py` first.")
+    else:
+        @st.cache_data(show_spinner=False)
+        def _load_bv() -> pd.DataFrame:
+            return pd.read_parquet(BV_PATH)
+        bv = _load_bv()
+
+        c1, c2, c3 = st.columns([1, 1, 1])
+        roles = sorted(bv["position_lost"].dropna().unique())
+        role_pick = c1.selectbox("Role lost", roles,
+                                  index=roles.index("QB")
+                                  if "QB" in roles else 0,
+                                  key="bv_role")
+        statuses = sorted(bv[bv["position_lost"] == role_pick]
+                           ["status"].dropna().unique())
+        status_pick = c2.selectbox("Status", statuses,
+                                    index=statuses.index("OUT")
+                                    if "OUT" in statuses else 0,
+                                    key="bv_status")
+        min_n = c3.number_input("Min n", 5, 200, 15, key="bv_min_n")
+
+        sub = (bv[(bv["position_lost"] == role_pick)
+                  & (bv["status"] == status_pick)
+                  & (bv["n_games"] >= int(min_n))]
+               .sort_values("mean_line_miss")
+               .reset_index(drop=True))
+        if sub.empty:
+            st.info("No cohorts at that filter.")
+        else:
+            display = sub[["body_part", "n_games", "mean_line_miss",
+                           "cover_rate", "mean_total_miss",
+                           "median_actual_margin", "median_spread"]].copy()
+            display["mean_line_miss"] = display["mean_line_miss"].apply(
+                lambda x: f"{x:+.1f}" if pd.notna(x) else "—")
+            display["cover_rate"] = display["cover_rate"].apply(
+                lambda x: f"{x:.0%}" if pd.notna(x) else "—")
+            display["mean_total_miss"] = display["mean_total_miss"].apply(
+                lambda x: f"{x:+.1f}" if pd.notna(x) else "—")
+            display.columns = ["Body part", "n", "Mean line miss",
+                               "Cover rate", "Total miss",
+                               "Median margin", "Median spread"]
+            st.dataframe(display, use_container_width=True, hide_index=True)
+
+            st.markdown("**Interpretation key**")
+            st.markdown(
+                "- `mean line miss > +1.5` → team beat the close → books **OVER**-reacted → **bet ON** affected team"
+            )
+            st.markdown(
+                "- `mean line miss < -1.5` → team underperformed → books **UNDER**-reacted → **fade** affected team"
+            )
+
+
+# ════════════════════════════════════════════════════════════════
+# Tab — Weather Production Window (Feature 4.5)
+# ════════════════════════════════════════════════════════════════
+
+with tab_weather:
+    st.markdown("### Weather Production Window")
+    st.caption(
+        "For any player, find his historical games matching target "
+        "weather conditions and return the empirical P10 / P50 / P90 "
+        "of his primary production stat (passing/rushing/receiving "
+        "yards). Confidence labels: HIGH (15+ games) / MEDIUM (6–14) / "
+        "LOW (<5, falls back to player baseline)."
+    )
+
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        position_pick = st.selectbox(
+            "Position", ["QB", "WR", "RB", "TE"], index=0,
+            key="w_pos",
+        )
+        opts = all_player_options(position=position_pick, min_games=20)
+        if opts.empty:
+            st.info("No players found at this position.")
+            st.stop()
+        opts["_label"] = (opts["player_display_name"]
+                          + " (" + opts["n_games"].astype(str)
+                          + " games)")
+        player_label = st.selectbox(
+            "Player", opts["_label"].tolist(),
+            key="w_player",
+        )
+        chosen = opts[opts["_label"] == player_label].iloc[0]
+
+        st.markdown("**Target weather**")
+        target_temp = st.slider("Temperature (°F)", -5, 100, 50,
+                                key="w_temp")
+        target_wind = st.slider("Wind (mph)", 0, 35, 5, key="w_wind")
+        target_roof = st.selectbox(
+            "Roof", ["any", "outdoors", "dome", "closed", "open"],
+            index=0, key="w_roof",
+        )
+        target_surface = st.selectbox(
+            "Surface", ["any", "grass", "turf", "fieldturf",
+                        "a_turf", "sportturf"],
+            index=0, key="w_surf",
+        )
+        run_w = st.button("Run weather cohort", type="primary",
+                          use_container_width=True, key="w_run")
+
+    with c2:
+        if run_w:
+            r = weather_cohort(
+                player_id=chosen["player_id"],
+                position=position_pick,
+                target_temp=target_temp,
+                target_wind=target_wind,
+                target_roof=None if target_roof == "any" else target_roof,
+                target_surface=None if target_surface == "any"
+                                else target_surface,
+            )
+
+            st.markdown(f"#### {chosen['player_display_name']} — {r.stat}")
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("P10", f"{r.p10:.0f}")
+            m2.metric("P50 (median)", f"{r.p50:.0f}")
+            m3.metric("P90", f"{r.p90:.0f}")
+            m4.metric("Mean", f"{r.mean:.0f}")
+
+            m1, m2 = st.columns(2)
+            m1.metric("Cohort size", f"{r.n_games} games")
+            m2.metric("Confidence", r.confidence)
+
+            mode_blurb = {
+                "player": "Cohort drawn from this player's own historical "
+                          "games matching the target conditions.",
+                "tier_blend": "Player's specific weather cohort was thin "
+                              "(<5 games). Falling back to all of his "
+                              "games as the baseline.",
+                "league": "No matching games at all. Showing league-wide "
+                          "distribution at this position.",
+            }.get(r.cohort_mode, "")
+            st.caption(mode_blurb)
+        else:
+            st.info("Pick a player and target weather, then click **Run**.")
+
+
+# ════════════════════════════════════════════════════════════════
+# Tab — Scheme Deltas (4.6 foundation)
 # ════════════════════════════════════════════════════════════════
 
 with tab_scheme:

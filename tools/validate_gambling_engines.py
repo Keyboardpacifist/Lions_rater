@@ -249,6 +249,127 @@ if not phi_2023.empty:
           c >= 0.70, f"got {c:.3f}")
 
 
+# ── 6. Game-Script Simulator (Feature 4.2) ───────────────────────
+
+section("6. Game-Script Simulator (4.2)")
+GS = REPO / "data" / "game_script_deltas.parquet"
+gs = pd.read_parquet(GS)
+check("game_script_deltas table loads", not gs.empty,
+      f"{len(gs):,} scenarios")
+
+# Should have all six scenarios
+expected = {"NONE", "QB1", "RB1", "WR1", "TE1", "MULTI"}
+have = set(gs["scenario"].unique())
+check("has NONE/QB1/RB1/WR1/TE1/MULTI scenarios",
+      expected.issubset(have),
+      f"missing: {expected - have}")
+
+# QB1 out should reduce points/game by ≥ 2
+qb1 = gs[gs["scenario"] == "QB1"]
+if not qb1.empty:
+    delta = qb1.iloc[0]["points_per_game_delta"]
+    check("QB1 out → points/game delta ≤ -2",
+          delta <= -2.0, f"got {delta:+.2f}")
+
+# Pass rates in [0, 1]
+check("pass_rate in [0, 1]",
+      ((gs["pass_rate"] >= 0) & (gs["pass_rate"] <= 1)).all())
+
+# NONE baseline must be present and have largest n
+none_row = gs[gs["scenario"] == "NONE"]
+if not none_row.empty:
+    n_none = int(none_row.iloc[0]["n_games"])
+    n_max = int(gs["n_games"].max())
+    check("NONE baseline has the largest sample",
+          n_none == n_max, f"NONE n={n_none}, max n={n_max}")
+
+
+# ── 7. Books vs Model (Feature 4.3) ──────────────────────────────
+
+section("7. Books vs Model (4.3)")
+BV = REPO / "data" / "books_vs_model.parquet"
+bv = pd.read_parquet(BV)
+check("books_vs_model table loads", not bv.empty,
+      f"{len(bv):,} cohorts")
+
+# Healthy baseline cover rate should be ~50% (sharp baseline)
+healthy = bv[(bv["position_lost"] == "HEALTHY")
+             & (bv["status"] == "HEALTHY")]
+if not healthy.empty:
+    cov = healthy.iloc[0]["cover_rate"]
+    check("healthy baseline cover rate in [0.45, 0.55]",
+          0.45 <= cov <= 0.55, f"got {cov:.3f}")
+    miss = healthy.iloc[0]["mean_line_miss"]
+    check("healthy baseline mean line miss in [-2, +2]",
+          -2.0 <= miss <= 2.0, f"got {miss:+.3f}")
+
+# Cover rates in [0, 1]
+check("cover_rate in [0, 1]",
+      ((bv["cover_rate"] >= 0) & (bv["cover_rate"] <= 1)).all())
+
+# QB OUT scenarios should generally have NEGATIVE line_miss
+# (books historically don't move the line enough on QB injuries)
+qb_out = bv[(bv["position_lost"] == "QB") & (bv["status"] == "OUT")
+            & (bv["n_games"] >= 20)]
+if not qb_out.empty:
+    avg_miss = (qb_out["mean_line_miss"] * qb_out["n_games"]).sum() / qb_out["n_games"].sum()
+    check("QB OUT cohorts (n≥20) — avg line miss is negative",
+          avg_miss < 0, f"got {avg_miss:+.2f}")
+
+
+# ── 8. Weather Production Window (Feature 4.5) ───────────────────
+
+section("8. Weather Production Window (4.5)")
+WX = REPO / "data" / "player_games_weather.parquet"
+wx = pd.read_parquet(WX)
+check("weather table loads", not wx.empty, f"{len(wx):,} player-games")
+
+# Must have weather columns
+for col in ["temp", "wind", "roof", "surface"]:
+    check(f"has column {col}", col in wx.columns)
+
+# Weather coverage should be 60-80% (domes drag the rate)
+cov_temp = wx["temp"].notna().mean()
+check("temp coverage in [0.60, 0.85]",
+      0.60 <= cov_temp <= 0.85, f"got {cov_temp:.0%}")
+
+# Cohort engine smoke test — Goff in cold weather
+from lib_weather import weather_cohort, all_player_options
+opts = all_player_options(position="QB", min_games=50)
+goff = opts[opts["player_display_name"].str.contains("Goff", na=False)]
+if len(goff):
+    pid = goff.iloc[0]["player_id"]
+    cold = weather_cohort(pid, "QB", target_temp=35, target_wind=15)
+    mild = weather_cohort(pid, "QB", target_temp=70, target_wind=5)
+    check("Goff cold cohort returns sensible P50",
+          50 <= cold.p50 <= 400, f"got {cold.p50:.1f}")
+    check("Goff mild cohort returns sensible P50",
+          150 <= mild.p50 <= 400, f"got {mild.p50:.1f}")
+    check("P10 < P50 < P90 monotonic (cold)",
+          cold.p10 <= cold.p50 <= cold.p90,
+          f"{cold.p10:.0f}/{cold.p50:.0f}/{cold.p90:.0f}")
+
+
+# ── 9. Smart Alerts fusion (Feature 4.4) ─────────────────────────
+
+section("9. Smart Alerts (4.4)")
+from lib_smart_alerts import fuse_alert
+b = fuse_alert(player_name="Jared Goff", team="DET", position="QB",
+               status="OUT", body_part="shoulder",
+               practice_status="DNP",
+               opponent="HOU", season=2024, week=10)
+check("fusion produces a non-empty headline",
+      bool(b.headline) and "Goff" in b.headline)
+check("fusion produces a cohort line",
+      bool(b.cohort_line) and "Pr(plays" in b.cohort_line)
+check("fusion produces a game-script line",
+      bool(b.game_script_line) and "points/game" in b.game_script_line)
+check("fusion produces a book behavior line",
+      bool(b.book_behavior_line) and "line miss" in b.book_behavior_line)
+check("fusion produces ≥3 bullets",
+      len(b.bullet_points) >= 3, f"got {len(b.bullet_points)}")
+
+
 # ── Summary ──────────────────────────────────────────────────────
 
 section("Summary")
