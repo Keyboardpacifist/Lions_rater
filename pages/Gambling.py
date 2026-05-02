@@ -1632,14 +1632,74 @@ with tab_decomp:
             Path(__file__).resolve().parent.parent
             / "data" / "nfl_player_stats_weekly.parquet"
         )
-        recent = df[df["season"] >= 2023]
+        recent = df[df["season"] >= 2016]
         if position:
             recent = recent[recent["position"] == position]
         opts = (recent.groupby(["player_id", "player_display_name",
-                                 "position", "team"])
+                                 "position"])
                 .size().reset_index().rename(columns={0: "n_games"}))
         opts = opts[opts["n_games"] >= 6]
         return opts.sort_values("n_games", ascending=False).reset_index(drop=True)
+
+    @st.cache_data(show_spinner=False)
+    def _decomp_player_seasons(player_id: str) -> list[int]:
+        """Seasons this player has weekly stats in (2016+)."""
+        df = pd.read_parquet(
+            Path(__file__).resolve().parent.parent
+            / "data" / "nfl_player_stats_weekly.parquet"
+        )
+        return sorted(
+            df[(df["player_id"] == player_id) & (df["season"] >= 2016)]
+              ["season"].dropna().astype(int).unique().tolist(),
+            reverse=True,
+        )
+
+    @st.cache_data(show_spinner=False)
+    def _decomp_team_for_season(player_id: str, season: int) -> str:
+        """Player's most-played team in a given season."""
+        df = pd.read_parquet(
+            Path(__file__).resolve().parent.parent
+            / "data" / "nfl_player_stats_weekly.parquet"
+        )
+        sub = df[(df["player_id"] == player_id)
+                 & (df["season"] == int(season))]
+        if sub.empty:
+            return ""
+        return str(sub["team"].mode().iloc[0])
+
+    @st.cache_data(show_spinner=False)
+    def _decomp_schedule_lookup(team: str, season: int, week: int) -> dict:
+        """Look up the (team, season, week) game from schedule and
+        return opponent + actual weather + line context."""
+        sch = pd.read_parquet(
+            Path(__file__).resolve().parent.parent
+            / "data" / "nfl_schedules.parquet"
+        )
+        g = sch[(sch["season"] == int(season))
+                & (sch["week"] == int(week))
+                & ((sch["home_team"] == team)
+                   | (sch["away_team"] == team))]
+        if g.empty:
+            return {}
+        row = g.iloc[0]
+        opponent = (row["away_team"] if row["home_team"] == team
+                    else row["home_team"])
+        return {
+            "opponent": str(opponent),
+            "is_home": (row["home_team"] == team),
+            "stadium": str(row.get("stadium", "?")),
+            "roof": str(row.get("roof", "?")),
+            "surface": str(row.get("surface", "?")),
+            "temp": (float(row["temp"])
+                     if pd.notna(row.get("temp")) else None),
+            "wind": (float(row["wind"])
+                     if pd.notna(row.get("wind")) else None),
+            "spread_line": (float(row["spread_line"])
+                            if pd.notna(row.get("spread_line")) else None),
+            "total_line": (float(row["total_line"])
+                            if pd.notna(row.get("total_line")) else None),
+            "gameday": str(row.get("gameday", "")),
+        }
 
     c1, c2 = st.columns([1, 2])
     with c1:
@@ -1655,55 +1715,99 @@ with tab_decomp:
                                   key="dec_stat")
         opts = _decomp_player_options(pos_pick)
         opts["_label"] = (opts["player_display_name"]
-                          + " · " + opts["team"]
-                          + f" ({opts['n_games']} games)")
+                          + f"  ({opts['n_games']} games)")
         player_label = st.selectbox("Player",
                                      opts["_label"].tolist(),
                                      key="dec_player")
-        if player_label:
-            chosen = opts[opts["_label"] == player_label].iloc[0]
+        chosen = opts[opts["_label"] == player_label].iloc[0]
 
-            st.markdown("**Matchup context**")
-            opp_pick = st.text_input("Opponent (e.g. HOU)",
-                                       key="dec_opp", value="")
-            season_pick = st.number_input("Season", 2016, 2025, 2024,
-                                            key="dec_season")
-            week_pick = st.number_input("Week", 1, 22, 10,
-                                          key="dec_week")
+        st.markdown("**Pick a game**")
+        seasons_for_player = _decomp_player_seasons(chosen["player_id"])
+        if not seasons_for_player:
+            st.warning("No seasons available for this player.")
+            st.stop()
+        season_pick = st.selectbox(
+            "Season", seasons_for_player, index=0,
+            key="dec_season",
+        )
+        team_for_season = _decomp_team_for_season(
+            chosen["player_id"], int(season_pick))
+        # Slider over weeks the team played that season (1-18 modern era)
+        max_week = 18 if int(season_pick) >= 2021 else 17
+        week_pick = st.slider(
+            "Week", 1, max_week, min(10, max_week),
+            key="dec_week",
+        )
+        sched = _decomp_schedule_lookup(team_for_season,
+                                          int(season_pick),
+                                          int(week_pick))
+        if not sched:
+            st.info(f"{team_for_season} had a bye / no game in W{week_pick} "
+                     f"{season_pick}. Pick another week.")
+            st.stop()
 
-            st.markdown("**Injury status (optional)**")
-            inj_status = st.selectbox(
-                "Status", ["NONE", "PROBABLE", "QUESTIONABLE",
-                          "DOUBTFUL", "OUT"],
-                key="dec_status",
-            )
-            inj_body = st.text_input("Body part",
-                                      key="dec_body", value="unknown")
-            inj_practice = st.selectbox(
-                "Practice", ["FULL", "LIMITED", "DNP"],
-                key="dec_practice",
-            )
+        # Auto-filled context summary
+        opp_pick = sched["opponent"]
+        ha = "vs" if sched["is_home"] else "@"
+        st.markdown(
+            f"**{team_for_season} {ha} {opp_pick}**  ·  "
+            f"{sched['gameday']}  ·  "
+            f"{sched['stadium']} ({sched['roof']})"
+        )
+        line_bits = []
+        if sched.get("spread_line") is not None:
+            spread_pov = (-sched["spread_line"] if sched["is_home"]
+                          else sched["spread_line"])
+            line_bits.append(f"Line: {team_for_season} "
+                              f"{'-' if spread_pov < 0 else '+'}"
+                              f"{abs(spread_pov):.1f}")
+        if sched.get("total_line") is not None:
+            line_bits.append(f"O/U {sched['total_line']:.1f}")
+        if sched.get("temp") is not None:
+            line_bits.append(f"{sched['temp']:.0f}°F")
+        if sched.get("wind") is not None:
+            line_bits.append(f"{sched['wind']:.0f}mph wind")
+        if line_bits:
+            st.caption("  ·  ".join(line_bits))
 
-            st.markdown("**Weather (optional)**")
-            use_weather = st.checkbox("Apply weather adjustment",
-                                       key="dec_useweather")
-            if use_weather:
-                w_temp = st.slider("Temp (°F)", -5, 100, 50,
-                                    key="dec_temp")
-                w_wind = st.slider("Wind (mph)", 0, 35, 5,
-                                    key="dec_wind")
-            else:
-                w_temp = w_wind = None
+        st.markdown("**Injury status (optional)**")
+        inj_status = st.selectbox(
+            "Status", ["NONE", "PROBABLE", "QUESTIONABLE",
+                      "DOUBTFUL", "OUT"],
+            key="dec_status",
+        )
+        inj_body = st.text_input("Body part",
+                                  key="dec_body", value="unknown")
+        inj_practice = st.selectbox(
+            "Practice", ["FULL", "LIMITED", "DNP"],
+            key="dec_practice",
+        )
 
-            st.markdown("**Game-script (optional)**")
-            starter_out = st.selectbox(
-                "Key starter out",
-                ["none", "QB1", "RB1", "WR1", "TE1", "MULTI"],
-                key="dec_starter",
-            )
+        st.markdown("**Weather override (optional)**")
+        st.caption("Schedule weather is auto-applied. Toggle to "
+                    "manually override (useful for what-if scenarios).")
+        use_weather_override = st.checkbox(
+            "Override weather", key="dec_useweather")
+        if use_weather_override:
+            w_temp = st.slider("Temp (°F)", -5, 100,
+                                int(sched.get("temp") or 50),
+                                key="dec_temp")
+            w_wind = st.slider("Wind (mph)", 0, 35,
+                                int(sched.get("wind") or 5),
+                                key="dec_wind")
+        else:
+            w_temp = sched.get("temp")
+            w_wind = sched.get("wind")
 
-            run_d = st.button("Run decomposition", type="primary",
-                              use_container_width=True, key="dec_run")
+        st.markdown("**Game-script (optional)**")
+        starter_out = st.selectbox(
+            "Key starter out",
+            ["none", "QB1", "RB1", "WR1", "TE1", "MULTI"],
+            key="dec_starter",
+        )
+
+        run_d = st.button("Run decomposition", type="primary",
+                          use_container_width=True, key="dec_run")
 
     with c2:
         if c1 and "dec_run" in st.session_state and \
@@ -1711,9 +1815,9 @@ with tab_decomp:
             d = decompose(
                 player_id=chosen["player_id"],
                 position=pos_pick,
-                team=str(chosen["team"]),
+                team=team_for_season,
                 stat=stat_pick,
-                opponent=(opp_pick.upper() if opp_pick else None),
+                opponent=opp_pick,
                 season=int(season_pick),
                 week=int(week_pick),
                 injury_status=(inj_status if inj_status != "NONE" else None),
