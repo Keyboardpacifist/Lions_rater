@@ -521,6 +521,62 @@ check("fusion produces ≥3 bullets",
       len(b.bullet_points) >= 3, f"got {len(b.bullet_points)}")
 
 
+# ── 17. Matchup Report (auto) ────────────────────────────────────
+
+section("17. Matchup Report (auto)")
+from lib_matchup_report import generate_matchup_report
+
+r = generate_matchup_report("HOU", "DET", 2024, 10)
+check("matchup report builds",
+      not r.headline.get("error"),
+      f"home={r.home_team} away={r.away_team}")
+check("headline has spread + total + moneylines",
+      r.headline.get("spread_line") is not None
+      and r.headline.get("total_line") is not None
+      and r.headline.get("home_moneyline") is not None)
+check("both teams have injuries collected",
+      isinstance(r.home_injuries, list)
+      and isinstance(r.away_injuries, list))
+check("scheme outliers present for both teams",
+      len(r.home_scheme) >= 1 and len(r.away_scheme) >= 1)
+check("coaching outliers present for both teams",
+      len(r.home_coaching) >= 1 and len(r.away_coaching) >= 1)
+check("bottom_line returns ≥1 bullet",
+      len(r.bottom_line_bullets) >= 1)
+
+
+# ── 18. Player Prop Report (auto) ────────────────────────────────
+
+section("18. Player Prop Report (auto)")
+from lib_player_prop_report import generate_player_report
+
+r = generate_player_report(
+    player_id="00-0036900", position="WR",
+    season=2024, week=10,
+)
+check("player report builds",
+      r.player_name and r.team and r.primary_stat)
+check("recent_form has at most 5 rows AND all are pre-target",
+      len(r.recent_form) <= 5
+      and (r.recent_form.empty
+           or ((r.recent_form["season"] < 2024)
+                | ((r.recent_form["season"] == 2024)
+                   & (r.recent_form["week"] < 10))).all()))
+check("decomposition present with baseline > 0",
+      r.decomposition and r.decomposition.get("baseline", 0) > 0)
+check("alt_ladder produced",
+      not r.alt_ladder.empty,
+      f"{len(r.alt_ladder)} rungs")
+check("td_vector present and rates in [0, 1]",
+      r.td_vector
+      and 0 <= r.td_vector.get("p_any_td", 0) <= 1)
+check("SGP partners do NOT include the player himself",
+      all(p.get("partner_name") != r.player_name
+          for p in r.sgp_partners))
+check("bottom_line returns ≥1 bullet",
+      len(r.bottom_line_bullets) >= 1)
+
+
 # ── Summary ──────────────────────────────────────────────────────
 
 section("Summary")

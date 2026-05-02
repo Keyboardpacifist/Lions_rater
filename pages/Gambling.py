@@ -41,6 +41,8 @@ from lib_scheme_deltas import (
     rank_teams,
     season_year_over_year,
 )
+from lib_matchup_report import generate_matchup_report
+from lib_player_prop_report import generate_player_report
 from lib_smart_alerts import fuse_alert
 from lib_weather import (
     all_player_options,
@@ -96,8 +98,9 @@ section_game, section_props = st.tabs([
 ])
 
 with section_game:
-    (tab_alerts, tab_injury, tab_gscript, tab_books, tab_weather,
-     tab_scheme, tab_coach) = st.tabs([
+    (tab_matchup, tab_alerts, tab_injury, tab_gscript, tab_books,
+     tab_weather, tab_scheme, tab_coach) = st.tabs([
+        "🚀 Matchup Report (auto)",
         "⭐ Smart Alerts (4.4)",
         "🩹 Injury Cohort (4.1)",
         "🎯 Game-Script (4.2)",
@@ -108,8 +111,9 @@ with section_game:
     ])
 
 with section_props:
-    (tab_decomp, tab_sgp, tab_alt, tab_parlay, tab_td, tab_trend,
-     tab_long, tab_dvp) = st.tabs([
+    (tab_proprep, tab_decomp, tab_sgp, tab_alt, tab_parlay, tab_td,
+     tab_trend, tab_long, tab_dvp) = st.tabs([
+        "🚀 Player Report (auto)",
         "🔬 Decomposed Projection (5.1)",
         "🔗 SGP Correlations (5.2)",
         "🎲 Alt-Line EV (5.3)",
@@ -122,7 +126,215 @@ with section_props:
 
 
 # ════════════════════════════════════════════════════════════════
-# Tab — Smart Alerts (Feature 4.4) — showcase tab
+# Tab — 🚀 Matchup Report (auto) — Game Bets showcase
+# ════════════════════════════════════════════════════════════════
+
+with tab_matchup:
+    st.markdown("### 🚀 Matchup Report")
+    st.caption(
+        "Pick a game and the engine auto-generates a full report — "
+        "weather, line, both teams' injuries with cohort play "
+        "probabilities, scheme outliers, coaching aggression flags, "
+        "and historical book-behavior signals. **Built for the lazy "
+        "bettor who wants the sharp friend's full take in one click.**"
+    )
+
+    @st.cache_data(show_spinner=False)
+    def _schedule_options() -> pd.DataFrame:
+        sch = pd.read_parquet(
+            Path(__file__).resolve().parent.parent
+            / "data" / "nfl_schedules.parquet"
+        )
+        return sch[(sch["season"] >= 2018)].copy()
+
+    sch_df = _schedule_options()
+    c1, c2, c3 = st.columns(3)
+    seasons_avail = sorted(sch_df["season"].unique(), reverse=True)
+    season_pick = c1.selectbox("Season", seasons_avail, index=0,
+                                key="mr_season")
+    weeks_avail = sorted(sch_df[sch_df["season"] == season_pick]
+                          ["week"].dropna().unique())
+    week_pick = c2.selectbox("Week", weeks_avail,
+                              index=min(9, len(weeks_avail) - 1) if weeks_avail else 0,
+                              key="mr_week")
+    games = sch_df[(sch_df["season"] == season_pick)
+                   & (sch_df["week"] == week_pick)].copy()
+    games["_label"] = (games["away_team"] + " @ " + games["home_team"]
+                        + "  (" + games["gameday"].astype(str) + ")")
+    game_pick = c3.selectbox("Game", games["_label"].tolist(),
+                              key="mr_game")
+    if game_pick:
+        chosen_game = games[games["_label"] == game_pick].iloc[0]
+        if st.button("Generate matchup report", type="primary",
+                       use_container_width=True, key="mr_run"):
+            r = generate_matchup_report(
+                home_team=str(chosen_game["home_team"]),
+                away_team=str(chosen_game["away_team"]),
+                season=int(season_pick), week=int(week_pick),
+            )
+            if r.headline.get("error"):
+                st.error(r.headline["error"])
+            else:
+                # ── Headline ──
+                st.markdown(
+                    f"## {r.away_team} @ {r.home_team} — "
+                    f"Week {r.week}, {r.season}"
+                )
+                m1, m2, m3, m4 = st.columns(4)
+                spread = r.headline.get("spread_line")
+                fav = r.home_team if (spread or 0) < 0 else r.away_team
+                m1.metric("Spread", f"{fav} -{abs(spread):.1f}"
+                          if spread is not None else "—")
+                m2.metric("Total",
+                          f"{r.headline.get('total_line', '—')}"
+                          if r.headline.get("total_line") is not None else "—")
+                hml = r.headline.get("home_moneyline")
+                aml = r.headline.get("away_moneyline")
+                m3.metric(f"{r.home_team} ML",
+                          f"{hml:+d}" if hml is not None else "—")
+                m4.metric(f"{r.away_team} ML",
+                          f"{aml:+d}" if aml is not None else "—")
+                st.caption(
+                    f"**Kickoff:** {r.headline.get('kickoff', '—')}  ·  "
+                    f"**QBs:** {r.headline.get('home_qb')} (H) vs. "
+                    f"{r.headline.get('away_qb')} (A)  ·  "
+                    f"**Coaches:** {r.headline.get('home_coach')} (H) vs. "
+                    f"{r.headline.get('away_coach')} (A)  ·  "
+                    f"**Ref:** {r.headline.get('referee', '—')}"
+                )
+
+                # ── Bottom Line (top of report — the lazy-mode TL;DR) ──
+                st.markdown("---")
+                st.markdown("### 🎯 Bottom line")
+                for b in r.bottom_line_bullets:
+                    st.markdown(f"- {b}")
+
+                # ── Game environment ──
+                st.markdown("---")
+                st.markdown("### 🌤️ Game environment")
+                env = r.game_environment
+                e1, e2, e3, e4 = st.columns(4)
+                e1.metric("Stadium", env.get("stadium", "—"))
+                e2.metric("Roof", env.get("roof", "—"))
+                temp = env.get("temp")
+                e3.metric("Temp",
+                          f"{temp:.0f}°F" if temp is not None else "—")
+                wind = env.get("wind")
+                e4.metric("Wind",
+                          f"{wind:.0f} mph" if wind is not None else "—")
+                e1, e2, e3 = st.columns(3)
+                e1.metric("Surface", env.get("surface", "—"))
+                e2.metric(f"{r.home_team} rest",
+                           f"{env.get('home_rest', '—')} days"
+                           if env.get("home_rest") is not None else "—")
+                e3.metric(f"{r.away_team} rest",
+                           f"{env.get('away_rest', '—')} days"
+                           if env.get("away_rest") is not None else "—")
+                if env.get("div_game"):
+                    st.caption("**Divisional matchup** (typically tighter)")
+
+                # ── Injuries side-by-side ──
+                st.markdown("---")
+                st.markdown("### 🩹 Injury report")
+                col_h, col_a = st.columns(2)
+                for col, team, injuries in (
+                    (col_h, r.home_team, r.home_injuries),
+                    (col_a, r.away_team, r.away_injuries),
+                ):
+                    with col:
+                        st.markdown(f"**{team}** — {len(injuries)} listed")
+                        if not injuries:
+                            st.caption("No injury report rows.")
+                        else:
+                            rows = [{
+                                "Role": i.role,
+                                "Player": i.player_name,
+                                "Pos": i.position,
+                                "Body": i.body_part,
+                                "Status": i.status,
+                                "Practice": i.practice,
+                                "P(plays)": f"{i.p_play:.0%}",
+                                "Snap if active": (f"{i.snap_retention:.0%}"
+                                                    if i.snap_retention > 0
+                                                    else "—"),
+                                "n": i.cohort_n,
+                            } for i in injuries[:10]]
+                            st.dataframe(pd.DataFrame(rows),
+                                          use_container_width=True,
+                                          hide_index=True)
+
+                # ── Scheme matchup ──
+                st.markdown("---")
+                st.markdown("### 🧪 Scheme outliers")
+                col_h, col_a = st.columns(2)
+                for col, team, scheme in (
+                    (col_h, r.home_team, r.home_scheme),
+                    (col_a, r.away_team, r.away_scheme),
+                ):
+                    with col:
+                        st.markdown(f"**{team}**")
+                        if not scheme:
+                            st.caption("No scheme data.")
+                        else:
+                            rows = [{
+                                "Side": s.side,
+                                "Metric": s.metric_label,
+                                "Value": (f"{s.value:.1%}" if "rate" in s.metric
+                                           else f"{s.value:.2f}"),
+                                "vs league": (f"{s.delta:+.1%}" if "rate" in s.metric
+                                                else f"{s.delta:+.2f}"),
+                            } for s in scheme]
+                            st.dataframe(pd.DataFrame(rows),
+                                          use_container_width=True,
+                                          hide_index=True)
+
+                # ── Coaching ──
+                st.markdown("---")
+                st.markdown("### 📋 Coaching tendency outliers")
+                col_h, col_a = st.columns(2)
+                for col, team, coaching in (
+                    (col_h, r.home_team, r.home_coaching),
+                    (col_a, r.away_team, r.away_coaching),
+                ):
+                    with col:
+                        st.markdown(f"**{team}**")
+                        if not coaching:
+                            st.caption("No coaching data.")
+                        else:
+                            rows = [{
+                                "Metric": c.metric_label,
+                                "Value": (f"{c.value:.1%}"
+                                           if "rate" in c.metric
+                                           else f"{c.value:.2f}"),
+                                "vs league": (f"{c.delta:+.1%}"
+                                                if "rate" in c.metric
+                                                else f"{c.delta:+.2f}"),
+                            } for c in coaching]
+                            st.dataframe(pd.DataFrame(rows),
+                                          use_container_width=True,
+                                          hide_index=True)
+
+                # ── Books-vs-model signals ──
+                if r.books_signals:
+                    st.markdown("---")
+                    st.markdown("### 📊 Book-behavior signals")
+                    rows = [{
+                        "Team": s.team,
+                        "Role lost": s.role_lost,
+                        "Body": s.body_part,
+                        "Status": s.status,
+                        "n games": s.n_games,
+                        "Mean line miss": f"{s.mean_line_miss:+.1f}",
+                        "Cover rate": f"{s.cover_rate:.0%}",
+                        "Verdict": s.verdict,
+                    } for s in r.books_signals]
+                    st.dataframe(pd.DataFrame(rows),
+                                  use_container_width=True,
+                                  hide_index=True)
+
+
+# ════════════════════════════════════════════════════════════════
+# Tab — Smart Alerts (Feature 4.4)
 # ════════════════════════════════════════════════════════════════
 
 with tab_alerts:
@@ -1092,6 +1304,226 @@ with tab_sgp:
                                 "Partner 75+ | QB 300+",
                                 "Lift"]
                 st.dataframe(view, use_container_width=True, hide_index=True)
+
+
+# ════════════════════════════════════════════════════════════════
+# Tab — 🚀 Player Prop Report (auto) — Player Props showcase
+# ════════════════════════════════════════════════════════════════
+
+with tab_proprep:
+    st.markdown("### 🚀 Player Prop Report")
+    st.caption(
+        "Pick a player and the engine auto-generates a full prop report "
+        "— recent form, decomposed projection, alt-line ladder ranked "
+        "by EV, anytime/first TD probabilities, role-trend flags, "
+        "longest-play distribution, and SGP stack candidates. "
+        "**The lazy-bettor showcase for player props.**"
+    )
+
+    @st.cache_data(show_spinner=False)
+    def _player_options() -> pd.DataFrame:
+        df = pd.read_parquet(
+            Path(__file__).resolve().parent.parent
+            / "data" / "nfl_player_stats_weekly.parquet"
+        )
+        recent = df[df["season"] >= 2023]
+        opts = (recent.groupby(["player_id", "player_display_name",
+                                  "position", "team"])
+                .size().reset_index().rename(columns={0: "n_games"}))
+        opts = opts[opts["n_games"] >= 4]
+        opts["_label"] = (opts["player_display_name"]
+                          + "  ·  " + opts["team"]
+                          + "  ·  " + opts["position"]
+                          + f"  ({opts['n_games']}g)")
+        return opts.sort_values("n_games",
+                                 ascending=False).reset_index(drop=True)
+
+    p_opts = _player_options()
+    c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+    player_label = c1.selectbox("Player", p_opts["_label"].tolist(),
+                                  key="pr_player")
+    chosen = p_opts[p_opts["_label"] == player_label].iloc[0]
+
+    seasons_avail = list(range(2025, 2015, -1))
+    season_pick = c2.selectbox("Season", seasons_avail, index=1,
+                                 key="pr_season")
+    week_pick = c3.number_input("Week", 1, 22, 10, key="pr_week")
+
+    # Stat pick depends on position
+    stat_options = {
+        "QB": ["passing_yards"],
+        "WR": ["receiving_yards"],
+        "TE": ["receiving_yards"],
+        "RB": ["rushing_yards", "receiving_yards"],
+    }
+    pos = str(chosen["position"])
+    stat_pick = c4.selectbox("Stat",
+                              stat_options.get(pos, ["receiving_yards"]),
+                              key="pr_stat")
+
+    if st.button("Generate player report", type="primary",
+                  use_container_width=True, key="pr_run"):
+        try:
+            r = generate_player_report(
+                player_id=chosen["player_id"],
+                position=pos,
+                season=int(season_pick), week=int(week_pick),
+                primary_stat=stat_pick,
+            )
+        except Exception as e:
+            st.error(f"Report generation failed: {e}")
+        else:
+            # ── Headline ──
+            st.markdown(
+                f"## {r.player_name}  ({r.position}, {r.team})"
+            )
+            opp_str = f"vs {r.opponent}" if r.opponent else "(no opponent)"
+            roof = r.headline.get("roof", "?")
+            temp = r.headline.get("temp")
+            wind = r.headline.get("wind")
+            ctx_bits = [opp_str, f"Week {r.week} {r.season}"]
+            spread = r.headline.get("spread")
+            if spread is not None:
+                fav_str = (f"{r.team} -{abs(spread):.1f}" if spread < 0
+                            else f"{r.team} +{spread:.1f}")
+                ctx_bits.append(fav_str)
+            total = r.headline.get("total")
+            if total is not None:
+                ctx_bits.append(f"O/U {total:.1f}")
+            if temp is not None:
+                ctx_bits.append(f"{temp:.0f}°F")
+            if wind is not None:
+                ctx_bits.append(f"{wind:.0f}mph wind")
+            ctx_bits.append(f"roof: {roof}")
+            st.caption("  ·  ".join(str(b) for b in ctx_bits))
+
+            # ── Bottom line ──
+            st.markdown("---")
+            st.markdown("### 🎯 Bottom line")
+            for b in r.bottom_line_bullets:
+                st.markdown(f"- {b}")
+
+            # ── Recent form ──
+            st.markdown("---")
+            st.markdown("### 📋 Recent form (last 5)")
+            if r.recent_form.empty:
+                st.caption("No prior games before this date.")
+            else:
+                st.dataframe(r.recent_form,
+                              use_container_width=True, hide_index=True)
+
+            # ── Decomposition ──
+            st.markdown("---")
+            st.markdown("### 🔬 Decomposed projection")
+            d = r.decomposition or {}
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Baseline (median)",
+                       f"{d.get('baseline', 0):.1f}")
+            adj = sum(c["delta"] for c in d.get("contributions", []))
+            m2.metric("Adjustments", f"{adj:+.1f}")
+            m3.metric("Projection",
+                       f"{d.get('projection', 0):.1f}")
+            if d.get("contributions"):
+                rows = [{
+                    "Adjustment": c["label"],
+                    "Δ yards": f"{c['delta']:+.1f}",
+                    "Note": c["note"],
+                } for c in d["contributions"]]
+                st.dataframe(pd.DataFrame(rows),
+                              use_container_width=True, hide_index=True)
+            else:
+                st.caption("No adjustments — projection = baseline.")
+
+            # ── Alt-line ladder ──
+            st.markdown("---")
+            st.markdown("### 🎲 Alt-line ladder (at -110 each side, "
+                         "ranked by EV)")
+            if r.alt_ladder.empty:
+                st.caption("Not enough data for ladder.")
+            else:
+                view = r.alt_ladder.copy()
+                view["p_model"] = view["p_model"].apply(
+                    lambda x: f"{x:.0%}")
+                view["p_implied"] = view["p_implied"].apply(
+                    lambda x: f"{x:.0%}")
+                view["edge"] = view["edge"].apply(lambda x: f"{x:+.0%}")
+                view["ev"] = view["ev"].apply(lambda x: f"{x:+.0%}")
+                view = view[["threshold", "side", "american_odds",
+                              "p_model", "p_implied", "edge", "ev",
+                              "n_games"]]
+                view.columns = ["Line", "Side", "Odds", "Model P",
+                                 "Implied P", "Edge", "EV", "n"]
+                st.dataframe(view, use_container_width=True,
+                              hide_index=True)
+
+            # ── TD vector + RZ usage ──
+            st.markdown("---")
+            st.markdown("### 🎯 TD probability + red-zone usage")
+            t = r.td_vector
+            rz = r.rz_usage
+            m1, m2, m3 = st.columns(3)
+            m1.metric("P(rushing TD)",
+                       f"{t.get('p_rush_td', 0):.0%}")
+            m2.metric("P(receiving TD)",
+                       f"{t.get('p_rec_td', 0):.0%}")
+            m3.metric("P(anytime TD)",
+                       f"{t.get('p_any_td', 0):.0%}")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("RZ carries share",
+                       f"{rz.get('rz_carries_share', 0):.0%}")
+            m2.metric("RZ targets share",
+                       f"{rz.get('rz_targets_share', 0):.0%}")
+            m3.metric("Goal-line share",
+                       f"{rz.get('goal_line_carries_share', 0):.0%}")
+
+            # ── Trend flags ──
+            if r.trend_flags:
+                st.markdown("---")
+                st.markdown("### 📈 Recent trend flags (|z| ≥ 0.7)")
+                rows = [{
+                    "Stat": t["stat"],
+                    "Recent (last 3)": f"{t['recent_avg']:.2f}",
+                    "Season prior": f"{t['season_avg']:.2f}",
+                    "Δ": f"{t['delta']:+.2f}",
+                    "z": f"{t['delta_z']:+.2f}",
+                } for t in r.trend_flags]
+                st.dataframe(pd.DataFrame(rows),
+                              use_container_width=True, hide_index=True)
+
+            # ── Longest play ──
+            if r.longest_play:
+                st.markdown("---")
+                st.markdown(f"### 💥 Longest {r.longest_play['kind']} "
+                             "distribution")
+                lp = r.longest_play
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric(f"P(≥ {lp['threshold']:.0f} yds)",
+                           f"{lp['p_at_least']:.0%}")
+                m2.metric("Median longest",
+                           f"{lp['median_longest']:.0f}")
+                m3.metric("P10",
+                           f"{lp['p10_longest']:.0f}")
+                m4.metric("P90",
+                           f"{lp['p90_longest']:.0f}")
+                st.caption(f"Sample: {lp['n_games']} games")
+
+            # ── SGP partners ──
+            if r.sgp_partners:
+                st.markdown("---")
+                st.markdown("### 🔗 SGP stack candidates "
+                             "(this team, this season)")
+                rows = [{
+                    "Partner": p.get("partner_name"),
+                    "Role": p.get("partner_role"),
+                    "QB": p.get("qb_name"),
+                    "Corr (yds)": f"{p.get('corr_qb_yds_partner_yds', 0):.2f}",
+                    "Lift @ 75/300": f"{p.get('lift_partner_75_given_qb_300', 0):+.0%}"
+                                       if p.get("lift_partner_75_given_qb_300") is not None
+                                       else "—",
+                    "Games": int(p.get("n_games_both", 0)),
+                } for p in r.sgp_partners[:5]]
+                st.dataframe(pd.DataFrame(rows),
+                              use_container_width=True, hide_index=True)
 
 
 # ════════════════════════════════════════════════════════════════
