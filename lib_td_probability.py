@@ -181,6 +181,29 @@ def td_probability_vector(player_id: str,
                            ) -> TDVector:
     base = player_td_rates(player_id, lookback_games=lookback_games)
     rush_f, rec_f = _opponent_td_factors(opp_team, season)
+
+    # p_any_td_baseline is computed empirically from game-level data
+    # (rush_tds + rec_tds > 0).mean() — it already captures the true
+    # joint correlation between rush and receiving TDs within the same
+    # game (volume / RZ usage / game flow correlate the two events).
+    # If we have no opponent-specific factors yet (the v1 case where
+    # _opponent_td_factors returns 1.0/1.0), pass the baseline straight
+    # through. Otherwise, scale the baseline by a weighted average of
+    # the rush/rec multipliers, weighted by each event's share of the
+    # player's total TDs. This preserves the empirical joint instead of
+    # rebuilding it under the false independence assumption.
+    rush_td = base.p_rush_td
+    rec_td = base.p_rec_td
+    if abs(rush_f - 1.0) < 1e-9 and abs(rec_f - 1.0) < 1e-9:
+        p_any_adj = base.p_any_td
+    else:
+        denom = max(rush_td + rec_td, 1e-9)
+        rush_share = rush_td / denom
+        rec_share = rec_td / denom
+        p_any_adj = min(1.0, base.p_any_td
+                                 * (rush_share * rush_f
+                                     + rec_share * rec_f))
+
     return TDVector(
         n_games_player=base.n_games,
         p_rush_td_baseline=base.p_rush_td,
@@ -188,11 +211,7 @@ def td_probability_vector(player_id: str,
         p_any_td_baseline=base.p_any_td,
         p_rush_td_adj=min(1.0, base.p_rush_td * rush_f),
         p_rec_td_adj=min(1.0, base.p_rec_td * rec_f),
-        p_any_td_adj=min(
-            1.0,
-            1.0 - (1.0 - base.p_rush_td * rush_f)
-                * (1.0 - base.p_rec_td * rec_f),
-        ),
+        p_any_td_adj=p_any_adj,
         opp_rush_td_factor=rush_f,
         opp_rec_td_factor=rec_f,
     )

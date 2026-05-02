@@ -549,6 +549,14 @@ u = rz_usage_share(pacheco, 2024, team="KC")
 check("rz_usage_share returns shares in [0, 1]",
       0 <= u.rz_carries_share <= 1 and 0 <= u.rz_targets_share <= 1)
 
+# Audit fix #3: p_any_td_adj must equal p_any_td_baseline when opp
+# factors are 1.0 (preserves empirical joint instead of rebuilding
+# from independence assumption)
+v = td_probability_vector(pacheco, lookback_games=20)
+check("p_any_td_adj == p_any_td_baseline when no opp factor (audit fix #3)",
+      abs(v.p_any_td_adj - v.p_any_td_baseline) < 1e-9,
+      f"baseline={v.p_any_td_baseline:.4f} adj={v.p_any_td_adj:.4f}")
+
 
 # ── 9. Smart Alerts fusion (Feature 4.4) ─────────────────────────
 
