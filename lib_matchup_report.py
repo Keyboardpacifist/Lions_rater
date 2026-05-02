@@ -120,11 +120,15 @@ class TeamAbsenceNote:
     n_active: int
     n_out: int
     raw_pts_delta: float
-    adj_pts_delta: float       # opp-adjusted — the trustworthy number
+    adj_pts_delta: float           # opp-adjusted (linear)
+    residual_pts_delta: float      # team-specific OLS residual (sharpest)
+    residual_ci_low: float
+    residual_ci_high: float
+    residual_method: str
     delta_ci_low: float
     delta_ci_high: float
     thin_sample: bool
-    is_current_season: bool    # else: pulled from history
+    is_current_season: bool
 
 
 @dataclass
@@ -399,6 +403,15 @@ def _team_absence_notes(team: str, season: int,
                     n_out=int(row["n_out"]),
                     raw_pts_delta=float(row["raw_pts_delta"]),
                     adj_pts_delta=float(row["adj_pts_delta"]),
+                    residual_pts_delta=float(row.get(
+                        "residual_pts_delta",
+                        row["adj_pts_delta"])),
+                    residual_ci_low=float(row.get(
+                        "residual_ci_low", row["delta_ci_low"])),
+                    residual_ci_high=float(row.get(
+                        "residual_ci_high", row["delta_ci_high"])),
+                    residual_method=str(row.get(
+                        "residual_method", "—")),
                     delta_ci_low=float(row["delta_ci_low"]),
                     delta_ci_high=float(row["delta_ci_high"]),
                     thin_sample=bool(row["thin_sample"]),
@@ -413,6 +426,10 @@ def _team_absence_notes(team: str, season: int,
             n_out=result.n_out,
             raw_pts_delta=result.raw_pts_delta,
             adj_pts_delta=result.adj_pts_delta,
+            residual_pts_delta=result.residual_pts_delta,
+            residual_ci_low=result.residual_ci_low,
+            residual_ci_high=result.residual_ci_high,
+            residual_method=result.residual_method,
             delta_ci_low=result.delta_ci_low,
             delta_ci_high=result.delta_ci_high,
             thin_sample=result.thin_sample,
@@ -669,15 +686,24 @@ def _build_narrative(r: MatchupReport) -> MatchupNarrative:
                     f"exact injury scenario ({s.n_games} games)"
                 )
 
-    # ── QB1 out — prefer team-specific delta, fall back to league avg ──
+    # ── QB1 out — prefer team-specific residualized delta ──
     def _qb1_delta_string(team: str, role: str,
                             absences: list) -> str:
         for a in absences:
             if a.role_lost == role:
                 src = ("this season" if a.is_current_season
                        else "historical")
-                return (f"team-specific impact "
-                        f"= {a.adj_pts_delta:+.1f} pts/game "
+                # Use V2.3 residualized delta (controls for both opp
+                # strength AND team-specific opp-strength sensitivity).
+                # Show the simple opp-adj alongside for transparency
+                # if it differs by ≥1 pt.
+                resid = a.residual_pts_delta
+                opp = a.adj_pts_delta
+                detail = f"= {resid:+.1f} pts/game (residualized)"
+                if abs(resid - opp) >= 1.0:
+                    detail += (f", vs simple opp-adj "
+                                f"{opp:+.1f}")
+                return (f"team-specific impact {detail} "
                         f"({src}, n_out={a.n_out})")
         return "league-wide QB1-out games average −4 pts/game"
 

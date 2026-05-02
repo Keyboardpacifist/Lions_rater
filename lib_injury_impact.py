@@ -123,8 +123,13 @@ def lookup_player_self_delta(player_id: str, stat: str,
 
 @dataclass
 class TeamAbsenceResult:
-    adj_pts_delta: float    # opp-adjusted points/game when starter out
-    raw_pts_delta: float    # raw points/game when starter out
+    adj_pts_delta: float       # opp-adjusted (linear)
+    raw_pts_delta: float
+    residual_pts_delta: float  # ← V2.3: team-specific OLS residual
+                                #   (controls for team-specific opp slope)
+    residual_ci_low: float
+    residual_ci_high: float
+    residual_method: str       # "ols_team_specific (b=±X)" or fallback
     n_active: int
     n_out: int
     thin_sample: bool
@@ -152,6 +157,13 @@ def lookup_team_starter_absence(team: str, season: int, role: str,
     return TeamAbsenceResult(
         adj_pts_delta=float(row["adj_pts_delta"]),
         raw_pts_delta=float(row["raw_pts_delta"]),
+        residual_pts_delta=float(row.get("residual_pts_delta",
+                                            row["adj_pts_delta"])),
+        residual_ci_low=float(row.get("residual_ci_low",
+                                         row["delta_ci_low"])),
+        residual_ci_high=float(row.get("residual_ci_high",
+                                          row["delta_ci_high"])),
+        residual_method=str(row.get("residual_method", "—")),
         n_active=int(row["n_active"]),
         n_out=int(row["n_out"]),
         thin_sample=bool(row["thin_sample"]),

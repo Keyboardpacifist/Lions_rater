@@ -373,10 +373,16 @@ with tab_matchup:
                     st.markdown("### 🩹 Team scoring impact when this "
                                  "starter is OUT")
                     st.caption(
-                        "Opp-strength-adjusted points/game shift when "
-                        "this specific player has been absent. Sample "
-                        "from current season first; falls back to most-"
-                        "recent season with data if current is empty."
+                        "Points/game shift when this specific player is "
+                        "out. Three columns of increasing rigor: "
+                        "**Δ raw** (no adjustment), **Δ opp-adj** (linear "
+                        "subtraction of opp PPG-allowed), **Δ residualized** "
+                        "(team-specific OLS regression of pts on opp "
+                        "strength — controls for the team's own "
+                        "sensitivity). Use the residualized column. "
+                        "Sample is from current season first; falls back "
+                        "to most-recent season with data if current is "
+                        "empty."
                     )
                     rows = [{
                         "Team": a.team,
@@ -386,10 +392,12 @@ with tab_matchup:
                                     else "Historical"),
                         "n active": a.n_active,
                         "n out": a.n_out,
-                        "Δ pts/g (raw)": f"{a.raw_pts_delta:+.1f}",
-                        "Δ pts/g (opp-adj)": f"{a.adj_pts_delta:+.1f}",
-                        "95% CI on raw": (f"[{a.delta_ci_low:+.1f}, "
-                                            f"{a.delta_ci_high:+.1f}]"),
+                        "Δ raw": f"{a.raw_pts_delta:+.1f}",
+                        "Δ opp-adj": f"{a.adj_pts_delta:+.1f}",
+                        "Δ residualized ★": f"{a.residual_pts_delta:+.1f}",
+                        "95% CI on residualized":
+                            (f"[{a.residual_ci_low:+.1f}, "
+                             f"{a.residual_ci_high:+.1f}]"),
                         "Thin?": "⚠️" if a.thin_sample else "",
                     } for a in team_abs_rows]
                     st.dataframe(pd.DataFrame(rows),
