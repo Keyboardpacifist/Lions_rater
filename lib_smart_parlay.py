@@ -37,6 +37,8 @@ class ParlayScoreResult:
     leg_marginals: list[tuple[str, float]]   # (label, p_model)
     p_independent: float
     p_correlated: float
+    p_correlated_ci_low: float
+    p_correlated_ci_high: float
     correlation_lift: float
     n_games_joint: int
     fair_decimal_correlated: float
@@ -45,16 +47,26 @@ class ParlayScoreResult:
     book_american: int | None
     edge_vs_book: float | None
     ev_vs_book: float | None
+    ev_vs_book_low: float | None
     verdict: str
 
 
-def _verdict_from_ev(ev: float | None) -> str:
+def _verdict_from_ev(ev: float | None,
+                       ev_low: float | None = None) -> str:
+    """EV-based verdict. When `ev_low` (lower-CI EV) is also provided
+    AND the lower bound is still positive, that's a high-confidence
+    +EV bet. When the point EV is positive but the lower bound is
+    negative, downgrade the conviction."""
     if ev is None:
         return "—"
     if ev >= 0.10:
-        return "STRONG +EV — recommended bet"
+        if ev_low is not None and ev_low >= 0:
+            return "STRONG +EV — high-confidence +EV at lower CI bound"
+        return "STRONG +EV (point estimate) — but uncertainty wide"
     if ev >= 0.03:
-        return "Positive EV — bet at this price"
+        if ev_low is not None and ev_low >= 0:
+            return "Positive EV — confidence interval still positive"
+        return "Positive EV (point estimate) — sample noise possible"
     if ev >= -0.03:
         return "Roughly fair — pass unless price improves"
     if ev >= -0.15:
@@ -73,8 +85,8 @@ def score_parlay(legs: list[Leg],
     # Per-leg marginal probabilities (for the audit trail)
     marginals: list[tuple[str, float]] = []
     for leg in legs:
-        p_over, _ = p_over_threshold(leg.player_id, leg.stat,
-                                      leg.threshold, lookback_games)
+        p_over, _k, _n = p_over_threshold(leg.player_id, leg.stat,
+                                            leg.threshold, lookback_games)
         if leg.side.lower() == "over":
             p = p_over
         else:
@@ -88,6 +100,8 @@ def score_parlay(legs: list[Leg],
         leg_marginals=marginals,
         p_independent=res.p_independent,
         p_correlated=res.p_correlated,
+        p_correlated_ci_low=res.p_correlated_ci_low,
+        p_correlated_ci_high=res.p_correlated_ci_high,
         correlation_lift=res.correlation_lift,
         n_games_joint=res.n_games_joint,
         fair_decimal_correlated=res.fair_decimal_correlated,
@@ -96,7 +110,8 @@ def score_parlay(legs: list[Leg],
         book_american=res.book_american,
         edge_vs_book=res.edge_vs_book,
         ev_vs_book=res.ev_vs_book,
-        verdict=_verdict_from_ev(res.ev_vs_book),
+        ev_vs_book_low=res.ev_vs_book_low,
+        verdict=_verdict_from_ev(res.ev_vs_book, res.ev_vs_book_low),
     )
 
 

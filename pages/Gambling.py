@@ -1985,22 +1985,42 @@ with tab_alt:
                     st.info("No valid rungs after parsing.")
                 else:
                     view = df.copy()
-                    view["p_model"] = view["p_model"].apply(
-                        lambda x: f"{x:.1%}")
+                    # Combine point + Wilson 95% CI into one column
+                    view["Model P [95% CI]"] = view.apply(
+                        lambda r: (f"{r['p_model']:.0%} "
+                                    f"[{r['p_model_ci_low']:.0%}, "
+                                    f"{r['p_model_ci_high']:.0%}]"),
+                        axis=1,
+                    )
                     view["p_implied"] = view["p_implied"].apply(
-                        lambda x: f"{x:.1%}")
+                        lambda x: f"{x:.0%}")
                     view["edge"] = view["edge"].apply(
-                        lambda x: f"{x:+.1%}")
-                    view["ev"] = view["ev"].apply(lambda x: f"{x:+.1%}")
+                        lambda x: f"{x:+.0%}")
+                    view["EV (point)"] = view["ev"].apply(
+                        lambda x: f"{x:+.0%}")
+                    view["EV (lower CI)"] = view["ev_low"].apply(
+                        lambda x: f"{x:+.0%}")
                     view["decimal_odds"] = view["decimal_odds"].round(2)
                     view = view[["threshold", "side", "american_odds",
-                                  "decimal_odds", "p_model", "p_implied",
-                                  "edge", "ev", "n_games"]]
+                                  "decimal_odds", "Model P [95% CI]",
+                                  "p_implied", "edge",
+                                  "EV (point)", "EV (lower CI)",
+                                  "n_games"]]
                     view.columns = ["Line", "Side", "Odds", "Decimal",
-                                     "Model P", "Implied P", "Edge",
-                                     "EV", "n"]
+                                     "Model P [95% CI]", "Implied P",
+                                     "Edge", "EV (point)",
+                                     "EV (lower CI)", "n"]
                     st.dataframe(view, use_container_width=True,
                                   hide_index=True)
+                    st.caption(
+                        "**EV (lower CI)** = expected value computed at "
+                        "the lower end of the 95% Wilson confidence "
+                        "interval on model probability. When this is "
+                        "still positive, the bet is +EV with high "
+                        "confidence. When it's negative but the point "
+                        "EV is positive, the edge could easily be "
+                        "sample noise."
+                    )
 
 
 # ════════════════════════════════════════════════════════════════
@@ -2085,19 +2105,33 @@ with tab_parlay:
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("P (independent)",
                       f"{r.p_independent:.1%}" if r.p_independent == r.p_independent else "—")
-            m2.metric("P (correlated)",
-                      f"{r.p_correlated:.1%}" if r.p_correlated == r.p_correlated else "—")
+            if r.p_correlated == r.p_correlated:
+                p_corr_str = (f"{r.p_correlated:.0%}  "
+                               f"[{r.p_correlated_ci_low:.0%}, "
+                               f"{r.p_correlated_ci_high:.0%}]")
+            else:
+                p_corr_str = "—"
+            m2.metric("P (correlated) [95% CI]", p_corr_str)
             m3.metric("Lift",
                       f"{r.correlation_lift:+.1%}" if r.correlation_lift == r.correlation_lift else "—")
             m4.metric("Joint games", f"{r.n_games_joint}")
-            m1, m2, m3 = st.columns(3)
+            m1, m2, m3, m4 = st.columns(4)
             m1.metric("Fair odds (corr)",
                       f"{r.fair_american_correlated:+d}" if r.fair_american_correlated else "—")
             m2.metric("Book odds",
                       f"{r.book_american:+d}" if r.book_american else "—")
             if r.ev_vs_book is not None:
-                m3.metric("EV vs book", f"{r.ev_vs_book:+.1%}")
+                m3.metric("EV (point)", f"{r.ev_vs_book:+.1%}")
+            if r.ev_vs_book_low is not None:
+                m4.metric("EV (lower CI)", f"{r.ev_vs_book_low:+.1%}")
             st.success(f"**Verdict:** {r.verdict}")
+            if r.n_games_joint < 12:
+                st.caption(
+                    f"⚠️ Joint sample is thin ({r.n_games_joint} games) "
+                    "— the 95% CI on the correlated probability is "
+                    "wide. Treat the point estimate as a starting "
+                    "point, not a guarantee."
+                )
 
             anti = detect_anti_correlated(legs, lookback_games=p_lookback)
             if anti:

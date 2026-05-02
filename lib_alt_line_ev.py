@@ -60,6 +60,30 @@ def expected_value(p_win: float, decimal_odds: float) -> float:
     return p_win * decimal_odds - 1.0
 
 
+def wilson_interval(k: int, n: int,
+                     z: float = 1.96
+                     ) -> tuple[float, float]:
+    """Wilson score 95% confidence interval for a binomial proportion.
+
+    Recommended over the naïve Wald interval for small n — handles
+    boundary cases (k=0 or k=n) gracefully and gives the correct
+    coverage at small samples.
+
+    Returns (low, high). When n=0 returns (0.0, 1.0).
+    """
+    if n <= 0:
+        return 0.0, 1.0
+    phat = float(k) / float(n)
+    z2 = z * z
+    denom = 1.0 + z2 / n
+    center = (phat + z2 / (2.0 * n)) / denom
+    half = z * (((phat * (1.0 - phat)) / n
+                 + z2 / (4.0 * n * n)) ** 0.5) / denom
+    lo = max(0.0, center - half)
+    hi = min(1.0, center + half)
+    return lo, hi
+
+
 # ── Empirical distribution lookup ────────────────────────────────
 
 @dataclass
@@ -69,34 +93,40 @@ class RungEV:
     american_odds: int
     decimal_odds: float
     p_model: float
+    p_model_ci_low: float    # Wilson 95% CI lower bound
+    p_model_ci_high: float   # Wilson 95% CI upper bound
     p_implied: float
     edge: float         # p_model - p_implied
-    ev: float           # EV per unit risked
+    ev: float           # EV per unit risked at p_model
+    ev_low: float       # EV at lower CI bound (conservative)
     n_games: int
 
 
 def p_over_threshold(player_id: str, stat: str, threshold: float,
                       lookback_games: int | None = None
-                      ) -> tuple[float, int]:
+                      ) -> tuple[float, int, int]:
     """Empirical probability that the player's stat exceeds threshold
-    in the next game. Returns (p_model, n_games_in_sample).
+    in the next game. Returns (p_model, k_successes, n_games_in_sample)
+    so callers can compute their own confidence intervals.
 
     `lookback_games` (optional) restricts to the player's most-recent
     N games, useful when role has changed."""
     df = _load_stats()
     if df.empty or stat not in df.columns:
-        return float("nan"), 0
+        return float("nan"), 0, 0
     sub = df[(df["player_id"] == player_id) & df[stat].notna()]
     if sub.empty:
-        return float("nan"), 0
+        return float("nan"), 0, 0
     sub = sub.sort_values(["season", "week"], ascending=[False, False])
     if lookback_games:
         sub = sub.head(int(lookback_games))
     vals = sub[stat].astype(float)
     if len(vals) == 0:
-        return float("nan"), 0
-    p = float((vals > float(threshold)).mean())
-    return p, len(vals)
+        return float("nan"), 0, 0
+    k = int((vals > float(threshold)).sum())
+    n = len(vals)
+    p = float(k) / float(n)
+    return p, k, n
 
 
 def rank_ladder(player_id: str, stat: str,
@@ -106,26 +136,41 @@ def rank_ladder(player_id: str, stat: str,
     """Score each rung in a ladder and sort by EV.
 
     ladder_rungs: list of (threshold, "over"|"under", american_odds).
+
+    Each row also carries a Wilson 95% CI on the model probability and
+    a conservative `ev_low` computed at the lower CI bound — so callers
+    can see "the bet might still be -EV at the lower bound" rather than
+    treating the point estimate as deterministic.
     """
     rows: list[RungEV] = []
     for threshold, side, odds in ladder_rungs:
-        p_over, n = p_over_threshold(player_id, stat, threshold,
-                                      lookback_games)
+        p_over, k_over, n = p_over_threshold(player_id, stat, threshold,
+                                               lookback_games)
         if np.isnan(p_over):
             continue
-        p_model = p_over if side.lower() == "over" else (1.0 - p_over)
+        if side.lower() == "over":
+            p_model = p_over
+            ci_lo, ci_hi = wilson_interval(k_over, n)
+        else:
+            p_model = 1.0 - p_over
+            # For "under," successes are n - k_over
+            ci_lo, ci_hi = wilson_interval(n - k_over, n)
         decimal = american_to_decimal(odds)
         p_imp = decimal_to_implied_prob(decimal)
         ev = expected_value(p_model, decimal)
+        ev_low = expected_value(ci_lo, decimal)
         rows.append(RungEV(
             threshold=float(threshold),
             side=side.lower(),
             american_odds=int(odds),
             decimal_odds=decimal,
             p_model=p_model,
+            p_model_ci_low=ci_lo,
+            p_model_ci_high=ci_hi,
             p_implied=p_imp,
             edge=p_model - p_imp,
             ev=ev,
+            ev_low=ev_low,
             n_games=n,
         ))
     if not rows:

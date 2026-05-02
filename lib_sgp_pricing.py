@@ -32,6 +32,7 @@ from lib_alt_line_ev import (
     american_to_decimal,
     decimal_to_implied_prob,
     p_over_threshold,
+    wilson_interval,
 )
 
 
@@ -59,6 +60,8 @@ class SGPPriceResult:
     n_games_joint: int          # historical games where ALL players played
     p_independent: float        # product of marginals
     p_correlated: float         # empirical joint
+    p_correlated_ci_low: float  # Wilson 95% CI lower bound on joint
+    p_correlated_ci_high: float # Wilson 95% CI upper bound on joint
     correlation_lift: float     # p_correlated - p_independent
     fair_decimal_independent: float
     fair_decimal_correlated: float
@@ -67,7 +70,8 @@ class SGPPriceResult:
     book_decimal: float | None
     book_american: int | None
     edge_vs_book: float | None  # p_correlated - book_implied
-    ev_vs_book: float | None    # EV per 1 unit on book's price
+    ev_vs_book: float | None    # EV per 1 unit on book's price (point est)
+    ev_vs_book_low: float | None  # EV at lower CI bound (conservative)
 
 
 def _decimal_to_american(decimal: float) -> int:
@@ -93,19 +97,21 @@ def sgp_price(legs: list[Leg],
         return SGPPriceResult(
             n_legs=len(legs), n_games_joint=0,
             p_independent=float("nan"), p_correlated=float("nan"),
+            p_correlated_ci_low=float("nan"),
+            p_correlated_ci_high=float("nan"),
             correlation_lift=float("nan"),
             fair_decimal_independent=float("nan"),
             fair_decimal_correlated=float("nan"),
             fair_american_independent=0, fair_american_correlated=0,
             book_decimal=None, book_american=None,
-            edge_vs_book=None, ev_vs_book=None,
+            edge_vs_book=None, ev_vs_book=None, ev_vs_book_low=None,
         )
 
     # Marginals
     p_marginals: list[float] = []
     for leg in legs:
-        p_over, _ = p_over_threshold(leg.player_id, leg.stat,
-                                      leg.threshold, lookback_games)
+        p_over, _k, _n = p_over_threshold(leg.player_id, leg.stat,
+                                            leg.threshold, lookback_games)
         if np.isnan(p_over):
             p_marginals.append(float("nan"))
             continue
@@ -137,6 +143,7 @@ def sgp_price(legs: list[Leg],
     if joint.empty:
         p_correlated = float("nan")
         n_joint = 0
+        k_joint = 0
     else:
         n_joint = len(joint)
         # Evaluate each leg condition
@@ -147,7 +154,15 @@ def sgp_price(legs: list[Leg],
                 success &= (joint[col] > leg.threshold)
             else:
                 success &= (joint[col] < leg.threshold)
-        p_correlated = float(success.mean())
+        k_joint = int(success.sum())
+        p_correlated = float(k_joint) / float(n_joint)
+
+    # Wilson 95% CI on the joint probability
+    if n_joint > 0:
+        ci_low, ci_high = wilson_interval(k_joint, n_joint)
+    else:
+        ci_low = float("nan")
+        ci_high = float("nan")
 
     fair_decimal_indep = (1.0 / p_independent
                             if p_independent > 0 else float("nan"))
@@ -158,20 +173,25 @@ def sgp_price(legs: list[Leg],
     book_american: int | None = None
     edge: float | None = None
     ev: float | None = None
+    ev_low: float | None = None
     if book_american_odds is not None:
         book_american = int(book_american_odds)
         book_decimal = american_to_decimal(book_american_odds)
-        # Only compute edge/EV when the model probability is valid.
         if not (np.isnan(p_correlated)) and book_decimal is not None:
             book_implied = decimal_to_implied_prob(book_decimal)
             edge = float(p_correlated - book_implied)
             ev = float(p_correlated * book_decimal - 1.0)
+            # Conservative EV at lower CI bound — if this is still
+            # positive, the bet is +EV with high confidence
+            ev_low = float(ci_low * book_decimal - 1.0) if not np.isnan(ci_low) else None
 
     return SGPPriceResult(
         n_legs=len(legs),
         n_games_joint=n_joint,
         p_independent=p_independent,
         p_correlated=p_correlated,
+        p_correlated_ci_low=ci_low,
+        p_correlated_ci_high=ci_high,
         correlation_lift=(p_correlated - p_independent
                             if not np.isnan(p_correlated) and not np.isnan(p_independent)
                             else float("nan")),
@@ -185,4 +205,5 @@ def sgp_price(legs: list[Leg],
         book_american=book_american,
         edge_vs_book=edge,
         ev_vs_book=ev,
+        ev_vs_book_low=ev_low,
     )

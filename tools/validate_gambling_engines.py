@@ -460,6 +460,24 @@ check("rank_ladder returns ranked dataframe",
 check("ladder is sorted by EV descending",
       df["ev"].is_monotonic_decreasing if len(df) > 1 else True)
 
+# Audit fix #4: Wilson CIs on alt-line and SGP probabilities
+from lib_alt_line_ev import wilson_interval
+lo, hi = wilson_interval(7, 10)
+check("wilson_interval(7, 10) bounds are sane",
+      0.30 < lo < 0.45 and 0.85 < hi < 0.95,
+      f"got [{lo:.3f}, {hi:.3f}]")
+lo, hi = wilson_interval(0, 5)
+check("wilson_interval(0, 5) lower bound is 0",
+      lo == 0.0 and hi < 0.6,
+      f"got [{lo:.3f}, {hi:.3f}]")
+check("rank_ladder includes Wilson CI columns",
+      "p_model_ci_low" in df.columns
+      and "p_model_ci_high" in df.columns
+      and "ev_low" in df.columns)
+check("CI low <= point estimate <= CI high",
+      ((df["p_model_ci_low"] <= df["p_model"])
+       & (df["p_model"] <= df["p_model_ci_high"])).all())
+
 
 # ── 13. SGP Pricing (Feature 5.2 upgrade) ────────────────────────
 
@@ -480,6 +498,10 @@ check("p_independent and p_correlated both in [0, 1]",
 check("Hurts/Brown stack has positive correlation lift",
       r.correlation_lift >= 0,
       f"lift={r.correlation_lift:+.3f}")
+check("SGPPriceResult exposes Wilson CI on p_correlated (audit fix #4)",
+      0 <= r.p_correlated_ci_low <= r.p_correlated <= r.p_correlated_ci_high <= 1,
+      f"[{r.p_correlated_ci_low:.3f}, {r.p_correlated:.3f}, "
+      f"{r.p_correlated_ci_high:.3f}]")
 
 
 # ── 14. Decomposed Projection (Feature 5.1) ──────────────────────
