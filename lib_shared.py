@@ -1539,10 +1539,22 @@ def render_nfl_player_banner(*, position: str, player_name: str,
     pos = position.lower()
     stat_specs = _NFL_CARD_STAT_SPECS.get(pos, [])
     pos_label = _NFL_POSITION_LABELS.get(pos, pos.upper())
+
+    # Resolve team_abbr. In career view, view_row is a numeric .mean()
+    # which drops string columns (recent_team / team). Fall back to the
+    # MOST RECENT team in player_career so the career card uses the
+    # correct team colors instead of the Lions-blue default.
     team_abbr = None
-    if view_row is not None:
+    if not is_career_view and view_row is not None:
         # OL/CB/S parquets use "team"; offensive skill use "recent_team".
         team_abbr = view_row.get("recent_team") or view_row.get("team")
+    if not team_abbr and player_career is not None and len(player_career):
+        # Sort by season_year desc to pick the most recent stint.
+        pc = player_career
+        if "season_year" in pc.columns:
+            pc = pc.sort_values("season_year", ascending=False)
+        latest = pc.iloc[0]
+        team_abbr = latest.get("recent_team") or latest.get("team")
 
     # Look up GAS data. Single-season → look up that season; career
     # view → aggregate across all seasons (snap-weighted).
