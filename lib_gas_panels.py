@@ -2,6 +2,10 @@
 pages. Drop-in module — every position page imports the helpers it
 needs.
 
+Visual language: team-colored callouts (primary/secondary from
+data/team_colors.json) with white text for readability across
+all 32 team palettes.
+
 Public API
 ----------
     load_gas_data(position)
@@ -21,8 +25,10 @@ Public API
 """
 from __future__ import annotations
 
+import json
+from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -30,6 +36,27 @@ import streamlit as st
 
 REPO = Path(__file__).resolve().parent
 DATA_DIR = REPO / "data"
+TEAM_COLORS_PATH = DATA_DIR / "team_colors.json"
+
+
+@lru_cache(maxsize=1)
+def _team_colors() -> dict:
+    if not TEAM_COLORS_PATH.exists():
+        return {}
+    with open(TEAM_COLORS_PATH) as f:
+        return json.load(f)
+
+
+def _resolve_team_colors(player_row: pd.Series
+                            ) -> Tuple[str, str]:
+    """Return (primary, secondary) hex colors for the player's team.
+    Falls back to Lions blue / silver if the team isn't in the JSON."""
+    team = (player_row.get("recent_team")
+              or player_row.get("team") or "")
+    info = _team_colors().get(team, {})
+    primary = info.get("primary", "#0076B6")
+    secondary = info.get("secondary", "#B0B7BC")
+    return primary, secondary
 
 
 # ── Position metadata ─────────────────────────────────────────────
@@ -408,15 +435,23 @@ def render_hot_take(player_row: pd.Series, league_df: pd.DataFrame,
                 f"drags him down. A reliable starter."
             )
 
+    primary, secondary = _resolve_team_colors(player_row)
     st.markdown(
-        f"""<div style="background:rgba(234,179,8,0.10);
-            border-left:4px solid #eab308;padding:12px 16px;
-            border-radius:6px;margin:12px 0;">
-            <div style="font-size:11px;letter-spacing:1px;
-                        color:#eab308;text-transform:uppercase;
-                        font-weight:600;">GAS says...</div>
-            <div style="font-size:14px;color:#f3f4f6;
-                        margin-top:6px;">{take}</div>
+        f"""<div style="background:linear-gradient(135deg, {primary} 0%,
+                {primary}e6 60%, #0a1929 100%);
+            border-left:5px solid {secondary};
+            padding:14px 18px;border-radius:8px;margin:12px 0;
+            box-shadow:0 4px 12px rgba(0,0,0,0.25);
+            color:#ffffff;">
+            <div style="font-size:11px;letter-spacing:1.6px;
+                        color:#ffffff;text-transform:uppercase;
+                        font-weight:800;opacity:0.92;
+                        text-shadow:0 1px 2px rgba(0,0,0,0.35);">
+                GAS says...
+            </div>
+            <div style="font-size:14px;color:#ffffff;
+                        margin-top:6px;font-weight:500;line-height:1.5;
+                        text-shadow:0 1px 2px rgba(0,0,0,0.35);">{take}</div>
         </div>""",
         unsafe_allow_html=True,
     )
