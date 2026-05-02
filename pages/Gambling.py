@@ -1615,6 +1615,27 @@ with tab_edge_finder:
                        + "☆" * (5 - int(row["confidence"])))
             tag = ("📈" if row["finding_type"] == "TREND_DIVERGENCE"
                    else "🔬")
+            # Display the right Δ for the finding type:
+            #   TREND   = absolute delta in stat units (+19 yds/g)
+            #   PROJ    = percent shift vs recent baseline (-25%)
+            if row["finding_type"] == "TREND_DIVERGENCE":
+                stat = str(row["stat"])
+                if "yards" in stat:
+                    unit_suffix = "yds/g"
+                elif stat in ("receptions", "targets",
+                                "carries", "completions",
+                                "attempts"):
+                    unit_suffix = "/g"
+                else:
+                    unit_suffix = ""
+                delta_label = "Δ recent vs season"
+                delta_value = f"{row['magnitude']:+.1f} {unit_suffix}"
+                delta_caption = "Role expansion (or shrink)"
+            else:
+                delta_label = "Δ vs baseline"
+                delta_value = f"{row['pct_shift']:+.0%}"
+                delta_caption = "Projection gap"
+
             with st.container(border=True):
                 col_main, col_meta = st.columns([4, 1])
                 with col_main:
@@ -1630,9 +1651,8 @@ with tab_edge_finder:
                     )
                     st.markdown(row["blurb"])
                 with col_meta:
-                    st.metric("Δ vs baseline",
-                                f"{row['pct_shift']:+.0%}")
-                    st.caption(row["finding_type"].replace("_", " ").title())
+                    st.metric(delta_label, delta_value)
+                    st.caption(delta_caption)
     _run_edge_finder_tab()
 
 

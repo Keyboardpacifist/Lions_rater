@@ -229,6 +229,14 @@ def _trend_findings(season: int, week: int,
                 f"season prior (z={z:+.1f}). Books usually "
                 f"anchor to season averages."
             )
+            # Cap pct_shift at ±200% — beyond that, percent is
+            # misleading because the season_avg denominator is too
+            # small (rookie or depth player just emerging). The
+            # ABSOLUTE delta is the more meaningful number for
+            # display; we use pct just for relative ranking.
+            raw_pct = (delta / season_avg if season_avg > 0
+                        else (1.0 if delta > 0 else -1.0))
+            pct_shift_capped = max(-1.0, min(2.0, raw_pct))
             out.append(Finding(
                 player_id=str(pid),
                 player_name=str(first["player_display_name"]),
@@ -238,8 +246,7 @@ def _trend_findings(season: int, week: int,
                 finding_type="TREND_DIVERGENCE",
                 direction=direction,
                 magnitude=float(delta),
-                pct_shift=(delta / season_avg
-                            if season_avg > 0 else 0.0),
+                pct_shift=float(pct_shift_capped),
                 confidence=confidence,
                 blurb=blurb,
             ))
