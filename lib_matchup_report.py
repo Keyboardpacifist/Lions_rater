@@ -39,6 +39,10 @@ from lib_injury_cohort import (
     predict as cohort_predict,
     report_status_code,
 )
+from lib_injury_impact import (
+    lookup_team_absence_history,
+    lookup_team_starter_absence,
+)
 from lib_scheme_deltas import (
     DEFENSE_METRICS,
     METRIC_LABELS,
@@ -109,6 +113,21 @@ class BooksNote:
 
 
 @dataclass
+class TeamAbsenceNote:
+    team: str
+    role_lost: str
+    player_lost_name: str
+    n_active: int
+    n_out: int
+    raw_pts_delta: float
+    adj_pts_delta: float       # opp-adjusted — the trustworthy number
+    delta_ci_low: float
+    delta_ci_high: float
+    thin_sample: bool
+    is_current_season: bool    # else: pulled from history
+
+
+@dataclass
 class MatchupNarrative:
     """The plain-English take that goes ABOVE the data sections."""
     one_liner: str           # single-sentence summary of our take
@@ -137,6 +156,8 @@ class MatchupReport:
     home_coaching: list[CoachingNote] = field(default_factory=list)
     away_coaching: list[CoachingNote] = field(default_factory=list)
     books_signals: list[BooksNote] = field(default_factory=list)
+    home_team_absence: list[TeamAbsenceNote] = field(default_factory=list)
+    away_team_absence: list[TeamAbsenceNote] = field(default_factory=list)
     bottom_line_bullets: list[str] = field(default_factory=list)
     narrative: MatchupNarrative | None = None
 
@@ -341,6 +362,65 @@ def _books_signals_for_team(team: str,
     return out
 
 
+def _team_absence_notes(team: str, season: int,
+                          injuries: list[InjuryNote]
+                          ) -> list[TeamAbsenceNote]:
+    """For each starter on the injury report with status OUT/DOUBTFUL,
+    look up the team's historical scoring impact when THAT specific
+    player has been absent. Use current season first; if n_out=0 there,
+    fall back to most-recent-season-with-data."""
+    out: list[TeamAbsenceNote] = []
+    seen_roles: set[str] = set()
+    for inj in injuries:
+        if inj.role not in ("QB1", "RB1", "WR1", "TE1"):
+            continue
+        if inj.status not in ("OUT", "DOUBTFUL"):
+            continue
+        if inj.role in seen_roles:
+            continue   # one row per role
+        seen_roles.add(inj.role)
+
+        # Try the current season first
+        result = lookup_team_starter_absence(team, season, inj.role,
+                                               min_n_out=1)
+        is_current = result is not None
+        if result is None:
+            # Fall back to most-recent season with data for this team+role
+            history = lookup_team_absence_history(team, inj.role,
+                                                    recent_seasons=10)
+            if not history.empty:
+                row = history.iloc[0]
+                out.append(TeamAbsenceNote(
+                    team=team, role_lost=inj.role,
+                    player_lost_name=str(row["player_lost_name"])
+                                       if pd.notna(row["player_lost_name"])
+                                       else "?",
+                    n_active=int(row["n_active"]),
+                    n_out=int(row["n_out"]),
+                    raw_pts_delta=float(row["raw_pts_delta"]),
+                    adj_pts_delta=float(row["adj_pts_delta"]),
+                    delta_ci_low=float(row["delta_ci_low"]),
+                    delta_ci_high=float(row["delta_ci_high"]),
+                    thin_sample=bool(row["thin_sample"]),
+                    is_current_season=False,
+                ))
+            continue
+
+        out.append(TeamAbsenceNote(
+            team=team, role_lost=inj.role,
+            player_lost_name=result.player_lost_name or inj.player_name,
+            n_active=result.n_active,
+            n_out=result.n_out,
+            raw_pts_delta=result.raw_pts_delta,
+            adj_pts_delta=result.adj_pts_delta,
+            delta_ci_low=result.delta_ci_low,
+            delta_ci_high=result.delta_ci_high,
+            thin_sample=result.thin_sample,
+            is_current_season=is_current,
+        ))
+    return out
+
+
 def _bottom_line(report: MatchupReport) -> list[str]:
     """Synthesize 3-5 bet-actionable bullets from all sections."""
     bullets: list[str] = []
@@ -482,6 +562,10 @@ def generate_matchup_report(home_team: str, away_team: str,
                                                       report.home_injuries)
                               + _books_signals_for_team(away_team,
                                                          report.away_injuries))
+    report.home_team_absence = _team_absence_notes(
+        home_team, int(season), report.home_injuries)
+    report.away_team_absence = _team_absence_notes(
+        away_team, int(season), report.away_injuries)
     report.bottom_line_bullets = _bottom_line(report)
     report.narrative = _build_narrative(report)
     return report
@@ -585,15 +669,27 @@ def _build_narrative(r: MatchupReport) -> MatchupNarrative:
                     f"exact injury scenario ({s.n_games} games)"
                 )
 
-    # ── QB1 out (4 pt scoring drop league-wide) ──
+    # ── QB1 out — prefer team-specific delta, fall back to league avg ──
+    def _qb1_delta_string(team: str, role: str,
+                            absences: list) -> str:
+        for a in absences:
+            if a.role_lost == role:
+                src = ("this season" if a.is_current_season
+                       else "historical")
+                return (f"team-specific impact "
+                        f"= {a.adj_pts_delta:+.1f} pts/game "
+                        f"({src}, n_out={a.n_out})")
+        return "league-wide QB1-out games average −4 pts/game"
+
     for i in home_starters_out:
         if i.role == "QB1":
             confidence += 1
             spread_score -= 1
             why.append(
                 f"**{r.home_team} QB1 {i.player_name} {i.status}** "
-                f"({i.body_part}) — league-wide QB1-out games average "
-                f"−4 pts/game"
+                f"({i.body_part}) — "
+                + _qb1_delta_string(r.home_team, "QB1",
+                                      r.home_team_absence)
             )
     for i in away_starters_out:
         if i.role == "QB1":
@@ -601,8 +697,9 @@ def _build_narrative(r: MatchupReport) -> MatchupNarrative:
             spread_score += 1
             why.append(
                 f"**{r.away_team} QB1 {i.player_name} {i.status}** "
-                f"({i.body_part}) — league-wide QB1-out games average "
-                f"−4 pts/game"
+                f"({i.body_part}) — "
+                + _qb1_delta_string(r.away_team, "QB1",
+                                      r.away_team_absence)
             )
 
     # ── Other key starters (lighter weight) ──

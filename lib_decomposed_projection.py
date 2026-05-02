@@ -46,6 +46,10 @@ from lib_game_script_player import (
     multiplier_for_game_script,
 )
 from lib_injury_cohort import predict as cohort_predict
+from lib_injury_impact import (
+    bucket_for as injury_bucket_for,
+    lookup_player_self_delta,
+)
 from lib_weather import primary_stat_for_position, weather_cohort
 
 
@@ -162,32 +166,47 @@ def decompose(player_id: str, position: str, team: str, stat: str,
         baseline=baseline,
     )
 
-    # ── Injury (4.1) — multiplicative on baseline via TRUE retention
-    # `snap_retention_if_played` is the cohort's avg ratio of injured-
-    # game snap share to the player's HEALTHY baseline (1.0 = no shift).
-    # The legacy `snap_share_if_played` is ABSOLUTE share, which would
-    # silently apply a phantom -15% to -50% adjustment to healthy
-    # players (since most players have <100% healthy snap share).
+    # ── Injury (4.1) — try PLAYER-OWN retention first, fall back to
+    # cohort. The player's own historical retention (when sample is
+    # ≥5) is a sharper signal than the league-position cohort.
     if injury_status and injury_status.upper() != "NONE":
-        cohort = cohort_predict(
-            position=position, body_part=injury_body_part,
-            report_status=injury_status,
-            practice_status=injury_practice,
+        bucket = injury_bucket_for(injury_status, injury_practice)
+        # Try player's own self-delta in this bucket (opp-adjusted)
+        own = lookup_player_self_delta(
+            player_id=player_id, stat=stat, bucket=bucket, min_n=5,
         )
-        retention = cohort.snap_retention_if_played
-        # Clip to sane range. Negative means total shutdown; >1.10
-        # means the player overworked (rare, mostly noise).
-        retention = max(0.0, min(1.10, retention))
-        if abs(retention - 1.0) > 0.01:
-            adj = baseline * (retention - 1.0)
-            decomp.contributions.append(DecompContribution(
-                label="Injury cohort",
-                delta=adj,
-                note=(f"{injury_status}/{injury_practice}, "
-                      f"{injury_body_part}: usage retention "
-                      f"{retention:.0%} of healthy baseline, p_play "
-                      f"{cohort.p_played:.0%} (n={cohort.n})"),
-            ))
+        if own is not None:
+            retention = max(0.0, min(1.10, own.retention_adj))
+            if abs(retention - 1.0) > 0.01:
+                adj = baseline * (retention - 1.0)
+                decomp.contributions.append(DecompContribution(
+                    label="Injury — player's own history",
+                    delta=adj,
+                    note=(f"{injury_status}/{injury_practice}, "
+                          f"{injury_body_part}: this player's own "
+                          f"retention in this bucket = {retention:.0%} "
+                          f"(opp-adjusted, n={own.n} prior games "
+                          f"out of {own.n_total} total)"),
+                ))
+        else:
+            # Fall back to league-cohort (existing behavior)
+            cohort = cohort_predict(
+                position=position, body_part=injury_body_part,
+                report_status=injury_status,
+                practice_status=injury_practice,
+            )
+            retention = max(0.0, min(1.10, cohort.snap_retention_if_played))
+            if abs(retention - 1.0) > 0.01:
+                adj = baseline * (retention - 1.0)
+                decomp.contributions.append(DecompContribution(
+                    label="Injury — league cohort",
+                    delta=adj,
+                    note=(f"{injury_status}/{injury_practice}, "
+                          f"{injury_body_part}: league cohort "
+                          f"retention {retention:.0%} "
+                          f"(player-own sample too thin; "
+                          f"cohort n={cohort.n})"),
+                ))
 
     # ── Weather (4.5)
     if any(x is not None for x in (target_temp, target_wind,

@@ -495,6 +495,19 @@ def _build_narrative(r: PlayerPropReport) -> PlayerPropNarrative:
                         f"  └ {c['label']}: {c['delta']:+.1f} yds — "
                         f"{c['note']}"
                     )
+        # If ANY decomposition row is the "player's own history" row,
+        # add an inefficiency bullet — that's the sharpest signal we
+        # have (player-specific, not league cohort).
+        for c in d.get("contributions", []):
+            if c.get("label") == "Injury — player's own history":
+                inefficiencies.append(
+                    "Books anchor injury impact to position-level "
+                    "averages; this player has historical data showing "
+                    "a different effect specific to him"
+                )
+                # No additional confidence bump — already counted under
+                # the projection shift if it materially moved the line.
+                break
 
     # ── Recent form sample size ──
     if d.get("n_games_baseline", 0) < 8:

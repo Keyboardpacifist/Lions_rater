@@ -365,6 +365,37 @@ with tab_matchup:
                                           use_container_width=True,
                                           hide_index=True)
 
+                # ── Team starter-absence (opp-adjusted) ──
+                team_abs_rows = (r.home_team_absence
+                                  + r.away_team_absence)
+                if team_abs_rows:
+                    st.markdown("---")
+                    st.markdown("### 🩹 Team scoring impact when this "
+                                 "starter is OUT")
+                    st.caption(
+                        "Opp-strength-adjusted points/game shift when "
+                        "this specific player has been absent. Sample "
+                        "from current season first; falls back to most-"
+                        "recent season with data if current is empty."
+                    )
+                    rows = [{
+                        "Team": a.team,
+                        "Role": a.role_lost,
+                        "Player": a.player_lost_name,
+                        "Source": ("This season" if a.is_current_season
+                                    else "Historical"),
+                        "n active": a.n_active,
+                        "n out": a.n_out,
+                        "Δ pts/g (raw)": f"{a.raw_pts_delta:+.1f}",
+                        "Δ pts/g (opp-adj)": f"{a.adj_pts_delta:+.1f}",
+                        "95% CI on raw": (f"[{a.delta_ci_low:+.1f}, "
+                                            f"{a.delta_ci_high:+.1f}]"),
+                        "Thin?": "⚠️" if a.thin_sample else "",
+                    } for a in team_abs_rows]
+                    st.dataframe(pd.DataFrame(rows),
+                                  use_container_width=True,
+                                  hide_index=True)
+
                 # ── Books-vs-model signals ──
                 if r.books_signals:
                     st.markdown("---")

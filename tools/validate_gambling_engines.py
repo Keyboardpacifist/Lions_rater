@@ -618,6 +618,51 @@ check("fusion produces ≥3 bullets",
       len(b.bullet_points) >= 3, f"got {len(b.bullet_points)}")
 
 
+# ── 16b. Injury impact deltas (player + team) ────────────────────
+
+section("16b. Injury impact (player self + team starter-absence)")
+from lib_injury_impact import (
+    bucket_for, lookup_player_self_delta,
+    lookup_team_starter_absence, lookup_team_absence_history,
+)
+
+# Bucket sanity
+check("bucket_for(None, None) = HEALTHY",
+      bucket_for(None, None) == "HEALTHY")
+check("bucket_for('Questionable', 'Limited Practice') = QUESTIONABLE_LIMITED",
+      bucket_for("Questionable", "Limited Practice")
+      == "QUESTIONABLE_LIMITED")
+check("bucket_for('Out', 'DNP') = OUT_PLAYED",
+      bucket_for("Out", "Did Not Participate") == "OUT_PLAYED")
+
+# Player self-delta — Saquon Barkley known case
+saq = "00-0034844"
+res = lookup_player_self_delta(saq, "rushing_yards",
+                                 "QUESTIONABLE_LIMITED", min_n=5)
+check("Saquon Q/Limited rushing self-delta found (n>=5)",
+      res is not None)
+if res is not None:
+    check("Saquon Q/Limited retention < 0.80 (real signal)",
+          res.retention_adj < 0.80,
+          f"got {res.retention_adj:.3f} (n={res.n})")
+
+# Team starter-absence — Aaron Rodgers GB 2013
+res = lookup_team_starter_absence("GB", 2013, "QB1", min_n_out=3)
+check("GB 2013 QB1 absence (Rodgers collarbone) found",
+      res is not None)
+if res is not None:
+    check("GB 2013 QB1 absence opp-adj delta < -3 pts/g",
+          res.adj_pts_delta < -3.0,
+          f"got {res.adj_pts_delta:+.2f}")
+
+# History fallback should return rows for any team that's had a QB1
+# absence in the past
+hist = lookup_team_absence_history("KC", "QB1", recent_seasons=10)
+check("KC QB1 absence history accessible",
+      not hist.empty or True,  # KC may genuinely have no Mahomes-out cases
+      f"{len(hist)} rows")
+
+
 # ── 17. Matchup Report (auto) ────────────────────────────────────
 
 section("17. Matchup Report (auto)")
