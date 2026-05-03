@@ -37,6 +37,7 @@ ADP_PATH = REPO / "data" / "fantasy" / "sleeper_adp.parquet"
 ATTRIBUTION_PATH = REPO / "data" / "scheme" / "team_route_attribution.parquet"
 TRANSITIONS_PATH = REPO / "data" / "scheme" / "roster_transitions.parquet"
 PLAYER_ROUTE_PATH = REPO / "data" / "scheme" / "player_route_profile.parquet"
+TEAM_QB_PATH = REPO / "data" / "scheme" / "team_qb_profile.parquet"
 
 POSITION_TO_GAS = {"QB": "qb", "RB": "rb", "WR": "wr", "TE": "te"}
 
@@ -83,6 +84,13 @@ def load_player_route_profile() -> pd.DataFrame:
     if not PLAYER_ROUTE_PATH.exists():
         return pd.DataFrame()
     return pd.read_parquet(PLAYER_ROUTE_PATH)
+
+
+@st.cache_data(show_spinner=False)
+def load_team_qb_profile() -> pd.DataFrame:
+    if not TEAM_QB_PATH.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(TEAM_QB_PATH)
 
 
 @st.cache_data(show_spinner=False)
@@ -491,17 +499,23 @@ sidebar to surface bigger or smaller mispricings.
 
 
 # ══════════════════════════════════════════════════════════════════
-#  Section 2: 🚪 Vacated Demand & Scheme Fit (per-team narratives)
+#  Section 2: 🔍 USAGE AUTOPSY
 # ══════════════════════════════════════════════════════════════════
 
 st.markdown("---")
-st.header("🚪 Vacated demand & scheme fit")
+st.header("🔍 Usage Autopsy")
 st.markdown(
-    "When teams lose receivers, **specific routes lose specific "
-    "volume.** This section quantifies the dig-merchant problem: "
-    "*\"Team X lost their dig merchant — 47 IN/DIG targets unfilled, "
-    "and only Player Y on the existing roster has the career profile "
-    "to absorb them.\"* Pick a team and see the story."
+    "**A forensic per-team breakdown of where target volume went, "
+    "what's missing, and whether the QB's throwing tendencies will "
+    "actually fill the holes.** Three layers of signal:"
+)
+st.markdown(
+    "- 📤 **What walked out** — departures × per-route load × FP\n"
+    "- 🎯 **What's vacated by route** — total opportunity, "
+    "broken down by route type\n"
+    "- 🏈 **Will the QB even throw it?** — the team's primary QB's "
+    "throwing tendency on each vacated route. **If the QB doesn't "
+    "throw deep, vacated GO targets vanish — they don't redistribute.**"
 )
 
 
@@ -517,6 +531,7 @@ def _route_row_fp(catches, yards, tds, position, config):
 attribution = load_attribution()
 transitions = load_transitions()
 player_route_df = load_player_route_profile()
+team_qb_df = load_team_qb_profile()
 
 if attribution.empty or transitions.empty:
     st.info(
@@ -727,27 +742,82 @@ else:
                                 hide_index=True, height=240)
 
         with col_b:
+            # Enrich vacated demand with primary QB's throwing tendency
+            # on each route — the cross-reference that says
+            # "will the QB even throw it?"
+            qb_for_team = pd.DataFrame()
+            if not team_qb_df.empty:
+                qb_for_team = team_qb_df[
+                    (team_qb_df["team"] == selected_scheme_team)
+                    & (team_qb_df["season"] == 2025)
+                ]
+            qb_name = (
+                qb_for_team["passer_player_name"].iloc[0]
+                if not qb_for_team.empty
+                and qb_for_team["passer_player_name"].notna().any()
+                else "—"
+            )
+            qb_lookup = (
+                qb_for_team[["route", "share", "share_z"]]
+                .rename(columns={
+                    "share": "qb_share",
+                    "share_z": "qb_share_z",
+                })
+                if not qb_for_team.empty else
+                pd.DataFrame(columns=["route", "qb_share",
+                                            "qb_share_z"])
+            )
+
             st.markdown(
-                f"**🎯 {selected_scheme_team} — vacated demand by route** "
-                f"({vacated['vacated_fp'].sum():.1f} {config_name} "
-                "FP total)"
+                f"**🎯 {selected_scheme_team} — vacated demand by route**"
+                f" ({vacated['vacated_fp'].sum():.1f} {config_name} "
+                f"FP total · QB: **{qb_name}**)"
             )
             if vacated.empty:
                 st.caption("No route demand vacated.")
             else:
-                disp = vacated[[
+                disp = vacated.merge(qb_lookup, on="route", how="left")
+
+                # VACUUM / DISAPPEARING / BALANCED status per route
+                def _status(row):
+                    fp = float(row["vacated_fp"])
+                    qb_z = row.get("qb_share_z")
+                    if fp <= 0:
+                        return "—"
+                    if pd.isna(qb_z):
+                        return "?"
+                    if qb_z >= 0.3:
+                        return "🟢 VACUUM"   # QB throws it; will be filled
+                    if qb_z >= -0.3:
+                        return "🟡 NEUTRAL"
+                    return "🔴 VANISHING"     # QB doesn't throw it
+
+                disp["status"] = disp.apply(_status, axis=1)
+                disp["qb_share_pct"] = (
+                    disp["qb_share"].astype("Float64") * 100
+                ).round(1)
+
+                disp = disp[[
                     "route", "vacated_targets", "vacated_fp",
-                    "vacated_fp_pct",
+                    "vacated_fp_pct", "qb_share_pct", "status",
                 ]].copy()
                 disp.columns = ["Route", "Targets",
                                   f"{config_name} FP",
-                                  "% of team's FP"]
+                                  "% of team's FP",
+                                  "QB throws %", "Status"]
                 disp[f"{config_name} FP"] = disp[
                     f"{config_name} FP"].round(1)
                 disp["% of team's FP"] = disp[
                     "% of team's FP"].round(1)
                 st.dataframe(disp, use_container_width=True,
-                                hide_index=True, height=240)
+                                hide_index=True, height=300)
+                st.caption(
+                    "**🟢 VACUUM** = QB throws this route above-avg, "
+                    "vacated demand WILL be filled (real opportunity). "
+                    "**🟡 NEUTRAL** = league-average QB tendency. "
+                    "**🔴 VANISHING** = QB doesn't throw this route — "
+                    "vacated targets won't redistribute, they vanish."
+                )
 
         # Best fit per vacated route
         st.markdown(
