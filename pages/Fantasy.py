@@ -1581,14 +1581,9 @@ with tab4:
                  "player_display_name", "position"], as_index=False)
             .agg(targets_2025=("targets", "sum"))
         )
-        # Career rates across all available seasons (full attribution)
-        rec_career = (
-            attr_local_v.groupby(
-                "receiver_player_id", as_index=False)
-            .agg(career_targets=("targets", "sum"),
-                 career_fp=("row_fp", "sum"))
-        )
-        # ^ row_fp not in attr_local_v — recompute on a separate frame
+        # Career rates across all available seasons. Build on a fresh
+        # frame with row_fp computed; attr_local_v itself doesn't carry
+        # row_fp (only the 2025-filtered attr_25 does).
         attr_full = attr_local_v.copy()
         attr_full["row_fp"] = attr_full.apply(
             lambda r: _route_row_fp(
