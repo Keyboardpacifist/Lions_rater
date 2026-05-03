@@ -1685,16 +1685,326 @@ with tab4:
 
 with tab5:
     # ══════════════════════════════════════════════════════════════════
-    #  Section 5: ⚖️ CAMP BATTLES
+    #  Section 5: ⚖️ CAMP BATTLES — user-overridable QB picks
     # ══════════════════════════════════════════════════════════════════
     st.markdown("---")
     st.header("⚖️ Camp Battles")
-    st.info(
-        "Coming next — user-pickable position-battle outcomes that "
-        "re-project the Usage Autopsy and Volume Alpha leaderboards "
-        "conditional on your picks. Built locally; integration in "
-        "progress."
+    st.markdown(
+        "**The model assumes the 2025 primary QB is also the 2026 "
+        "primary.** That breaks for teams in transition: Mariota was "
+        "WAS's primary because Daniels was hurt, Brissett got ARI's "
+        "snaps because Murray was hurt, Rodgers's PIT one-year deal "
+        "is up. Pick the 2026 starter you actually expect — the QB "
+        "Trajectory leaderboard re-projects under your assumption."
     )
+
+    QB_GAS_PATH = REPO / "data" / "qb_gas_seasons.parquet"
+
+    @st.cache_data(show_spinner=False)
+    def _load_qb_gas_seasons() -> pd.DataFrame:
+        if not QB_GAS_PATH.exists():
+            return pd.DataFrame()
+        return pd.read_parquet(QB_GAS_PATH)
+
+    @st.cache_data(show_spinner=False)
+    def _load_team_qbs_roster() -> pd.DataFrame:
+        """All QBs on each team's 2025 NFL roster (gsis_id + name)."""
+        try:
+            import nflreadpy as nfl
+            r = nfl.load_rosters(2025).to_pandas()
+        except Exception as e:
+            st.error(f"Could not load rosters: {e}")
+            return pd.DataFrame()
+        r = r[r["position"] == "QB"]
+        r = r.dropna(subset=["gsis_id", "team"])
+        r = r.drop_duplicates(["team", "gsis_id"])
+        return r[["team", "gsis_id", "full_name", "status",
+                  "years_exp"]].copy()
+
+    qb_gas_full = _load_qb_gas_seasons()
+    team_qbs = _load_team_qbs_roster()
+    traj_df_local = load_qb_trajectory()
+
+    if (qb_gas_full.empty or team_qbs.empty
+            or traj_df_local.empty):
+        st.info(
+            "Upstream QB data missing. Run:\n"
+            "```\npython tools/build_qb_trajectory.py\n```"
+        )
+    else:
+        # ── Trajectory computation for an arbitrary picked QB ─────
+        def _compute_trajectory_pick(qb_id: str, qb_name: str,
+                                       team: str,
+                                       nfl_yrs: float) -> dict:
+            """Mirror tools/build_qb_trajectory.py for one (qb, team)
+            pick. Returns the same row schema as qb_trajectory.parquet
+            so it can drop into the existing display table."""
+            INJURY_GAMES_THRESHOLD = 16
+            PEAK_RECOVERY_RATIO = 0.85
+            AGING_VET_YEARS = 12
+            DEEP_VET_YEARS = 14
+
+            def _y2_leap(g):
+                return 15.0 if g < 50 else (10.0 if g < 60 else 5.0)
+
+            def _y3_leap(g):
+                return 7.0 if g < 50 else (4.0 if g < 60 else 2.0)
+
+            career = qb_gas_full[
+                qb_gas_full["player_id"] == qb_id
+            ].sort_values("season_year")
+            if career.empty:
+                return {
+                    "team": team, "qb_player_id": qb_id,
+                    "qb_name": qb_name, "n_seasons": 0,
+                    "nfl_years_exp": nfl_yrs,
+                    "last_games": 0,
+                    "last_gas": float("nan"),
+                    "peak_gas": float("nan"),
+                    "y2_leap_bump": 0.0, "y3_leap_bump": 0.0,
+                    "injury_recovery_bump": 0.0, "aging_drag": 0.0,
+                    "projected_gas": float("nan"),
+                    "trajectory_delta": 0.0,
+                    "trajectory_label": "❓ ROOKIE / NO DATA",
+                    "rationale": "No NFL GAS career data on file "
+                                  "(rookie or never started)",
+                }
+            last_row = career.iloc[-1]
+            last_gas = float(last_row["gas_score"])
+            last_games = int(last_row["games"])
+            n_seasons = len(career)
+            peak_gas = float(career["gas_score"].max())
+
+            y2 = y3 = 0.0
+            if nfl_yrs <= 1 and n_seasons == 1:
+                y2 = _y2_leap(last_gas)
+            elif nfl_yrs <= 2 and n_seasons == 2:
+                y3 = _y3_leap(last_gas)
+            peak_gap = peak_gas - last_gas
+            inj = 0.0
+            if (last_games < INJURY_GAMES_THRESHOLD
+                    and peak_gap >= 5 and peak_gas > 60):
+                inj = peak_gap * PEAK_RECOVERY_RATIO
+            aging = 0.0
+            if nfl_yrs >= DEEP_VET_YEARS:
+                aging = -3.0
+            elif nfl_yrs >= AGING_VET_YEARS:
+                aging = -2.0
+            if (nfl_yrs >= AGING_VET_YEARS
+                    and last_gas < peak_gas - 5):
+                aging -= 2.0
+            proj = last_gas + y2 + y3 + inj + aging
+            delta = proj - last_gas
+            label = ("🚀 RISING" if delta >= 5 else
+                     "⬇️ DECLINING" if delta <= -3 else
+                     "➡️ STABLE")
+            bits = []
+            if y2: bits.append(f"Y2 leap +{y2:.0f}")
+            if y3: bits.append(f"Y3 step +{y3:.0f}")
+            if inj: bits.append(f"injury recovery +{inj:.1f}")
+            if aging: bits.append(f"aging {aging:.0f}")
+            if not bits: bits.append("stable trajectory")
+            return {
+                "team": team, "qb_player_id": qb_id,
+                "qb_name": qb_name, "n_seasons": n_seasons,
+                "nfl_years_exp": nfl_yrs,
+                "last_games": last_games,
+                "last_gas": round(last_gas, 1),
+                "peak_gas": round(peak_gas, 1),
+                "y2_leap_bump": round(y2, 1),
+                "y3_leap_bump": round(y3, 1),
+                "injury_recovery_bump": round(inj, 1),
+                "aging_drag": round(aging, 1),
+                "projected_gas": round(proj, 1),
+                "trajectory_delta": round(delta, 1),
+                "trajectory_label": label,
+                "rationale": "; ".join(bits),
+            }
+
+        # ── Init session state ────────────────────────────────────
+        if "qb_picks" not in st.session_state:
+            st.session_state["qb_picks"] = {}
+
+        # Default each team's pick to the 2025 primary
+        defaults = dict(zip(traj_df_local["team"],
+                              traj_df_local["qb_player_id"]))
+        for t, qid in defaults.items():
+            st.session_state["qb_picks"].setdefault(t, qid)
+
+        # Build per-team option list — every QB on the team's 2025
+        # roster, sorted by years_exp descending (vets first)
+        opts_by_team: dict[str, list[tuple[str, str, float]]] = {}
+        for team, sub in team_qbs.groupby("team"):
+            opts = list(zip(sub["gsis_id"], sub["full_name"],
+                            sub["years_exp"].fillna(0).astype(float)))
+            # Ensure the 2025 primary is in the list (it should be,
+            # but defensive merge in case roster excluded them)
+            primary_id = defaults.get(team)
+            if primary_id and primary_id not in {o[0] for o in opts}:
+                primary_name = traj_df_local[
+                    traj_df_local["team"] == team
+                ]["qb_name"].iloc[0]
+                opts.insert(0, (primary_id, primary_name, 0.0))
+            opts.sort(key=lambda o: -o[2])  # vets first
+            opts_by_team[team] = opts
+
+        # ── Auto-detect "contested" teams ─────────────────────────
+        # Surface teams where the 2025 primary is likely not the
+        # 2026 starter. Heuristics:
+        #   • 2025 primary nfl_years_exp >= 14 (retirement risk)
+        #   • 2025 primary missed >9 games last year (injury, role
+        #     was a fill-in)
+        #   • At least one OTHER QB on the roster with years_exp >=
+        #     5 (real backup vet) OR >0 prior NFL starting experience.
+        contested_teams = []
+        for _, r in traj_df_local.iterrows():
+            t = r["team"]
+            primary_yrs = float(r["nfl_years_exp"] or 0)
+            primary_games = int(r["last_games"])
+            others = [o for o in opts_by_team.get(t, [])
+                      if o[0] != r["qb_player_id"]]
+            n_vet_others = sum(1 for o in others if o[2] >= 5)
+            if (primary_yrs >= 14
+                    or primary_games <= 10
+                    or n_vet_others >= 1):
+                contested_teams.append(t)
+
+        st.markdown("### 🏈 Pick the 2026 starting QB per team")
+        st.caption(
+            f"**{len(contested_teams)} teams flagged as contested** "
+            "(aging vet, injury fill-in, or vet backup on roster). "
+            "Override below; all other teams default to their 2025 "
+            "primary. Picks persist for this session only."
+        )
+
+        with st.expander(f"Show all 32 teams (not just contested)",
+                            expanded=False):
+            show_all = st.checkbox("Show every team", value=False,
+                                       key="cb_show_all")
+
+        teams_to_render = (sorted(team_qbs["team"].unique())
+                              if st.session_state.get("cb_show_all")
+                              else sorted(contested_teams))
+
+        # Render in 3-column grid
+        n_cols = 3
+        rows_needed = (len(teams_to_render) + n_cols - 1) // n_cols
+        idx = 0
+        for _ in range(rows_needed):
+            cols = st.columns(n_cols)
+            for c in cols:
+                if idx >= len(teams_to_render):
+                    break
+                team = teams_to_render[idx]
+                opts = opts_by_team.get(team, [])
+                if not opts:
+                    idx += 1
+                    continue
+                primary_id = defaults.get(team)
+                primary_name_short = traj_df_local[
+                    traj_df_local["team"] == team
+                ]["qb_name"].iloc[0]
+                # Build display strings for the dropdown
+                labels = []
+                ids = []
+                for gid, name, yrs in opts:
+                    star = "⭐ " if gid == primary_id else ""
+                    labels.append(f"{star}{name} ({int(yrs)} yr)")
+                    ids.append(gid)
+                # Find current pick index
+                cur = st.session_state["qb_picks"].get(
+                    team, primary_id)
+                try:
+                    default_idx = ids.index(cur)
+                except ValueError:
+                    default_idx = 0
+                with c:
+                    pick = c.selectbox(
+                        f"**{team}** (2025: {primary_name_short})",
+                        options=range(len(labels)),
+                        format_func=lambda i, lab=labels: lab[i],
+                        index=default_idx,
+                        key=f"qbpick_{team}",
+                    )
+                    st.session_state["qb_picks"][team] = ids[pick]
+                idx += 1
+
+        # ── Recompute trajectory under user picks ─────────────────
+        st.markdown("### 📋 QB Trajectory under your picks")
+        modified_rows = []
+        for team in sorted(team_qbs["team"].unique()):
+            picked_id = st.session_state["qb_picks"].get(team)
+            if not picked_id:
+                continue
+            # Lookup name + years_exp
+            roster_match = team_qbs[
+                (team_qbs["team"] == team)
+                & (team_qbs["gsis_id"] == picked_id)
+            ]
+            if roster_match.empty:
+                # fallback to traj_df_local
+                m = traj_df_local[
+                    traj_df_local["qb_player_id"] == picked_id
+                ]
+                if m.empty:
+                    continue
+                qb_name = m.iloc[0]["qb_name"]
+                nfl_yrs = float(m.iloc[0]["nfl_years_exp"] or 0)
+            else:
+                qb_name = roster_match.iloc[0]["full_name"]
+                nfl_yrs = float(
+                    roster_match.iloc[0]["years_exp"] or 0)
+            modified_rows.append(
+                _compute_trajectory_pick(
+                    picked_id, qb_name, team, nfl_yrs))
+
+        modified_df = pd.DataFrame(modified_rows).sort_values(
+            "trajectory_delta", ascending=False)
+
+        # Side-by-side: only highlight teams where the pick changed
+        changed = modified_df[
+            modified_df["qb_player_id"]
+            != modified_df["team"].map(defaults)
+        ]
+        if not changed.empty:
+            st.success(
+                f"You overrode {len(changed)} team(s). The QB "
+                "Trajectory leaderboard now reflects those picks."
+            )
+        else:
+            st.caption(
+                "No overrides yet — the table below mirrors the "
+                "default QB Trajectory tab."
+            )
+
+        # Display the (possibly-modified) trajectory table
+        rename_cb = {
+            "trajectory_label": "Verdict",
+            "team": "Team",
+            "qb_name": "QB",
+            "nfl_years_exp": "NFL yrs",
+            "last_games": "Last games",
+            "last_gas": "Last GAS",
+            "peak_gas": "Peak GAS",
+            "projected_gas": "Proj 2026 GAS",
+            "trajectory_delta": "Δ GAS",
+            "rationale": "Why",
+        }
+        show_cb = ["trajectory_label", "team", "qb_name",
+                    "nfl_years_exp", "last_games", "last_gas",
+                    "peak_gas", "projected_gas",
+                    "trajectory_delta", "rationale"]
+        st.dataframe(
+            modified_df[show_cb].rename(columns=rename_cb),
+            use_container_width=True, hide_index=True, height=560,
+        )
+
+        st.caption(
+            "💡 Receiver tailwind tables on **🛫 QB Trajectory** and "
+            "**📈 Volume Alpha** still use the default primary-QB "
+            "assumption. v2 will pipe Camp Battles picks through "
+            "those leaderboards too."
+        )
 
 
 with tab6:
