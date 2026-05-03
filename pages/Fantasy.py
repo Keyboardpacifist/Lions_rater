@@ -819,6 +819,145 @@ else:
                     "vacated targets won't redistribute, they vanish."
                 )
 
+        # ── 📋 AUTO-GENERATED TAKEAWAYS (top 3) ──────────────────
+        # For each candidate, estimate total projected absorbed FP
+        # across all vacated routes where they're a top-3 specialist.
+        # Surface the top 3 candidates as a "Stock UP" narrative card.
+        candidate_summaries = []
+        for cand_id in (incumbent_ids + vet_arr_ids):
+            cand_name_row = name_lookup[
+                name_lookup["player_id"] == cand_id
+            ]
+            if cand_name_row.empty:
+                continue
+            cname = cand_name_row.iloc[0]["player_display_name"]
+            cpos = cand_name_row.iloc[0]["position"]
+            origin_tag = ("Incumbent" if cand_id in incumbent_ids
+                            else "New (FA/trade)")
+            origin_emoji = ("🟢" if origin_tag == "Incumbent"
+                              else "🆕")
+
+            # Routes where this candidate is top-3 specialist among
+            # the team's absorption pool, AND there's real vacated
+            # demand on that route AND QB tendency supports it
+            relevant_routes = []
+            for _, vrow in vacated.iterrows():
+                if vrow["vacated_fp"] <= 0:
+                    continue
+                rcands = career_fp_per_route[
+                    (career_fp_per_route["route"] == vrow["route"])
+                    & (career_fp_per_route["career_targets"] >= 5)
+                ].sort_values("career_fp_per_target", ascending=False)
+                if rcands.empty:
+                    continue
+                top3 = rcands.head(3)
+                if cand_id not in top3["receiver_player_id"].values:
+                    continue
+                # QB tendency on this route
+                qb_z = None
+                if not qb_for_team.empty:
+                    qbm = qb_for_team[
+                        qb_for_team["route"] == vrow["route"]]
+                    if not qbm.empty:
+                        qb_z = float(qbm["share_z"].iloc[0])
+                # Estimated absorbed FP: career FP/target × (vacated
+                # targets × this candidate's share within top 3)
+                this_fpt = float(rcands[
+                    rcands["receiver_player_id"] == cand_id
+                ]["career_fp_per_target"].iloc[0])
+                total_top3_fpt = top3["career_fp_per_target"].sum()
+                share_of_top3 = (this_fpt / total_top3_fpt
+                                    if total_top3_fpt > 0 else 0)
+                est_absorbed_fp = (
+                    vrow["vacated_fp"] * share_of_top3
+                )
+                relevant_routes.append({
+                    "route": vrow["route"],
+                    "vacated_fp": float(vrow["vacated_fp"]),
+                    "career_fp_per_target": this_fpt,
+                    "est_absorbed_fp": est_absorbed_fp,
+                    "qb_z": qb_z,
+                })
+
+            if not relevant_routes:
+                continue
+            total_absorbed = sum(r["est_absorbed_fp"]
+                                    for r in relevant_routes)
+            candidate_summaries.append({
+                "player_id": cand_id,
+                "name": cname,
+                "pos": cpos,
+                "origin_tag": origin_tag,
+                "origin_emoji": origin_emoji,
+                "total_absorbed_fp": total_absorbed,
+                "routes": sorted(relevant_routes,
+                                    key=lambda r: -r["est_absorbed_fp"]),
+            })
+
+        # Rank by total projected absorbed FP, top 3
+        candidate_summaries.sort(
+            key=lambda s: -s["total_absorbed_fp"])
+        top_takeaways = candidate_summaries[:3]
+
+        if top_takeaways:
+            st.markdown(
+                f"### 📋 Top takeaways · {selected_scheme_team} "
+                f"({config_name})")
+            st.caption(
+                "Auto-generated observations from the data. "
+                "**Top candidates ranked by projected absorbed "
+                "fantasy points** (their share of top-fit slots × "
+                "vacated FP, weighted by career conversion rate)."
+            )
+            for i, t in enumerate(top_takeaways):
+                rank_emoji = ["🥇", "🥈", "🥉"][i]
+                primary_routes = t["routes"][:3]
+                routes_str = ", ".join(
+                    f"{r['route']} ({r['est_absorbed_fp']:.1f} {config_name})"
+                    for r in primary_routes
+                )
+                # Determine narrative label based on route+QB match
+                qb_friendly = sum(
+                    1 for r in primary_routes
+                    if r["qb_z"] is not None and r["qb_z"] >= 0.0
+                )
+                if qb_friendly >= len(primary_routes) * 0.6:
+                    verdict = "🚀 **STOCK UP**"
+                    verdict_color = "#16a34a"
+                elif qb_friendly == 0:
+                    verdict = "⚠️ **CAUTION** (QB tendencies don't favor)"
+                    verdict_color = "#f59e0b"
+                else:
+                    verdict = "👀 **WATCH**"
+                    verdict_color = "#3b82f6"
+
+                st.markdown(
+                    f"""<div style='border-left:4px solid {verdict_color};
+                        background:rgba(31,41,55,0.4);padding:14px 18px;
+                        border-radius:6px;margin:10px 0;'>
+                        <div style='font-size:13px;font-weight:700;
+                                    color:#fbbf24;letter-spacing:1px;'>
+                            {rank_emoji} {verdict}
+                        </div>
+                        <div style='font-size:18px;font-weight:800;
+                                    color:#f3f4f6;margin-top:4px;'>
+                            {t['origin_emoji']} {t['name']}
+                            <span style='font-weight:500;color:#9ca3af;
+                                          font-size:14px;'>
+                              ({t['pos']} · {t['origin_tag']})
+                            </span>
+                        </div>
+                        <div style='font-size:14px;color:#d1d5db;
+                                    margin-top:8px;line-height:1.5;'>
+                            <b>Projected absorbed: ~{t['total_absorbed_fp']:.1f}
+                              {config_name} FP</b> across {len(t['routes'])}
+                              vacated routes.
+                            <br>Top route loads: {routes_str}.
+                        </div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+
         # Best fit per vacated route
         st.markdown(
             f"### 🎯 {selected_scheme_team} — who absorbs each "
