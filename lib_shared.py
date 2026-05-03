@@ -286,11 +286,17 @@ h1, h2, h3 { color: #0076B6 !important; }
 [data-testid="stSidebarNavItems"],
 [data-testid="collapsedControl"],
 [data-testid="stSidebarCollapseButton"],
-section[data-testid="stSidebarCollapsedControl"],
-button[kind="header"] {
+section[data-testid="stSidebarCollapsedControl"] {
     display: none !important;
     width: 0 !important;
     visibility: hidden !important;
+}
+/* Only hide kind="header" buttons WITHIN the sidebar — earlier we
+ * targeted button[kind="header"] globally, which (in Streamlit
+ * 1.56) was matching content-area buttons too and breaking the
+ * Tendencies tab's radio + player buttons. */
+[data-testid="stSidebar"] button[kind="header"] {
+    display: none !important;
 }
 /* Pull the main content back to the left edge — without this the
  * page still has the empty sidebar's reserved gutter. */
