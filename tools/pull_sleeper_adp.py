@@ -47,9 +47,20 @@ SLEEPER_TO_NFLVERSE_TEAM = {
 
 
 def _normalize_name(s: pd.Series) -> pd.Series:
-    """Lower + strip punctuation/spaces for fuzzy join."""
-    return (s.fillna("").astype(str).str.lower()
-              .str.replace(r"[\.\s\-']", "", regex=True))
+    """Lower + strip punctuation/spaces + suffix tokens for fuzzy join.
+
+    Handles cases where one source has a suffix and the other doesn't:
+      "Luther Burden III" (nflverse) ↔ "Luther Burden" (Sleeper)
+      "Marvin Harrison Jr." (nflverse) ↔ "Marvin Harrison" (Sleeper)
+    Both normalize to the same key.
+    """
+    out = s.fillna("").astype(str).str.lower()
+    # Strip suffix tokens (jr, sr, ii, iii, iv, v) at word boundaries,
+    # optionally with trailing period
+    out = out.str.replace(r"\b(jr|sr|ii|iii|iv|v)\b\.?", "", regex=True)
+    # Strip dots, spaces, hyphens, apostrophes
+    out = out.str.replace(r"[\.\s\-']", "", regex=True)
+    return out
 
 
 def main() -> None:
@@ -86,20 +97,36 @@ def main() -> None:
     print("→ loading nfl_player_stats_weekly for gsis_id crosswalk...")
     pw = pd.read_parquet(PLAYER_STATS,
                             columns=["player_id", "player_display_name",
-                                       "position"])
-    # Use most-recent record per (player_id, name, position) as the
-    # canonical row.
+                                       "position", "season"])
     pw = pw.dropna(subset=["player_id", "player_display_name"])
-    pw = pw.drop_duplicates(subset=["player_id"])
+
+    # Track each player's latest active NFL season — used to break
+    # ties when two players share a normalized name+position
+    # (e.g., Marvin Harrison Sr. + Marvin Harrison Jr.).
+    latest_season = (
+        pw.groupby("player_id")["season"].max()
+          .rename("latest_season").reset_index()
+    )
+    pw = (pw.drop_duplicates(subset=["player_id"])
+            .merge(latest_season, on="player_id", how="left"))
     print(f"  player crosswalk rows: {len(pw):,}")
 
     # Normalize names on both sides
     sleeper["nname"] = _normalize_name(sleeper["full_name"])
     pw["nname"] = _normalize_name(pw["player_display_name"])
 
-    # Join on (normalized_name, position) to handle name collisions
+    # When multiple players share a normalized name+position, keep
+    # the MOST RECENT. Without this, "Marvin Harrison" would map to
+    # both Sr. (1996-2008) and Jr. (2024+) → duplicate Sleeper rows.
+    pw_unique = (
+        pw.sort_values("latest_season", ascending=False)
+          .drop_duplicates(subset=["nname", "position"])
+    )
+
+    # Join on (normalized_name, position) — exactly one match per
+    # (sleeper player, position) thanks to the dedupe above.
     merged = sleeper.merge(
-        pw[["player_id", "nname", "position"]],
+        pw_unique[["player_id", "nname", "position"]],
         on=["nname", "position"], how="left",
     )
 
