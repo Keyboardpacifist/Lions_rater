@@ -23,6 +23,7 @@ of mispricing, not just the magnitude.
 """
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 from pathlib import Path
 
@@ -2109,3 +2110,157 @@ with tab6:
                 f"**{leader['fp_per_target']:.2f} FP/target** across "
                 f"{int(leader['targets'])} career targets on this route."
             )
+
+            # ── YoY trend view ──────────────────────────────────────
+            # Career numbers can hide single-bad-year drops (Bateman
+            # 2.99 → 2.51 after one weak 2025). Show season-by-season
+            # to separate "real decline" from "noisy small samples."
+            st.markdown("---")
+            st.markdown("### 📈 Year-over-year trend — same route, "
+                          "same metric")
+            st.caption(
+                f"How each top-{config_name}-converter on "
+                f"**{selected_route}** has performed season by season. "
+                "Uses a per-season minimum-targets filter so single-"
+                "game spikes don't dominate. **Use this to ask: is "
+                "Bateman in actual decline, or did one bad 2025 drag "
+                "his career number down?**"
+            )
+
+            top_n = st.slider(
+                "Top N to chart", 3, 12, 6, key="yoy_top_n")
+            min_per_season = st.slider(
+                "Min targets per season (filter out small samples)",
+                1, 15, 3, key="yoy_min_season_tgts")
+
+            top_ids = sub.head(top_n)["receiver_player_id"].tolist()
+            top_names = (sub.head(top_n)
+                            .set_index("receiver_player_id")
+                            ["player_display_name"].to_dict())
+
+            yoy = (
+                full_attr[
+                    (full_attr["route"] == selected_route)
+                    & (full_attr["receiver_player_id"].isin(top_ids))
+                ]
+                .groupby(
+                    ["receiver_player_id", "player_display_name",
+                     "season"], as_index=False)
+                .agg(targets=("targets", "sum"),
+                     fp=("row_fp", "sum"))
+            )
+            yoy = yoy[yoy["targets"] >= min_per_season]
+            yoy["fp_per_target"] = (yoy["fp"]
+                                       / yoy["targets"].clip(lower=1))
+
+            if yoy.empty:
+                st.info("No per-season data passes the filter. "
+                        "Lower the min-targets-per-season slider.")
+            else:
+                # Plotly line chart
+                fig = go.Figure()
+                for pid in top_ids:
+                    sub_y = yoy[yoy["receiver_player_id"] == pid
+                                  ].sort_values("season")
+                    if sub_y.empty:
+                        continue
+                    fig.add_trace(go.Scatter(
+                        x=sub_y["season"],
+                        y=sub_y["fp_per_target"],
+                        mode="lines+markers",
+                        name=top_names.get(pid, pid),
+                        hovertemplate=(
+                            "<b>%{fullData.name}</b><br>"
+                            "Season: %{x}<br>"
+                            f"{config_name} FP/Tgt: %{{y:.2f}}<br>"
+                            "Targets: %{customdata}<extra></extra>"),
+                        customdata=sub_y["targets"],
+                    ))
+                fig.update_layout(
+                    title=(f"{config_name} FP/target on "
+                            f"{selected_route} — top {top_n} converters"),
+                    xaxis_title="Season",
+                    yaxis_title=f"{config_name} FP / target",
+                    height=420,
+                    margin=dict(t=50, b=40, l=50, r=20),
+                    legend=dict(
+                        orientation="h", yanchor="bottom",
+                        y=1.05, xanchor="left", x=0),
+                    hovermode="x unified",
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Wide-format YoY table
+                wide = (
+                    yoy.pivot_table(
+                        index=["player_display_name"],
+                        columns="season",
+                        values="fp_per_target",
+                    ).round(2)
+                )
+                # Append career rate as right-most column for context
+                career_rate = (
+                    sub.set_index("player_display_name")
+                       .loc[wide.index, "fp_per_target"]
+                       .round(2)
+                )
+                wide["Career"] = career_rate
+                # Sort by career rate descending
+                wide = wide.sort_values("Career", ascending=False)
+                wide = wide.reset_index().rename(
+                    columns={"player_display_name": "Player"})
+                # Sort season columns chronologically (Career last)
+                season_cols = sorted(
+                    [c for c in wide.columns
+                     if c not in ("Player", "Career")])
+                wide = wide[["Player"] + season_cols + ["Career"]]
+                st.markdown(
+                    f"**Per-season {config_name} FP/target — "
+                    f"{selected_route} (NaN = below {min_per_season}-"
+                    "target season minimum):**")
+                st.dataframe(
+                    wide, use_container_width=True,
+                    hide_index=True,
+                )
+
+                # Auto-narrative: who is trending where?
+                # Compare 2025 to player's prior 3-yr avg.
+                trends = []
+                for pid in top_ids:
+                    s = yoy[yoy["receiver_player_id"] == pid
+                              ].sort_values("season")
+                    if len(s) < 2:
+                        continue
+                    last_yr = int(s["season"].max())
+                    if last_yr < 2025:
+                        continue
+                    last_rate = float(
+                        s[s["season"] == last_yr]
+                            ["fp_per_target"].iloc[0])
+                    prior_rates = s[s["season"] < last_yr]
+                    if prior_rates.empty:
+                        continue
+                    prior_avg = float(
+                        prior_rates["fp_per_target"].mean())
+                    delta = last_rate - prior_avg
+                    trends.append({
+                        "Player": top_names.get(pid, pid),
+                        f"2025 {config_name}/Tgt": round(last_rate, 2),
+                        f"Prior-yrs avg {config_name}/Tgt":
+                            round(prior_avg, 2),
+                        "Δ vs prior": round(delta, 2),
+                        "Trend": (
+                            "🚀 Trending up" if delta >= 0.3 else
+                            "⬇️ Trending down" if delta <= -0.3 else
+                            "➡️ Steady"),
+                    })
+                if trends:
+                    tdf = pd.DataFrame(trends).sort_values(
+                        "Δ vs prior", ascending=False)
+                    st.markdown(
+                        "**2025 vs. prior career average — who's "
+                        "trending where?**")
+                    st.dataframe(
+                        tdf, use_container_width=True,
+                        hide_index=True,
+                    )
