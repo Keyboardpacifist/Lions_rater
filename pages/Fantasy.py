@@ -100,6 +100,14 @@ def load_all_gas() -> pd.DataFrame:
 
 
 def compute_season_fp(season_df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate weekly stats to ONE row per (player_id, season).
+
+    Players who switch teams mid-season (trades, FA reassignments)
+    have multiple weekly rows under different team codes. We sum
+    stats across teams so each player gets a single season-total
+    row. The 'team' column shows the team where the player played
+    the most weeks (their primary team).
+    """
     sum_cols = [
         "completions", "attempts", "passing_yards", "passing_tds",
         "passing_interceptions", "carries", "rushing_yards",
@@ -108,10 +116,20 @@ def compute_season_fp(season_df: pd.DataFrame) -> pd.DataFrame:
     ]
     avail = [c for c in sum_cols if c in season_df.columns]
     grp = season_df.groupby(
-        ["player_id", "player_display_name", "position",
-         "team", "season"], as_index=False)
+        ["player_id", "player_display_name", "position", "season"],
+        as_index=False)
     totals = grp[avail].sum()
     totals["games"] = grp.size()["size"].values
+
+    # Primary team = team they played most weeks for that season
+    team_weeks = (
+        season_df.groupby(["player_id", "team"]).size()
+                   .reset_index(name="weeks")
+                   .sort_values("weeks", ascending=False)
+                   .drop_duplicates("player_id")
+                   [["player_id", "team"]]
+    )
+    totals = totals.merge(team_weeks, on="player_id", how="left")
 
     totals["fp_standard"] = totals["fantasy_points"]
     totals["fp_ppr"] = totals["fantasy_points_ppr"]
@@ -281,8 +299,43 @@ fp_totals["fp_rank"] = (
 )
 
 # 2. GAS for prior season, ranked within position
+# Multi-team-season players (trades) have one GAS row per team. We
+# games-weight to a single per-(player, position) value so the
+# triangulation join doesn't multiply rows.
 gas_all = load_all_gas()
-gas_for_season = gas_all[gas_all["season_year"] == prior_season].copy()
+gas_season_raw = gas_all[gas_all["season_year"] == prior_season].copy()
+
+
+def _agg_multi_team_gas(group):
+    g_total = group["games"].sum() if "games" in group.columns else 1
+    if g_total <= 0:
+        score = group["gas_score"].mean()
+    else:
+        score = (group["gas_score"]
+                  * group.get("games", 1)).sum() / g_total
+    primary = group.sort_values(
+        group.get("games", group["gas_score"]).name,
+        ascending=False
+    ).iloc[0]
+    return pd.Series({
+        "gas_score": score,
+        "gas_label": primary.get("gas_label", ""),
+    })
+
+
+gas_for_season = (
+    gas_season_raw.groupby(["player_id", "position"], as_index=False)
+                  .apply(_agg_multi_team_gas, include_groups=False)
+                  .reset_index(drop=True)
+)
+# Re-attach grouping keys
+_keys = (
+    gas_season_raw[["player_id", "position"]]
+    .drop_duplicates(subset=["player_id", "position"])
+    .reset_index(drop=True)
+)
+gas_for_season = pd.concat(
+    [_keys, gas_for_season.reset_index(drop=True)], axis=1)
 gas_for_season["gas_rank"] = (
     gas_for_season.groupby("position")["gas_score"]
                   .rank(ascending=False, method="min")
