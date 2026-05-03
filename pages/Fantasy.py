@@ -582,6 +582,29 @@ else:
             help="Defaults to the biggest vacated-FP event of the offseason.",
         )
 
+        # Team-anchored header so every section below is clearly
+        # tied to the selected team — no guessing what we're looking at
+        team_total_vacated = team_vacated[
+            team_vacated["team"] == selected_scheme_team
+        ]["vacated_fp"].iloc[0]
+        st.markdown(
+            f"<div style='background:#1f2937;border-left:5px solid "
+            f"#fbbf24;padding:14px 20px;border-radius:6px;"
+            f"margin:18px 0;color:white;'>"
+            f"<div style='font-size:11px;letter-spacing:2px;"
+            f"color:#fbbf24;font-weight:700;'>NOW ANALYZING</div>"
+            f"<div style='font-size:24px;font-weight:800;"
+            f"margin-top:4px;'>{selected_scheme_team} · 2025 → 2026 "
+            f"offseason</div>"
+            f"<div style='font-size:14px;color:#d1d5db;margin-top:4px;'>"
+            f"<b>{team_total_vacated:.1f}</b> {config_name} fantasy "
+            f"points walked out the door. Below: who left, what "
+            f"routes are open, and which players on the current "
+            f"roster are best positioned to absorb the demand.</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
         team_trans = transitions[
             transitions["team"] == selected_scheme_team
         ]
@@ -689,7 +712,7 @@ else:
         col_a, col_b = st.columns([1, 1])
         with col_a:
             st.markdown(
-                f"**📤 Departures** "
+                f"**📤 {selected_scheme_team} departures** "
                 f"({len(dep_summary)} significant)")
             if dep_summary.empty:
                 st.caption("Nobody significant left.")
@@ -705,7 +728,7 @@ else:
 
         with col_b:
             st.markdown(
-                f"**🎯 Vacated demand by route** "
+                f"**🎯 {selected_scheme_team} — vacated demand by route** "
                 f"({vacated['vacated_fp'].sum():.1f} {config_name} "
                 "FP total)"
             )
@@ -727,14 +750,19 @@ else:
                                 hide_index=True, height=240)
 
         # Best fit per vacated route
-        st.markdown(f"### 🎯 Best absorbers per vacated route — "
-                      f"{config_name} conversion")
+        st.markdown(
+            f"### 🎯 {selected_scheme_team} — who absorbs each "
+            f"vacated route? ({config_name} conversion)"
+        )
         st.caption(
-            "For each route, the **top 3 candidates** ranked by "
-            "career FP/target on that specific route. Tags show "
-            "**Incumbent** (already on team) vs **New** (FA/trade). "
-            "**Incumbent + elite FP/target = the alpha pick** the "
-            "market hasn't yet priced into ADP."
+            f"For each route the **{selected_scheme_team}** lost "
+            "volume on, the top 3 players (current roster + new "
+            "vet adds) ranked by **career fantasy points per target "
+            "on that exact route**. "
+            "🟢 **Incumbent** = already on the team last year (stock-up "
+            "candidates). 🆕 **New** = arrived this offseason via "
+            "FA / trade. **An incumbent with elite FP/target is the "
+            "buy signal that ADP hasn't caught yet.**"
         )
         fits = []
         for _, vrow in vacated.head(8).iterrows():
