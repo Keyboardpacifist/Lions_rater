@@ -528,6 +528,199 @@ def _route_row_fp(catches, yards, tds, position, config):
             + (tds or 0) * config.rec_td)
 
 
+@st.cache_data(show_spinner="Crunching league-wide alpha…")
+def compute_league_wide_alpha(config_name: str) -> pd.DataFrame:
+    """For every team, compute its top alpha candidates (incumbents +
+    vet arrivals ranked by projected absorbed FP × QB-tendency match).
+    Returns a single long-format DataFrame across all 32 teams.
+    Cached so the heavy loop only runs once per scoring config."""
+    config = fs.CONFIG_BY_NAME[config_name]
+    attribution = pd.read_parquet(ATTRIBUTION_PATH)
+    transitions = pd.read_parquet(TRANSITIONS_PATH)
+    team_qb = (pd.read_parquet(TEAM_QB_PATH)
+                  if TEAM_QB_PATH.exists() else pd.DataFrame())
+    if PLAYER_ROUTE_PATH.exists():
+        prdf = pd.read_parquet(PLAYER_ROUTE_PATH)
+        name_lookup = prdf[[
+            "player_id", "player_display_name", "position",
+        ]].drop_duplicates(subset="player_id")
+    else:
+        name_lookup = (
+            attribution[["receiver_player_id",
+                              "player_display_name", "position"]]
+            .drop_duplicates(subset="receiver_player_id")
+            .rename(columns={"receiver_player_id": "player_id"})
+        )
+
+    # Vectorize: pre-compute per-row FP for the whole attribution table
+    full_attr = attribution.copy()
+    full_attr["row_fp"] = full_attr.apply(
+        lambda r: _route_row_fp(
+            r.get("catches"), r.get("yards"), r.get("tds"),
+            r.get("position", ""), config),
+        axis=1,
+    )
+
+    out_rows = []
+    for team in transitions["team"].dropna().unique():
+        team_trans = transitions[transitions["team"] == team]
+        deps_df = team_trans[
+            team_trans["transition_type"] == "departure"
+        ]
+        dep_ids = deps_df["player_id"].dropna().tolist()
+        if not dep_ids:
+            continue
+
+        team_attr = full_attr[
+            (full_attr["team"] == team) & (full_attr["season"] == 2025)
+        ]
+        if team_attr.empty:
+            continue
+
+        # Vacated by route
+        vac = (
+            team_attr[team_attr["receiver_player_id"].isin(dep_ids)]
+            .groupby("route", as_index=False)
+            .agg(vacated_fp=("row_fp", "sum"))
+        )
+        vac = vac[vac["vacated_fp"] > 0]
+        if vac.empty:
+            continue
+
+        # Incumbents (last-year cohort minus departures)
+        last_year = (
+            team_attr.groupby(
+                "receiver_player_id", as_index=False)
+            .agg(prior=("targets", "sum"))
+        )
+        last_year = last_year[last_year["prior"] >= 10]
+        incumbent_ids = [
+            pid for pid in last_year["receiver_player_id"]
+            if pid not in dep_ids
+        ]
+        vet_arr_ids = team_trans[
+            (team_trans["transition_type"] == "arrival")
+            & (team_trans["is_rookie"] == False)
+        ]["player_id"].dropna().tolist()
+        candidate_ids = incumbent_ids + vet_arr_ids
+        if not candidate_ids:
+            continue
+
+        # Career FP/target on each route for candidates
+        cand_attr = full_attr[
+            full_attr["receiver_player_id"].isin(candidate_ids)
+        ]
+        cand_career = (
+            cand_attr.groupby(
+                ["receiver_player_id", "route"], as_index=False)
+            .agg(career_targets=("targets", "sum"),
+                 career_fp=("row_fp", "sum"))
+        )
+        cand_career["fpt"] = (
+            cand_career["career_fp"]
+            / cand_career["career_targets"].clip(lower=1)
+        )
+
+        # QB tendency map for this team
+        qb_for_team = (
+            team_qb[(team_qb["team"] == team)
+                       & (team_qb["season"] == 2025)]
+            if not team_qb.empty else pd.DataFrame()
+        )
+        qb_z_map = (
+            dict(zip(qb_for_team["route"],
+                       qb_for_team["share_z"]))
+            if not qb_for_team.empty else {}
+        )
+
+        # For each candidate, sum projected absorbed FP across vacated
+        # routes where they're a top-3 specialist
+        for cand_id in candidate_ids:
+            relevant = []
+            qb_friendly_count = 0
+            qb_total_routes = 0
+            for _, vrow in vac.iterrows():
+                rcands = cand_career[
+                    (cand_career["route"] == vrow["route"])
+                    & (cand_career["career_targets"] >= 5)
+                ].sort_values("fpt", ascending=False).head(3)
+                if cand_id not in rcands["receiver_player_id"].values:
+                    continue
+                this_fpt = float(rcands[
+                    rcands["receiver_player_id"] == cand_id
+                ]["fpt"].iloc[0])
+                top3_total = float(rcands["fpt"].sum() or 1)
+                est_absorbed = (
+                    vrow["vacated_fp"] * (this_fpt / top3_total)
+                )
+                qb_z = qb_z_map.get(vrow["route"])
+                if qb_z is not None:
+                    qb_total_routes += 1
+                    if qb_z >= 0.0:
+                        qb_friendly_count += 1
+                relevant.append({
+                    "route": vrow["route"],
+                    "vacated_fp": vrow["vacated_fp"],
+                    "est_absorbed": est_absorbed,
+                    "qb_z": qb_z,
+                    "fpt": this_fpt,
+                })
+            if not relevant:
+                continue
+
+            total_absorbed = sum(r["est_absorbed"] for r in relevant)
+            qb_match_ratio = (
+                qb_friendly_count / qb_total_routes
+                if qb_total_routes > 0 else 0
+            )
+            if qb_match_ratio >= 0.6:
+                verdict = "🚀 STOCK UP"
+            elif qb_friendly_count == 0 and qb_total_routes > 0:
+                verdict = "⚠️ CAUTION"
+            else:
+                verdict = "👀 WATCH"
+
+            cand_meta = name_lookup[
+                name_lookup["player_id"] == cand_id
+            ]
+            if cand_meta.empty:
+                continue
+            cname = cand_meta.iloc[0]["player_display_name"]
+            cpos = cand_meta.iloc[0]["position"]
+            origin = ("Incumbent" if cand_id in incumbent_ids
+                        else "New (FA/trade)")
+
+            top_routes = sorted(
+                relevant, key=lambda r: -r["est_absorbed"]
+            )[:3]
+            top_routes_str = ", ".join(
+                f"{r['route']} ({r['est_absorbed']:.0f})"
+                for r in top_routes
+            )
+
+            out_rows.append({
+                "team": team,
+                "player_id": cand_id,
+                "Player": cname,
+                "Pos": cpos,
+                "Team": team,
+                "Origin": origin,
+                "Projected absorbed FP": round(total_absorbed, 1),
+                "Verdict": verdict,
+                "QB-route match %": round(qb_match_ratio * 100, 0),
+                "Top routes inherited": top_routes_str,
+                "n_routes": len(relevant),
+            })
+
+    if not out_rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(out_rows).sort_values(
+        "Projected absorbed FP", ascending=False
+    ).reset_index(drop=True)
+    df.insert(0, "Rank", range(1, len(df) + 1))
+    return df
+
+
 attribution = load_attribution()
 transitions = load_transitions()
 player_route_df = load_player_route_profile()
@@ -589,6 +782,94 @@ else:
         ]
         st.dataframe(big_stories, use_container_width=True,
                         hide_index=True, height=215)
+
+        # ── 🏆 LEAGUE-WIDE ALPHA LEADERBOARD ───────────────────────
+        st.markdown(
+            "### 🏆 League-wide alpha leaderboard")
+        st.caption(
+            "**Top stock-up candidates across all 32 teams**, ranked "
+            "by **projected absorbed fantasy points** from this "
+            "offseason's roster turnover. Filter by verdict to find "
+            "the cleanest plays. **🚀 STOCK UP = the QB's career "
+            "tendencies favor the routes this player would inherit.** "
+            "Use the filters to narrow down."
+        )
+        league_alpha = compute_league_wide_alpha(config_name)
+        if league_alpha.empty:
+            st.info("No alpha candidates surfaced. Check that scheme "
+                      "data is built.")
+        else:
+            la_col1, la_col2, la_col3, la_col4 = st.columns(
+                [1.5, 1, 1.5, 1])
+            with la_col1:
+                pos_filter = st.multiselect(
+                    "Position",
+                    sorted(league_alpha["Pos"].dropna().unique()),
+                    default=["WR", "TE"],
+                    key="la_pos",
+                )
+            with la_col2:
+                origin_filter = st.multiselect(
+                    "Origin",
+                    sorted(league_alpha["Origin"].unique()),
+                    default=sorted(league_alpha["Origin"].unique()),
+                    key="la_origin",
+                )
+            with la_col3:
+                verdict_options = sorted(
+                    league_alpha["Verdict"].unique())
+                verdict_filter = st.multiselect(
+                    "Verdict", verdict_options,
+                    default=verdict_options,
+                    key="la_verdict",
+                )
+            with la_col4:
+                min_absorbed = st.number_input(
+                    f"Min projected {config_name} FP",
+                    min_value=0.0, max_value=100.0, value=10.0,
+                    step=5.0,
+                    key="la_min_fp",
+                )
+
+            filtered = league_alpha[
+                league_alpha["Pos"].isin(pos_filter)
+                & league_alpha["Origin"].isin(origin_filter)
+                & league_alpha["Verdict"].isin(verdict_filter)
+                & (league_alpha["Projected absorbed FP"]
+                   >= min_absorbed)
+            ].copy()
+            filtered.insert(
+                0, "#", range(1, len(filtered) + 1))
+            display_cols = [
+                "#", "Player", "Pos", "Team", "Origin",
+                "Verdict", "Projected absorbed FP",
+                "QB-route match %", "Top routes inherited",
+            ]
+            st.markdown(
+                f"**{len(filtered)} candidates** match your filters "
+                f"(of {len(league_alpha)} league-wide).")
+            st.dataframe(
+                filtered[display_cols].head(40),
+                use_container_width=True, hide_index=True,
+                height=560,
+            )
+
+            # Headline narrative for the very top candidate
+            if not filtered.empty:
+                top = filtered.iloc[0]
+                st.success(
+                    f"**🥇 The single biggest opportunity:** "
+                    f"{top['Player']} ({top['Pos']} · "
+                    f"{top['Team']} · {top['Origin']}) — "
+                    f"projected to absorb "
+                    f"**{top['Projected absorbed FP']:.1f} {config_name} "
+                    f"fantasy points** across "
+                    f"vacated routes ({top['Top routes inherited']}). "
+                    f"Verdict: {top['Verdict']}."
+                )
+
+        st.markdown("---")
+        st.markdown("### 🔍 Drill into a specific team")
 
         selected_scheme_team = st.selectbox(
             "Pick a team to drill into",
