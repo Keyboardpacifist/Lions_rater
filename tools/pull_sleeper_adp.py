@@ -36,6 +36,15 @@ OUT_PATH = OUT_DIR / "sleeper_adp.parquet"
 
 SLEEPER_PLAYERS_URL = "https://api.sleeper.app/v1/players/nfl"
 
+# Sleeper uses some legacy team abbreviations that don't match nflverse.
+# Normalize to nflverse style so downstream joins (attribution,
+# transitions, scheme fingerprint) all see consistent codes.
+SLEEPER_TO_NFLVERSE_TEAM = {
+    "LAR": "LA",     # Rams: Sleeper LAR → nflverse LA
+    "OAK": "LV",     # Raiders: Sleeper still uses legacy OAK
+    # Add more here if other mismatches surface (BAL/BLT, ARI/ARZ, etc.)
+}
+
 
 def _normalize_name(s: pd.Series) -> pd.Series:
     """Lower + strip punctuation/spaces for fuzzy join."""
@@ -56,11 +65,15 @@ def main() -> None:
             continue
         if not p.get("full_name"):
             continue
+        team = p.get("team")
+        # Normalize Sleeper team codes to nflverse style
+        if team in SLEEPER_TO_NFLVERSE_TEAM:
+            team = SLEEPER_TO_NFLVERSE_TEAM[team]
         rows.append({
             "sleeper_id":   sleeper_id,
             "full_name":    p.get("full_name"),
             "position":     p.get("position"),
-            "team":         p.get("team"),
+            "team":         team,
             "years_exp":    p.get("years_exp"),
             "search_rank":  p.get("search_rank"),
             "injury_status": p.get("injury_status"),
