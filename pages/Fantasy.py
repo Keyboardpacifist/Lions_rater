@@ -305,37 +305,37 @@ fp_totals["fp_rank"] = (
 gas_all = load_all_gas()
 gas_season_raw = gas_all[gas_all["season_year"] == prior_season].copy()
 
-
-def _agg_multi_team_gas(group):
-    g_total = group["games"].sum() if "games" in group.columns else 1
-    if g_total <= 0:
-        score = group["gas_score"].mean()
-    else:
-        score = (group["gas_score"]
-                  * group.get("games", 1)).sum() / g_total
-    primary = group.sort_values(
-        group.get("games", group["gas_score"]).name,
-        ascending=False
-    ).iloc[0]
-    return pd.Series({
-        "gas_score": score,
-        "gas_label": primary.get("gas_label", ""),
-    })
-
-
-gas_for_season = (
-    gas_season_raw.groupby(["player_id", "position"], as_index=False)
-                  .apply(_agg_multi_team_gas, include_groups=False)
-                  .reset_index(drop=True)
+# Games-weighted GAS per (player_id, position).
+if "games" in gas_season_raw.columns:
+    gas_season_raw["games"] = gas_season_raw["games"].fillna(1).astype(float)
+else:
+    gas_season_raw["games"] = 1.0
+gas_season_raw["weighted_gas"] = (
+    gas_season_raw["gas_score"] * gas_season_raw["games"]
 )
-# Re-attach grouping keys
-_keys = (
-    gas_season_raw[["player_id", "position"]]
+
+_agg = gas_season_raw.groupby(
+    ["player_id", "position"], as_index=False
+).agg(
+    weighted_sum=("weighted_gas", "sum"),
+    games_total=("games", "sum"),
+)
+_agg["gas_score"] = (
+    _agg["weighted_sum"] / _agg["games_total"].clip(lower=1)
+)
+
+# Take label + confidence from the team where the player had most games
+_primary = (
+    gas_season_raw.sort_values(
+        ["player_id", "position", "games"],
+        ascending=[True, True, False])
     .drop_duplicates(subset=["player_id", "position"])
-    .reset_index(drop=True)
+    [["player_id", "position", "gas_label"]]
 )
-gas_for_season = pd.concat(
-    [_keys, gas_for_season.reset_index(drop=True)], axis=1)
+
+gas_for_season = _agg[["player_id", "position", "gas_score"]].merge(
+    _primary, on=["player_id", "position"], how="left",
+)
 gas_for_season["gas_rank"] = (
     gas_for_season.groupby("position")["gas_score"]
                   .rank(ascending=False, method="min")
