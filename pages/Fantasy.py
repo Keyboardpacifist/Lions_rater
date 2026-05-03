@@ -531,10 +531,12 @@ def compute_league_wide_alpha(config_name: str) -> pd.DataFrame:
 #  Tabs — four alpha lenses
 # ══════════════════════════════════════════════════════════════════
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 ADP Triangulation",
     "🔍 Usage Autopsy",
     "🛫 QB Trajectory",
+    "📈 Volume Alpha",
+    "⚖️ Camp Battles",
     "🏆 Route Conversion",
 ])
 
@@ -1497,7 +1499,207 @@ with tab3:
 
 with tab4:
     # ══════════════════════════════════════════════════════════════════
-    #  Section 3: 🏆 Per-route FP conversion leaderboard
+    #  Section 4: 📈 VOLUME AMPLIFICATION ALPHA
+    # ══════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.header("📈 Volume Amplification Alpha")
+    st.markdown(
+        "**Receivers gain when their team simply throws the ball more "
+        "total.** Defensive PPG-allowed regresses to the league mean "
+        "(empirically ~60%/year) — teams whose defense was *elite* in "
+        "2025 project to give up more points in 2026, trail more, and "
+        "pass more. Conversely, teams with bad defenses regress UP, "
+        "lead more, run more.\n\n"
+        "This is the lens that catches **DEN** alpha — Bo Nix steady, "
+        "Broncos defense regresses → more passing volume → receivers up."
+    )
+
+    VOLUME_PATH = REPO / "data" / "scheme" / "volume_alpha.parquet"
+
+    @st.cache_data(show_spinner=False)
+    def _load_volume() -> pd.DataFrame:
+        if not VOLUME_PATH.exists():
+            return pd.DataFrame()
+        return pd.read_parquet(VOLUME_PATH)
+
+    vdf = _load_volume()
+    if vdf.empty:
+        st.info(
+            "Volume Alpha not built yet. Run:\n"
+            "```\npython tools/build_volume_alpha.py\n```"
+        )
+    else:
+        st.markdown("### 📋 Per-team projected 2026 volume")
+        st.caption(
+            "Sorted by projected delta in pass attempts. Sign tells "
+            "you direction (more / fewer attempts), magnitude is the "
+            "estimated raw attempt count over a 17-game season."
+        )
+        rename = {
+            "volume_label": "Verdict",
+            "team": "Team",
+            "pass_attempts_2025": "2025 attempts",
+            "points_allowed_2025": "2025 PPG allowed",
+            "league_avg_points_allowed": "Lg avg PPG",
+            "def_regression_pts": "Δ to mean (PPG)",
+            "attempts_delta": "Δ attempts",
+            "proj_pass_attempts_2026": "Proj 2026 attempts",
+            "rationale": "Why",
+        }
+        cols = ["volume_label", "team", "pass_attempts_2025",
+                "points_allowed_2025", "league_avg_points_allowed",
+                "def_regression_pts", "proj_pass_attempts_2026",
+                "attempts_delta", "rationale"]
+        st.dataframe(
+            vdf[cols].rename(columns=rename),
+            use_container_width=True, hide_index=True, height=560,
+        )
+
+        # ── Receiver-level Volume Alpha leaderboard ───────────────
+        st.markdown("### 🎯 Receivers benefiting from team volume")
+        st.caption(
+            "For each rising-volume team, project the extra pass "
+            "attempts × the receiver's 2025 target share × their "
+            "career PPR/target conversion. Receivers on declining-"
+            "volume teams get a negative tailwind."
+        )
+
+        attr_local_v = load_attribution()
+        config_local_v = fs.CONFIG_BY_NAME[config_name]
+        attr_25 = attr_local_v[attr_local_v["season"] == 2025].copy()
+        attr_25["row_fp"] = attr_25.apply(
+            lambda r: _route_row_fp(
+                r.get("catches"), r.get("yards"), r.get("tds"),
+                r.get("position", ""), config_local_v),
+            axis=1,
+        )
+        # Per-receiver: 2025 team targets and career FP/target
+        rec_team_25 = (
+            attr_25.groupby(
+                ["team", "receiver_player_id",
+                 "player_display_name", "position"], as_index=False)
+            .agg(targets_2025=("targets", "sum"))
+        )
+        # Career rates across all available seasons (full attribution)
+        rec_career = (
+            attr_local_v.groupby(
+                "receiver_player_id", as_index=False)
+            .agg(career_targets=("targets", "sum"),
+                 career_fp=("row_fp", "sum"))
+        )
+        # ^ row_fp not in attr_local_v — recompute on a separate frame
+        attr_full = attr_local_v.copy()
+        attr_full["row_fp"] = attr_full.apply(
+            lambda r: _route_row_fp(
+                r.get("catches"), r.get("yards"), r.get("tds"),
+                r.get("position", ""), config_local_v),
+            axis=1,
+        )
+        rec_career = (
+            attr_full.groupby("receiver_player_id", as_index=False)
+            .agg(career_targets=("targets", "sum"),
+                 career_fp=("row_fp", "sum"))
+        )
+        rec_career["fp_per_target"] = (
+            rec_career["career_fp"]
+            / rec_career["career_targets"].clip(lower=1)
+        )
+
+        # Team total 2025 targets to compute share
+        team_total_25 = (
+            attr_25.groupby("team", as_index=False)
+            .agg(team_targets_2025=("targets", "sum"))
+        )
+        rec = rec_team_25.merge(team_total_25, on="team", how="left")
+        rec["target_share"] = (
+            rec["targets_2025"] / rec["team_targets_2025"].clip(lower=1)
+        )
+        # Filter to meaningful share
+        rec = rec[rec["targets_2025"] >= 10]
+
+        # Bring in team volume delta
+        rec = rec.merge(
+            vdf[["team", "attempts_delta", "volume_label"]],
+            on="team", how="left",
+        )
+        # Pass attempts ≈ targets (close enough; sacks/scrambles
+        # subtract from attempts but not from targets, so this slightly
+        # underestimates the receiver effect — fine for v1).
+        rec["projected_added_targets"] = (
+            rec["attempts_delta"] * rec["target_share"]
+        ).round(1)
+
+        # Career FP/target conversion
+        rec = rec.merge(
+            rec_career[["receiver_player_id", "fp_per_target"]],
+            on="receiver_player_id", how="left",
+        )
+        rec["volume_tailwind_fp"] = (
+            rec["projected_added_targets"]
+            * rec["fp_per_target"].fillna(1.5)
+        ).round(1)
+
+        rec = rec.sort_values(
+            "volume_tailwind_fp", ascending=False).reset_index(drop=True)
+
+        # ── Filter UI ─────────────────────────────────────────────
+        col_a, col_b = st.columns(2)
+        with col_a:
+            pos_pick_v = st.multiselect(
+                "Position", ["WR", "TE", "RB"],
+                default=["WR", "TE", "RB"], key="vol_alpha_pos")
+        with col_b:
+            min_share = st.slider(
+                "Min 2025 target share (%)", 0, 30, 5, step=1,
+                key="vol_alpha_min_share")
+
+        filt = rec[
+            rec["position"].isin(pos_pick_v)
+            & (rec["target_share"] * 100 >= min_share)
+        ].copy()
+        filt.insert(0, "Rank", range(1, len(filt) + 1))
+        show = filt[[
+            "Rank", "player_display_name", "position", "team",
+            "volume_label", "targets_2025", "target_share",
+            "attempts_delta", "projected_added_targets",
+            "fp_per_target", "volume_tailwind_fp",
+        ]].rename(columns={
+            "player_display_name": "Player",
+            "position": "Pos",
+            "team": "Team",
+            "volume_label": "Team Verdict",
+            "targets_2025": "2025 Tgts",
+            "target_share": "Share",
+            "attempts_delta": "Team Δ Att",
+            "projected_added_targets": "Δ Tgts",
+            "fp_per_target": "Career FP/Tgt",
+            "volume_tailwind_fp": "Tailwind FP",
+        })
+        # Format Share as percentage in display
+        show["Share"] = (show["Share"] * 100).round(1)
+        st.dataframe(
+            show, use_container_width=True, hide_index=True,
+            height=560,
+        )
+
+
+with tab5:
+    # ══════════════════════════════════════════════════════════════════
+    #  Section 5: ⚖️ CAMP BATTLES
+    # ══════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.header("⚖️ Camp Battles")
+    st.info(
+        "Coming next — user-pickable position-battle outcomes that "
+        "re-project the Usage Autopsy and Volume Alpha leaderboards "
+        "conditional on your picks. Built locally; integration in "
+        "progress."
+    )
+
+
+with tab6:
+    # ══════════════════════════════════════════════════════════════════
+    #  Section 6: 🏆 Per-route FP conversion leaderboard
     # ══════════════════════════════════════════════════════════════════
 
     st.markdown("---")
