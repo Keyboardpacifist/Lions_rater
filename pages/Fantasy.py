@@ -1704,18 +1704,26 @@ with tab5:
 
     @st.cache_data(show_spinner=False)
     def _load_team_qbs_roster() -> pd.DataFrame:
-        """All QBs on each team's 2025 NFL roster (gsis_id + name)."""
-        try:
-            import nflreadpy as nfl
-            r = nfl.load_rosters(2025).to_pandas()
-        except Exception as e:
-            st.error(f"Could not load rosters: {e}")
+        """All QBs on each team's CURRENT (2026 offseason) roster
+        per Sleeper. Using Sleeper rather than nflverse rosters
+        because the latter is a 2025-season snapshot — Murray was
+        traded to MIN this offseason, but nflverse still shows him
+        on ARI. Sleeper reflects current depth charts.
+        """
+        adp = load_adp()
+        if adp.empty:
             return pd.DataFrame()
-        r = r[r["position"] == "QB"]
-        r = r.dropna(subset=["gsis_id", "team"])
-        r = r.drop_duplicates(["team", "gsis_id"])
-        return r[["team", "gsis_id", "full_name", "status",
-                  "years_exp"]].copy()
+        qbs = adp[adp["position"] == "QB"].dropna(
+            subset=["team"]).copy()
+        # Sleeper rookies often have no gsis_id (our crosswalk only
+        # covers prior-NFL players). Drop them for now — they have
+        # no career data anyway, so they can't drive a trajectory
+        # projection. v2: handle rookies as "no-data" picks.
+        qbs = qbs.rename(columns={"player_id": "gsis_id"})
+        qbs = qbs.dropna(subset=["gsis_id"])
+        qbs["status"] = "ACT"
+        return qbs[["team", "gsis_id", "full_name", "status",
+                    "years_exp"]].copy()
 
     qb_gas_full = _load_qb_gas_seasons()
     team_qbs = _load_team_qbs_roster()
@@ -1817,61 +1825,87 @@ with tab5:
                 "rationale": "; ".join(bits),
             }
 
-        # ── Init session state ────────────────────────────────────
-        if "qb_picks" not in st.session_state:
-            st.session_state["qb_picks"] = {}
-
-        # Default each team's pick to the 2025 primary
-        defaults = dict(zip(traj_df_local["team"],
-                              traj_df_local["qb_player_id"]))
-        for t, qid in defaults.items():
-            st.session_state["qb_picks"].setdefault(t, qid)
-
-        # Build per-team option list — every QB on the team's 2025
-        # roster, sorted by years_exp descending (vets first)
+        # ── Build per-team option list from CURRENT Sleeper roster ─
         opts_by_team: dict[str, list[tuple[str, str, float]]] = {}
         for team, sub in team_qbs.groupby("team"):
             opts = list(zip(sub["gsis_id"], sub["full_name"],
                             sub["years_exp"].fillna(0).astype(float)))
-            # Ensure the 2025 primary is in the list (it should be,
-            # but defensive merge in case roster excluded them)
-            primary_id = defaults.get(team)
-            if primary_id and primary_id not in {o[0] for o in opts}:
-                primary_name = traj_df_local[
-                    traj_df_local["team"] == team
-                ]["qb_name"].iloc[0]
-                opts.insert(0, (primary_id, primary_name, 0.0))
             opts.sort(key=lambda o: -o[2])  # vets first
             opts_by_team[team] = opts
 
+        # ── Init defaults — 2025 primary IF still on the roster ───
+        # Sleeper reflects current 2026 offseason rosters, so primaries
+        # who got traded (Murray ARI→MIN) or retired (Rodgers PIT)
+        # won't be on the team anymore. In those cases, default pick
+        # falls to the most senior current QB on the team.
+        primary_2025 = dict(zip(traj_df_local["team"],
+                                  traj_df_local["qb_player_id"]))
+        primary_2025_name = dict(zip(traj_df_local["team"],
+                                       traj_df_local["qb_name"]))
+        defaults: dict[str, str] = {}
+        primary_departed: dict[str, str] = {}  # team → old primary name
+        for team, opts in opts_by_team.items():
+            if not opts:
+                continue
+            current_ids = {o[0] for o in opts}
+            old_primary = primary_2025.get(team)
+            if old_primary and old_primary in current_ids:
+                defaults[team] = old_primary
+            else:
+                # 2025 primary departed (trade / retirement / cut)
+                defaults[team] = opts[0][0]   # most senior current QB
+                if old_primary:
+                    primary_departed[team] = (
+                        primary_2025_name.get(team, "?"))
+
+        if "qb_picks" not in st.session_state:
+            st.session_state["qb_picks"] = {}
+        for t, qid in defaults.items():
+            st.session_state["qb_picks"].setdefault(t, qid)
+
         # ── Auto-detect "contested" teams ─────────────────────────
-        # Surface teams where the 2025 primary is likely not the
-        # 2026 starter. Heuristics:
-        #   • 2025 primary nfl_years_exp >= 14 (retirement risk)
-        #   • 2025 primary missed >9 games last year (injury, role
-        #     was a fill-in)
-        #   • At least one OTHER QB on the roster with years_exp >=
-        #     5 (real backup vet) OR >0 prior NFL starting experience.
+        # Three flags:
+        #   1. 2025 primary departed (trade / retirement)
+        #   2. 2025 primary nfl_years_exp >= 14 (retirement risk)
+        #   3. 2025 primary missed >6 games last year (was a fill-in)
+        #   4. Roster has a vet (years_exp >= 5) other than the
+        #      2025 primary — meaningful backup or new acquisition
         contested_teams = []
-        for _, r in traj_df_local.iterrows():
-            t = r["team"]
-            primary_yrs = float(r["nfl_years_exp"] or 0)
-            primary_games = int(r["last_games"])
-            others = [o for o in opts_by_team.get(t, [])
-                      if o[0] != r["qb_player_id"]]
+        for team, opts in opts_by_team.items():
+            if team in primary_departed:
+                contested_teams.append(team)
+                continue
+            row = traj_df_local[traj_df_local["team"] == team]
+            if row.empty:
+                continue
+            row = row.iloc[0]
+            primary_yrs = float(row["nfl_years_exp"] or 0)
+            primary_games = int(row["last_games"])
+            others = [o for o in opts if o[0] != row["qb_player_id"]]
             n_vet_others = sum(1 for o in others if o[2] >= 5)
             if (primary_yrs >= 14
                     or primary_games <= 10
                     or n_vet_others >= 1):
-                contested_teams.append(t)
+                contested_teams.append(team)
 
         st.markdown("### 🏈 Pick the 2026 starting QB per team")
         st.caption(
             f"**{len(contested_teams)} teams flagged as contested** "
-            "(aging vet, injury fill-in, or vet backup on roster). "
-            "Override below; all other teams default to their 2025 "
-            "primary. Picks persist for this session only."
+            "(aging vet, injury fill-in, primary departed, or vet "
+            "backup on roster). Override below; all other teams "
+            "default to their 2025 primary. Picks persist for this "
+            "session only."
         )
+
+        if primary_departed:
+            departed_lines = [
+                f"**{old_name}** ({tm}) — pick a 2026 starter"
+                for tm, old_name in primary_departed.items()
+            ]
+            st.warning(
+                "🚨 **2025 primary no longer on team's roster:**\n\n"
+                + "\n\n".join(f"• {line}" for line in departed_lines)
+            )
 
         with st.expander(f"Show all 32 teams (not just contested)",
                             expanded=False):
@@ -2001,6 +2035,192 @@ with tab5:
             "assumption. v2 will pipe Camp Battles picks through "
             "those leaderboards too."
         )
+
+        # ══════════════════════════════════════════════════════════
+        #  Receiver/TE camp battles — WR1 / WR2 / WR3 / TE1 picker
+        # ══════════════════════════════════════════════════════════
+        st.markdown("---")
+        st.markdown("### 🎯 WR1 / WR2 / WR3 + TE1 picker")
+        st.markdown(
+            "Receiver and TE roles are contested any time a team had "
+            "free-agent arrivals, drafted a meaningful rookie, or had "
+            "a star return from injury. Pick who you think wins each "
+            "slot — defaults to the leading 2025 receiver still on "
+            "the roster. **Picks don't yet propagate to the Usage "
+            "Autopsy / Volume Alpha leaderboards (v2 work).**"
+        )
+
+        # Pull current Sleeper receivers + 2025 target volume
+        adp_full = load_adp()
+        recv_pool = adp_full[
+            adp_full["position"].isin(["WR", "TE"])
+            & adp_full["team"].notna()
+            & adp_full["player_id"].notna()
+        ].copy()
+        recv_pool = recv_pool.rename(
+            columns={"player_id": "gsis_id"})
+
+        # 2025 targets per receiver, from attribution
+        attr_for_battles = load_attribution()
+        if not attr_for_battles.empty:
+            tgts_25 = (
+                attr_for_battles[attr_for_battles["season"] == 2025]
+                .groupby("receiver_player_id", as_index=False)
+                .agg(targets_2025=("targets", "sum"))
+                .rename(columns={
+                    "receiver_player_id": "gsis_id"})
+            )
+            recv_pool = recv_pool.merge(
+                tgts_25, on="gsis_id", how="left")
+            recv_pool["targets_2025"] = (
+                recv_pool["targets_2025"].fillna(0))
+        else:
+            recv_pool["targets_2025"] = 0
+
+        # Detect MEANINGFUL contested teams. Two qualifying signals:
+        #   (A) STAR arrival — career_targets >= 300 (Pittman 722,
+        #       Mike Evans 1304, DJ Moore 990 etc.). Filters out
+        #       depth adds (Tutu Atwell 180, Tyler Johnson 145).
+        #   (B) Tight WR1-vs-WR2 race: top-2 incumbents within 15
+        #       targets AND both >= 80 in 2025 (real competition).
+        trans_for_battles = load_transitions()
+        teams_with_arrivals: set[str] = set()
+        if not trans_for_battles.empty:
+            arrivals_recv = trans_for_battles[
+                (trans_for_battles["transition_type"] == "arrival")
+                & (trans_for_battles["position"]
+                   .isin(["WR", "TE"]))
+                & (trans_for_battles["career_targets"]
+                   .fillna(0) >= 300)
+            ]
+            teams_with_arrivals = set(
+                arrivals_recv["team"].dropna().unique())
+
+        close_share_teams: set[str] = set()
+        if not recv_pool.empty:
+            for tm, sub in recv_pool.groupby("team"):
+                top2 = sub.nlargest(2, "targets_2025")
+                if len(top2) < 2:
+                    continue
+                gap = (top2.iloc[0]["targets_2025"]
+                       - top2.iloc[1]["targets_2025"])
+                both_significant = (
+                    top2.iloc[0]["targets_2025"] >= 80
+                    and top2.iloc[1]["targets_2025"] >= 80)
+                if gap <= 15 and both_significant:
+                    close_share_teams.add(tm)
+
+        contested_recv_teams = sorted(
+            teams_with_arrivals | close_share_teams)
+        st.caption(
+            f"**{len(contested_recv_teams)} teams flagged as "
+            "contested** (had a vet WR/TE arrival, or top-2 "
+            "incumbents within 30 targets of each other in 2025)."
+        )
+
+        recv_show_all = st.checkbox(
+            "Show every team (not just contested)", value=False,
+            key="cb_recv_show_all")
+        recv_teams_to_render = (
+            sorted(recv_pool["team"].unique())
+            if recv_show_all else contested_recv_teams)
+
+        if "wr_te_picks" not in st.session_state:
+            st.session_state["wr_te_picks"] = {}
+
+        # Per-team rendering
+        for team in recv_teams_to_render:
+            sub = recv_pool[recv_pool["team"] == team].copy()
+            wrs = sub[sub["position"] == "WR"].sort_values(
+                "targets_2025", ascending=False)
+            tes = sub[sub["position"] == "TE"].sort_values(
+                "targets_2025", ascending=False)
+            if wrs.empty and tes.empty:
+                continue
+
+            with st.expander(f"⚖️ {team}", expanded=False):
+                cols = st.columns(4)
+                slots = [
+                    ("WR1", wrs, cols[0]),
+                    ("WR2", wrs, cols[1]),
+                    ("WR3", wrs, cols[2]),
+                    ("TE1", tes, cols[3]),
+                ]
+                team_picks = st.session_state["wr_te_picks"].setdefault(
+                    team, {})
+                for slot, pool, col in slots:
+                    if pool.empty:
+                        with col:
+                            st.caption(f"**{slot}**")
+                            st.write("—")
+                        continue
+                    # Default = nth-ranked by targets (n = 1, 2, 3)
+                    default_rank = (
+                        1 if slot == "WR1" else
+                        2 if slot == "WR2" else
+                        3 if slot == "WR3" else 1)
+                    if len(pool) >= default_rank:
+                        default_pid = pool.iloc[
+                            default_rank - 1]["gsis_id"]
+                    else:
+                        default_pid = pool.iloc[0]["gsis_id"]
+                    cur_pid = team_picks.get(slot, default_pid)
+                    # Build options sorted by 2025 targets
+                    pool_ids = pool["gsis_id"].tolist()
+                    pool_labels = [
+                        f"{r['full_name']} ({int(r['targets_2025'])} "
+                        f"tgts '25)"
+                        for _, r in pool.iterrows()
+                    ]
+                    try:
+                        default_idx = pool_ids.index(cur_pid)
+                    except ValueError:
+                        default_idx = 0
+                    with col:
+                        pick = col.selectbox(
+                            f"**{slot}**",
+                            options=range(len(pool_labels)),
+                            format_func=(
+                                lambda i, lab=pool_labels: lab[i]),
+                            index=default_idx,
+                            key=f"wrte_{team}_{slot}",
+                        )
+                        team_picks[slot] = pool_ids[pick]
+
+        # Summary of receiver/TE picks
+        n_overrides = 0
+        for tm, picks in st.session_state.get(
+                "wr_te_picks", {}).items():
+            sub = recv_pool[recv_pool["team"] == tm]
+            if sub.empty:
+                continue
+            wrs = sub[sub["position"] == "WR"].sort_values(
+                "targets_2025", ascending=False)
+            tes = sub[sub["position"] == "TE"].sort_values(
+                "targets_2025", ascending=False)
+            for slot, pid in picks.items():
+                pool = wrs if slot.startswith("WR") else tes
+                if pool.empty:
+                    continue
+                default_rank = (
+                    1 if slot == "WR1" else
+                    2 if slot == "WR2" else
+                    3 if slot == "WR3" else 1)
+                if len(pool) >= default_rank:
+                    default_pid = pool.iloc[
+                        default_rank - 1]["gsis_id"]
+                    if pid != default_pid:
+                        n_overrides += 1
+        if n_overrides:
+            st.success(
+                f"You overrode {n_overrides} receiver/TE slot(s). "
+                "These picks are saved in this session and will feed "
+                "into the v2 propagation work.")
+        else:
+            st.caption(
+                "No receiver/TE overrides yet — defaults reflect "
+                "the leading 2025 target-getter still on each "
+                "team's current roster.")
 
 
 with tab6:
