@@ -276,10 +276,28 @@ h1, h2, h3 { color: #0076B6 !important; }
  * INSTANTIATE (so st.sidebar.X() calls keep their session_state), they
  * just aren't visible. Position-page sliders default to their initial
  * values until we resurface them in main-body expanders. To restore
- * the sidebar later, delete this block — no code changes needed. */
-[data-testid="stSidebar"] { display: none !important; }
-[data-testid="collapsedControl"] { display: none !important; }
-section[data-testid="stSidebarCollapsedControl"] { display: none !important; }
+ * the sidebar later, delete this block — no code changes needed.
+ *
+ * Multiple selectors because Streamlit's DOM varies by version + mode
+ * (expanded vs collapsed shows different elements). We nuke them all
+ * plus reclaim the left margin the sidebar would have occupied. */
+[data-testid="stSidebar"],
+[data-testid="stSidebarNav"],
+[data-testid="stSidebarNavItems"],
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapseButton"],
+section[data-testid="stSidebarCollapsedControl"],
+button[kind="header"] {
+    display: none !important;
+    width: 0 !important;
+    visibility: hidden !important;
+}
+/* Pull the main content back to the left edge — without this the
+ * page still has the empty sidebar's reserved gutter. */
+section.main, [data-testid="stMain"], [data-testid="stAppViewBlockContainer"] {
+    margin-left: 0 !important;
+    padding-left: 1rem !important;
+}
 </style>
 """
 

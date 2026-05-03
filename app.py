@@ -9,7 +9,14 @@ from pathlib import Path
 from scipy.stats import norm
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="NFL Rater", page_icon="🏈", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="NFL Rater", page_icon="🏈", layout="wide", initial_sidebar_state="collapsed")
+
+# Apply the shared CSS — also hides the Streamlit sidebar globally
+# (see lib_shared.SHARED_CSS for the relevant block). Position-page
+# sidebar widgets still instantiate behind the hidden sidebar so
+# their session_state keeps applying.
+from lib_shared import inject_css
+inject_css()
 
 # Fresh-session reset — clear detail-mode markers from any prior browser
 # session so the page always loads into the leaderboard view, never into
