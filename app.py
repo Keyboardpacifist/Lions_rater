@@ -62,12 +62,6 @@ if mode == "NFL":
         internal_abbr,
     )
 
-    # ── Stylized team grid — the new front door ──
-    from lib_team_grid import render_team_grid
-    render_team_grid(default_season=2025,
-                       title="🏈  Pick your team")
-    st.markdown("---")
-
     # Deferred page-switch from the player-search callback — fires
     # BEFORE any landing-page widgets render so the navigation looks
     # instant. Callbacks can't call st.switch_page directly.
@@ -228,6 +222,14 @@ if mode == "NFL":
     st.session_state.selected_team = selected_team
     st.session_state.selected_season = selected_season
     team_name = NFL_TEAMS.get(selected_team, selected_team)
+
+    # ── Stylized team grid — moved below the search row so player
+    # search lives just under the College/Pro selector at the top.
+    st.markdown("---")
+    from lib_team_grid import render_team_grid
+    render_team_grid(default_season=2025,
+                       title="🏈  Pick your team")
+    st.markdown("---")
 
     # ── Position + metric pickers (inline leaderboard preview) ─────
     import polars as pl
@@ -845,17 +847,10 @@ else:
     if "college_school_v2" not in st.session_state:
         st.session_state.college_school_v2 = ALL_SCHOOLS_LABEL
 
-    # ── Stylized CFB grid front-door ──
-    # Only render when no school is filtered yet — once the user picks
-    # a team, the grid hides and the existing leaderboards take over.
-    if st.session_state.college_school_v2 == ALL_SCHOOLS_LABEL:
-        from lib_college_grid import render_college_grid
-        render_college_grid(
-            all_schools=get_school_list(),
-            on_pick_session_key="college_school_v2",
-            title="🎓  Pick your school",
-        )
-        st.markdown("---")
+    # NOTE: the stylized CFB grid front-door used to render here, but
+    # the player search now lives at the top (just below the
+    # College/Pro toggle). The grid is rendered AFTER the search row;
+    # see the matching block further down in this section.
 
     ALL_POSITIONS_LABEL_COLLEGE = "🏈 All positions"
     COLLEGE_POSITIONS_FOR_TOP = [ALL_POSITIONS_LABEL_COLLEGE, "QB", "WR", "TE", "RB", "OL", "DE", "DT", "LB", "CB", "S"]
@@ -1053,6 +1048,20 @@ else:
         selected_position = st.selectbox("Position", options=COLLEGE_POSITIONS_FOR_TOP,
                                           index=0, key="college_position_top",
                                           label_visibility="collapsed")
+
+    # ── Stylized CFB grid — moved below the search row so player
+    # search lives just under the College/Pro selector at the top.
+    # Only render when no school is filtered yet — once the user picks
+    # a team, the grid hides and the existing leaderboards take over.
+    if st.session_state.college_school_v2 == ALL_SCHOOLS_LABEL:
+        st.markdown("---")
+        from lib_college_grid import render_college_grid
+        render_college_grid(
+            all_schools=get_school_list(),
+            on_pick_session_key="college_school_v2",
+            title="🎓  Pick your school",
+        )
+        st.markdown("---")
 
     # Resolve filter modes:
     #   - Specific school: school filter wins; conference is informational.
