@@ -31,6 +31,13 @@ if "_app_session_initialized_v3" not in st.session_state:
 
 COLLEGE_DATA_DIR = Path(__file__).resolve().parent / "data" / "college"
 
+# ── Top tabs (replaces sidebar nav) ───────────────────────────
+# Streamlit's left sidebar is hidden globally via lib_shared.SHARED_CSS.
+# These four tabs + the position dropdown below ARE the navigation now.
+from lib_top_nav import render_top_nav
+render_top_nav(active="landing")
+st.markdown("---")
+
 # ── Mode toggle ───────────────────────────────────────────────
 col_title, col_toggle = st.columns([3, 2])
 with col_title:

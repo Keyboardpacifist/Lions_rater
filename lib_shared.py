@@ -270,6 +270,16 @@ h1, h2, h3 { color: #0076B6 !important; }
 }
 .algo-card h4 { margin: 0 0 0.25rem 0; color: #0076B6 !important; }
 .algo-meta { font-size: 0.8rem; color: #6c757d; }
+
+/* === Sidebar hidden (2026-05-03) ====================================
+ * Streamlit's left sidebar is hidden globally. Sidebar widgets still
+ * INSTANTIATE (so st.sidebar.X() calls keep their session_state), they
+ * just aren't visible. Position-page sliders default to their initial
+ * values until we resurface them in main-body expanders. To restore
+ * the sidebar later, delete this block — no code changes needed. */
+[data-testid="stSidebar"] { display: none !important; }
+[data-testid="collapsedControl"] { display: none !important; }
+section[data-testid="stSidebarCollapsedControl"] { display: none !important; }
 </style>
 """
 
