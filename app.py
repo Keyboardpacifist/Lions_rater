@@ -201,6 +201,19 @@ if mode == "NFL":
             st.session_state[f"{key_prefix}_selected_player_{sel_team}_{sel_season}"] = sel_name
             st.session_state["_pending_nfl_page_switch"] = page_path
 
+    def _on_landing_team_change():
+        """When user picks a team in the landing dropdown, defer a
+        page switch to pages/Team.py — matches the team-grid card
+        click behavior. League-wide stays on landing."""
+        label = st.session_state.get("landing_team_v2")
+        if not label or label == LEAGUE_WIDE_LABEL:
+            return
+        abbr_part = label.split(" — ")[0] if " — " in label else label
+        abbr = internal_abbr(abbr_part)
+        if abbr in NFL_TEAMS:
+            st.session_state["selected_team"] = abbr
+            st.session_state["_pending_nfl_page_switch"] = "pages/Team.py"
+
     col_search, col_team, col_position, col_season = st.columns(
         [3, 2, 2, 1])
     with col_search:
@@ -216,7 +229,9 @@ if mode == "NFL":
         )
     with col_team:
         selected_label = st.selectbox("Team", options=team_labels, index=current_idx,
-                                       key="landing_team_v2", label_visibility="collapsed")
+                                       key="landing_team_v2",
+                                       label_visibility="collapsed",
+                                       on_change=_on_landing_team_change)
     with col_position:
         # Position dropdown — jumps to position page on pick.
         render_position_dropdown(

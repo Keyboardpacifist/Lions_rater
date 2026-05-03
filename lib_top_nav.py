@@ -81,20 +81,32 @@ def render_position_dropdown(*, key: str = "topnav_position_pick",
     """Render JUST the position dropdown — the 16-entry selectbox that
     jumps to the chosen position page. Designed to be dropped inside
     an existing column. No labels by default so it nests cleanly.
+
+    Uses a nonce-suffixed widget key so each successful pick gets a
+    fresh widget on the next render. Streamlit forbids setting
+    session_state[widget_key] AFTER the widget instantiates — the
+    nonce trick sidesteps that by giving the next render a brand-new
+    key that defaults back to the placeholder.
     """
+    nonce_key = f"{key}_nonce"
+    if nonce_key not in st.session_state:
+        st.session_state[nonce_key] = 0
+    full_key = f"{key}_{st.session_state[nonce_key]}"
+
     labels = [opt[0] for opt in POSITION_OPTIONS]
     pick_label = st.selectbox(
         label,
         options=labels,
         index=placeholder_idx,
-        key=key,
+        key=full_key,
         label_visibility=label_visibility,
     )
     page_path = dict(POSITION_OPTIONS).get(pick_label)
     if page_path:
-        # Reset the dropdown to the sentinel so the next render
-        # doesn't immediately re-trigger the navigation.
-        st.session_state[key] = labels[placeholder_idx]
+        # Bump nonce so next render gets a fresh widget at index=0.
+        # Don't touch session_state[full_key] — Streamlit forbids it
+        # after the widget already instantiated this render.
+        st.session_state[nonce_key] += 1
         st.switch_page(page_path)
 
 
