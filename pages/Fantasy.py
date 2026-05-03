@@ -30,6 +30,7 @@ from pathlib import Path
 import lib_scoring as fs
 from lib_gas_panels import load_gas_data
 from lib_shared import inject_css
+from lib_top_nav import render_home_button
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -53,6 +54,7 @@ st.set_page_config(
 inject_css()
 
 
+render_home_button()  # ← back to landing
 # ── Data loaders ──────────────────────────────────────────────────
 
 @st.cache_data(show_spinner=False)

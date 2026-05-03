@@ -10,10 +10,12 @@ import streamlit as st
 import plotly.graph_objects as go
 from scipy.stats import norm
 from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, render_player_card, score_players
+from lib_top_nav import render_home_button
 
 st.set_page_config(page_title="NFL OC Rater", page_icon="🦁", layout="wide", initial_sidebar_state="expanded")
 inject_css()
 
+render_home_button()  # ← back to landing
 POSITION_GROUP = "oc"
 PAGE_URL = "https://lions-rater.streamlit.app/OC"
 DATA_PATH_CAREER = Path(__file__).resolve().parent.parent / "data" / "master_ocs_with_z.parquet"
@@ -53,6 +55,12 @@ RADAR_LABEL_OVERRIDES = {"epa_per_play_z": "Off EPA", "pass_epa_per_play_z": "Pa
 def zscore_to_percentile(z):
     if pd.isna(z): return None
     return float(norm.cdf(z) * 100)
+
+def format_percentile(pct):
+    if pct is None or pd.isna(pct): return "—"
+    if pct >= 99: return "top 1%"
+    if pct >= 50: return f"top {100 - int(pct)}%"
+    return f"bottom {int(pct)}%"
 
 def build_radar_figure(player, stat_labels, stat_methodology):
     axes, values, descriptions = [], [], []

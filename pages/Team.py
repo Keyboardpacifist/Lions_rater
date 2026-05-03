@@ -16,6 +16,7 @@ import polars as pl
 import streamlit as st
 
 from lib_shared import inject_css, team_theme
+from lib_top_nav import render_home_button
 from lib_team_comps import find_team_comps, load_team_seasons
 from lib_team_contention import (
     classify_team,
@@ -44,6 +45,7 @@ st.set_page_config(
 )
 inject_css()
 
+render_home_button()  # ← back to landing
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # ── Pick team / season ──────────────────────────────────────────

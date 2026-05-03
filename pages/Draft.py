@@ -21,6 +21,7 @@ from lib_draft_2027 import (
 )
 from lib_draft_stats import render_prospect_stats
 from lib_shared import inject_css
+from lib_top_nav import render_home_button
 
 
 def _fmt(v, fmt: str = "{:.0f}") -> str:
@@ -102,6 +103,7 @@ st.set_page_config(
 )
 inject_css()
 
+render_home_button()  # ← back to landing
 # ── Hero ────────────────────────────────────────────────────────
 st.markdown("""
 <div style="background:linear-gradient(135deg,#0a1f4a 0%,#1e3a8a 100%);

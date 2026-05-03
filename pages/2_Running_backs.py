@@ -60,6 +60,7 @@ st.set_page_config(
 )
 inject_css()
 
+render_home_button()  # ← back to landing
 # ── Team & Season selector ────────────────────────────────────
 selected_team, selected_season = get_team_and_season()
 team_name = NFL_TEAMS.get(selected_team, selected_team)
@@ -937,6 +938,7 @@ _card_stats = [
 
 from lib_shared import team_theme as _theme
 from lib_trading_card import render_card_download_button as _render_card
+from lib_top_nav import render_home_button
 
 _render_card(
     player_name=selected,

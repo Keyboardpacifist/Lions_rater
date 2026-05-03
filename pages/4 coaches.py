@@ -44,6 +44,7 @@ from lib_shared import (
     render_player_card,
     score_players,
 )
+from lib_top_nav import render_home_button
 
 # ============================================================
 # Page config
@@ -56,6 +57,7 @@ st.set_page_config(
 )
 inject_css()
 
+render_home_button()  # ← back to landing
 POSITION_GROUP = "coach"
 PAGE_URL = "https://lions-rater.streamlit.app/Coaches"
 DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "master_coaches_with_z.parquet"

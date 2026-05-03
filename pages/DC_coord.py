@@ -10,10 +10,12 @@ import streamlit as st
 import plotly.graph_objects as go
 from scipy.stats import norm
 from lib_shared import apply_algo_weights, community_section, compute_effective_weights, get_algorithm_by_slug, inject_css, render_player_card, score_players
+from lib_top_nav import render_home_button
 
 st.set_page_config(page_title="NFL DC Rater", page_icon="🦁", layout="wide", initial_sidebar_state="expanded")
 inject_css()
 
+render_home_button()  # ← back to landing
 POSITION_GROUP = "dc"
 PAGE_URL = "https://lions-rater.streamlit.app/DC"
 DATA_PATH_CAREER = Path(__file__).resolve().parent.parent / "data" / "master_dcs_with_z.parquet"

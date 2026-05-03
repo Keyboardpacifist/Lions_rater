@@ -21,6 +21,7 @@ import pandas as pd
 import streamlit as st
 
 from lib_shared import inject_css
+from lib_top_nav import render_home_button
 import lib_scoring as fs
 
 
@@ -38,6 +39,7 @@ st.set_page_config(page_title="Scheme Fit", page_icon="🧬",
 inject_css()
 
 
+render_home_button()  # ← back to landing
 @st.cache_data(show_spinner=False)
 def load_team_fp() -> pd.DataFrame:
     if not TEAM_FP.exists():

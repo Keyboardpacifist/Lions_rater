@@ -119,10 +119,29 @@ def render_top_nav(*, active: str | None = None,
         render_position_dropdown()
 
 
+def render_home_button(*, label: str = "← Home",
+                          key: str = "page_home_btn") -> None:
+    """Small "back to landing" button at the top of any non-landing
+    page. Designed to be the first thing rendered after the page
+    config so users always have a path back to app.py.
+
+    With the Streamlit sidebar hidden globally, this is the user's
+    only way back to the home view (other than browser-back).
+    """
+    # Constrain to a small column on the left so it doesn't span
+    # the page. Width ratio chosen so the button looks like a
+    # navigation link, not a primary CTA.
+    col_home, _ = st.columns([1, 6])
+    with col_home:
+        if st.button(label, key=key, use_container_width=True):
+            st.switch_page("app.py")
+
+
 __all__ = [
     "render_top_nav",
     "render_top_tabs",
     "render_position_dropdown",
+    "render_home_button",
     "TOP_TABS",
     "POSITION_OPTIONS",
 ]

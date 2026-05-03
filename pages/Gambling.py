@@ -80,6 +80,7 @@ from lib_trend_divergence import (
     league_divergence_today,
 )
 from lib_shared import inject_css
+from lib_top_nav import render_home_button
 
 
 st.set_page_config(
@@ -91,6 +92,7 @@ st.set_page_config(
 inject_css()
 
 
+render_home_button()  # ← back to landing
 st.markdown("# 🎲 Gambling Lab")
 st.caption("Internal playground for the gambling-product engines. "
            "Numbers shown here are empirical from historical data — no "

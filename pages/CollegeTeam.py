@@ -17,6 +17,7 @@ import polars as pl
 import streamlit as st
 
 from lib_shared import inject_css, college_theme, render_player_card
+from lib_top_nav import render_home_button
 from lib_college_team_comps import (
     find_college_team_comps,
     load_college_team_seasons,
@@ -31,6 +32,7 @@ st.set_page_config(
 )
 inject_css()
 
+render_home_button()  # ← back to landing
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA = REPO_ROOT / "data" / "college"
 DATA_ROOT = REPO_ROOT / "data"

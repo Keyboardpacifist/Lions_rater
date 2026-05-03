@@ -21,6 +21,7 @@ from lib_shared import (
     upvote_card,
     team_theme,
 )
+from lib_top_nav import render_home_button
 
 st.set_page_config(
     page_title="Lions Rater — Community Gallery",
@@ -30,6 +31,7 @@ st.set_page_config(
 )
 inject_css()
 
+render_home_button()  # ← back to landing
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = REPO_ROOT / "data"
 
