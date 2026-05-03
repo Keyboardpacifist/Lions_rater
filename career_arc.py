@@ -755,6 +755,46 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
                 selected_nfl_metrics = [selected_nfl_metric]
                 metric_caption_label = selected_nfl_metric.lower()
 
+            # ── Compare to another player — render BEFORE the chart
+            # so we can overlay the comparison player on the SAME
+            # figure rather than building two stacked charts.
+            nfl_compare = st.checkbox(
+                "🔍 Compare to another NFL player",
+                key=f"nfl_career_compare_{player_name}",
+                help=("Overlay a second player's career arc on this "
+                      "same chart for direct visual comparison."),
+            )
+            cmp_history = None
+            compare_name_nfl = None
+            if nfl_compare and name_col in league_df.columns:
+                all_pos_players = sorted(set(
+                    str(n) for n in league_df[name_col].dropna().unique()
+                    if str(n).strip()
+                ))
+                default_cmp = next(
+                    (p for p in all_pos_players if p != player_name),
+                    all_pos_players[0] if all_pos_players else None)
+                if default_cmp:
+                    compare_name_nfl = st.selectbox(
+                        f"Comparison {position_label[:-1].lower() if position_label.endswith('s') else position_label.lower()}",
+                        options=all_pos_players,
+                        index=all_pos_players.index(default_cmp),
+                        key=f"nfl_career_compare_select_{player_name}",
+                    )
+                    if compare_name_nfl:
+                        cmp_history = find_player_history(
+                            league_df, None, compare_name_nfl,
+                            id_col=id_col, name_col=name_col,
+                        )
+                        if len(cmp_history) > 0:
+                            cmp_history = cmp_history.sort_values(
+                                nfl_season_col).reset_index(drop=True)
+                            cmp_history["composite_z"] = cmp_history.apply(
+                                lambda row: compute_composite_score(
+                                    row, z_score_cols), axis=1)
+                        else:
+                            cmp_history = None
+
             fig = _render_nfl_career_chart(
                 history_df=nfl_history, season_col=nfl_season_col,
                 team_col=team_col, league_df=league_df,
@@ -764,13 +804,80 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
                 multi_metric=nfl_multi_metric,
                 key_suffix=player_name,
             )
+
+            # ── Overlay the comparison player as a second trace ──
+            if (fig is not None and cmp_history is not None
+                    and not cmp_history.empty and compare_name_nfl):
+                # Resolve which y-column to plot for the second
+                # player. Single-metric path mirrors what the primary
+                # chart did at line ~504; multi-metric path adds one
+                # trace per selected metric.
+                COMPARE_COLOR = "#ff7f0e"
+                metric_columns = {"Composite score": "composite_z"}
+                for z_col in z_score_cols:
+                    if (z_col in nfl_history.columns
+                            and nfl_history[z_col].notna().any()):
+                        label = stat_labels.get(
+                            z_col,
+                            z_col.replace("_z", "").replace("_", " ").title())
+                        metric_columns[label] = z_col
+
+                _seasons_cmp = cmp_history[nfl_season_col].astype(int).tolist()
+
+                def _add_cmp_trace(value_col: str, name: str,
+                                       dash: str = "dash") -> None:
+                    if value_col not in cmp_history.columns:
+                        return
+                    yvals = cmp_history[value_col].tolist()
+                    if not any(pd.notna(v) for v in yvals):
+                        return
+                    fig.add_trace(go.Scatter(
+                        x=_seasons_cmp,
+                        y=yvals,
+                        mode="lines+markers",
+                        name=name,
+                        line=dict(color=COMPARE_COLOR, width=3,
+                                  dash=dash),
+                        marker=dict(size=11, color=COMPARE_COLOR,
+                                    line=dict(width=2, color="white")),
+                        hovertemplate=(
+                            f"<b>{compare_name_nfl}</b><br>"
+                            "Season: %{x}<br>%{y:+.2f}"
+                            "<extra></extra>"
+                        ),
+                    ))
+
+                if nfl_multi_metric:
+                    for m in selected_nfl_metrics:
+                        col = metric_columns.get(m)
+                        if col:
+                            _add_cmp_trace(col, f"{compare_name_nfl} · {m}")
+                else:
+                    primary_metric = (selected_nfl_metrics[0]
+                                       if selected_nfl_metrics
+                                       else "Composite score")
+                    col = metric_columns.get(primary_metric, "composite_z")
+                    _add_cmp_trace(col, compare_name_nfl)
+
+                fig.update_layout(showlegend=True,
+                                    legend=dict(orientation="h",
+                                                yanchor="bottom",
+                                                y=1.02, xanchor="left",
+                                                x=0))
+
             if fig is not None:
                 st.plotly_chart(fig, use_container_width=True,
                                   key=f"nfl_chart_main_{player_name}")
                 n_traded_seasons = (
                     nfl_history.groupby(nfl_season_col).size().gt(1).sum()
                 )
-                if nfl_multi_metric:
+                if cmp_history is not None and compare_name_nfl:
+                    st.caption(
+                        f"**{player_name}** in team colors · "
+                        f"**{compare_name_nfl}** overlaid in orange "
+                        "(dashed). 0.00 = avg starter."
+                    )
+                elif nfl_multi_metric:
                     st.caption(
                         f"Each line is one metric across this player's NFL "
                         f"career. 0.00 = avg starter for that metric."
@@ -787,55 +894,6 @@ def career_arc_section(player, league_parquet_path, z_score_cols, stat_labels=No
                         f"Each marker is one NFL season's {metric_caption_label} vs. all NFL {position_label}. "
                         f"Marker color = team primary; outline = team secondary. 0.00 = avg starter."
                     )
-
-            # ── Compare to another player ─────────────────
-            nfl_compare = st.checkbox(
-                "🔍 Compare to another NFL player",
-                key=f"nfl_career_compare_{player_name}",
-                help=("Stack a second player's career arc directly below "
-                      "this one. Same metric(s) and chart style apply to both."),
-            )
-            if nfl_compare and name_col in league_df.columns:
-                # All players in the position pool, by name; default to a
-                # non-self player so the dropdown is useful immediately.
-                all_pos_players = sorted(set(
-                    str(n) for n in league_df[name_col].dropna().unique() if str(n).strip()
-                ))
-                default_cmp = next((p for p in all_pos_players if p != player_name),
-                                    all_pos_players[0] if all_pos_players else None)
-                if default_cmp:
-                    compare_name_nfl = st.selectbox(
-                        f"Comparison {position_label[:-1].lower() if position_label.endswith('s') else position_label.lower()}",
-                        options=all_pos_players,
-                        index=all_pos_players.index(default_cmp),
-                        key=f"nfl_career_compare_select_{player_name}",
-                    )
-                    if compare_name_nfl:
-                        cmp_history = find_player_history(
-                            league_df, None, compare_name_nfl,
-                            id_col=id_col, name_col=name_col,
-                        )
-                        if len(cmp_history) > 0:
-                            cmp_history = cmp_history.sort_values(nfl_season_col).reset_index(drop=True)
-                            cmp_history["composite_z"] = cmp_history.apply(
-                                lambda row: compute_composite_score(row, z_score_cols), axis=1)
-                            st.markdown(f"**NFL career arc — {compare_name_nfl}** (comparison)")
-                            cmp_fig = _render_nfl_career_chart(
-                                history_df=cmp_history, season_col=nfl_season_col,
-                                team_col=team_col, league_df=league_df,
-                                z_score_cols=z_score_cols, stat_labels=stat_labels,
-                                population_label=f"NFL {position_label}",
-                                selected_metrics=selected_nfl_metrics,
-                                multi_metric=nfl_multi_metric,
-                                key_suffix=f"{player_name}__cmp",
-                            )
-                            if cmp_fig is not None:
-                                st.plotly_chart(cmp_fig, use_container_width=True,
-                                                  key=f"nfl_chart_cmp_{player_name}_{compare_name_nfl}")
-                            else:
-                                st.caption(f"_No multi-season NFL data for {compare_name_nfl}._")
-                        else:
-                            st.caption(f"_No NFL history found for {compare_name_nfl}._")
         elif n_stints == 1:
             nfl_values = nfl_history["composite_z"].tolist()
             score = nfl_values[0]
