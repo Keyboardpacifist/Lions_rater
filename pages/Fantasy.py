@@ -561,6 +561,12 @@ def compute_league_wide_alpha(config_name: str) -> pd.DataFrame:
         axis=1,
     )
 
+    # Per-player cap as a fraction of team's total redistributable FP.
+    # No single player realistically absorbs more than ~25% of a team's
+    # vacated production — finite snap/target share + roster competition
+    # always dilute one-player monopolies.
+    PER_PLAYER_CAP_PCT = 0.25
+
     out_rows = []
     for team in transitions["team"].dropna().unique():
         team_trans = transitions[transitions["team"] == team]
@@ -577,15 +583,41 @@ def compute_league_wide_alpha(config_name: str) -> pd.DataFrame:
         if team_attr.empty:
             continue
 
-        # Vacated by route
+        # Vacated by route — apply QB-tendency leakage. Routes the QB
+        # doesn't throw at league-avg rate VANISH a portion: vacated
+        # demand on those routes won't fully redistribute.
+        qb_for_team_local = (
+            team_qb[(team_qb["team"] == team)
+                       & (team_qb["season"] == 2025)]
+            if not team_qb.empty else pd.DataFrame()
+        )
+        qb_z_map = (
+            dict(zip(qb_for_team_local["route"],
+                       qb_for_team_local["share_z"]))
+            if not qb_for_team_local.empty else {}
+        )
+
+        def _keep_factor(route: str) -> float:
+            """0.4 + 0.3·qb_z, clipped to [0.25, 1.0]. QB throws above
+            avg → keep most. QB throws below avg → big chunk vanishes."""
+            qb_z = qb_z_map.get(route)
+            if qb_z is None:
+                return 0.7   # neutral default
+            raw = 0.4 + 0.3 * float(qb_z)
+            return max(0.25, min(1.0, raw))
+
         vac = (
             team_attr[team_attr["receiver_player_id"].isin(dep_ids)]
             .groupby("route", as_index=False)
             .agg(vacated_fp=("row_fp", "sum"))
         )
-        vac = vac[vac["vacated_fp"] > 0]
+        vac = vac[vac["vacated_fp"] > 0].copy()
         if vac.empty:
             continue
+        vac["redistributable_fp"] = vac.apply(
+            lambda r: r["vacated_fp"] * _keep_factor(r["route"]),
+            axis=1,
+        )
 
         # Incumbents (last-year cohort minus departures)
         last_year = (
@@ -621,17 +653,9 @@ def compute_league_wide_alpha(config_name: str) -> pd.DataFrame:
             / cand_career["career_targets"].clip(lower=1)
         )
 
-        # QB tendency map for this team
-        qb_for_team = (
-            team_qb[(team_qb["team"] == team)
-                       & (team_qb["season"] == 2025)]
-            if not team_qb.empty else pd.DataFrame()
-        )
-        qb_z_map = (
-            dict(zip(qb_for_team["route"],
-                       qb_for_team["share_z"]))
-            if not qb_for_team.empty else {}
-        )
+        # Total redistributable across the team — used for per-player cap
+        team_total_redistributable = float(vac["redistributable_fp"].sum())
+        per_player_cap = team_total_redistributable * PER_PLAYER_CAP_PCT
 
         # For each candidate, sum projected absorbed FP across vacated
         # routes where they're a top-3 specialist
@@ -650,8 +674,10 @@ def compute_league_wide_alpha(config_name: str) -> pd.DataFrame:
                     rcands["receiver_player_id"] == cand_id
                 ]["fpt"].iloc[0])
                 top3_total = float(rcands["fpt"].sum() or 1)
+                # Use REDISTRIBUTABLE FP (after QB leakage), not raw vacated
                 est_absorbed = (
-                    vrow["vacated_fp"] * (this_fpt / top3_total)
+                    vrow["redistributable_fp"]
+                    * (this_fpt / top3_total)
                 )
                 qb_z = qb_z_map.get(vrow["route"])
                 if qb_z is not None:
@@ -668,7 +694,11 @@ def compute_league_wide_alpha(config_name: str) -> pd.DataFrame:
             if not relevant:
                 continue
 
-            total_absorbed = sum(r["est_absorbed"] for r in relevant)
+            raw_total = sum(r["est_absorbed"] for r in relevant)
+            # Hard cap: no single player absorbs > PER_PLAYER_CAP_PCT
+            # of team's redistributable FP. Realistic ceiling on
+            # one-player monopolies.
+            total_absorbed = min(raw_total, per_player_cap)
             qb_match_ratio = (
                 qb_friendly_count / qb_total_routes
                 if qb_total_routes > 0 else 0
