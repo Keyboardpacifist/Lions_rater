@@ -448,24 +448,31 @@ if st.session_state.gm_loaded_algo:
 # ============================================================
 # Tier filter
 # ============================================================
-st.markdown("### Which stats should count?")
-st.caption(
-    "Check more boxes to include more types of stats. More boxes = more data, but less certainty."
-)
+# HIDDEN 2026-05-03 — tier-checkbox UI; defaults
+# applied via session_state read below.
+if False:
+    st.markdown("### Which stats should count?")
+    st.caption(
+        "Check more boxes to include more types of stats. More boxes = more data, but less certainty."
+    )
 
-tier_cols = st.columns(4)
-new_enabled = []
-for i, tier in enumerate([1, 2, 3, 4]):
-    with tier_cols[i]:
-        checked = st.checkbox(
-            f"{tier_badge(tier)} {TIER_LABELS[tier]}",
-            value=(tier in st.session_state.gm_tiers_enabled),
-            help=TIER_DESCRIPTIONS[tier],
-            key=f"gm_tier_checkbox_{tier}",
-        )
-        if checked:
-            new_enabled.append(tier)
+    tier_cols = st.columns(4)
+    new_enabled = []
+    for i, tier in enumerate([1, 2, 3, 4]):
+        with tier_cols[i]:
+            checked = st.checkbox(
+                f"{tier_badge(tier)} {TIER_LABELS[tier]}",
+                value=(tier in st.session_state.gm_tiers_enabled),
+                help=TIER_DESCRIPTIONS[tier],
+                key=f"gm_tier_checkbox_{tier}",
+            )
+            if checked:
+                new_enabled.append(tier)
 
+new_enabled = list(
+    st.session_state.get(
+        "gm_tiers_enabled", [1, 2])
+) or [1, 2]
 st.session_state.gm_tiers_enabled = new_enabled
 
 if not new_enabled:

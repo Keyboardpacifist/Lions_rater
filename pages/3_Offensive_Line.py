@@ -192,9 +192,12 @@ if "ol_loaded_algo" not in st.session_state: st.session_state.ol_loaded_algo = N
 if "upvoted_ids" not in st.session_state: st.session_state.upvoted_ids = set()
 if "ol_tiers_enabled" not in st.session_state: st.session_state.ol_tiers_enabled = [1, 2]
 
-st.subheader(f"{team_name} offensive linemen")
-st.markdown("What makes a great player? **You decide.** Drag the sliders to weight what you value, and watch the Lions starting five re-rank in real time. _No 'best lineman' — just **your** best lineman._")
-st.caption(f"{selected_season} regular season • Z-scores vs all 153 starting OL league-wide • Position-specific run gap attribution")
+# HIDDEN 2026-05-03 — visible page header
+# (referenced sliders that are now hidden).
+if False:
+    st.subheader(f"{team_name} offensive linemen")
+    st.markdown("What makes a great player? **You decide.** Drag the sliders to weight what you value, and watch the Lions starting five re-rank in real time. _No 'best lineman' — just **your** best lineman._")
+    st.caption(f"{selected_season} regular season • Z-scores vs all 153 starting OL league-wide • Position-specific run gap attribution")
 
 try: df = load_ol_data()
 except FileNotFoundError: st.error(f"Couldn't find OL data at {DATA_PATH}."); st.stop()
@@ -222,14 +225,21 @@ if st.session_state.ol_loaded_algo:
     st.sidebar.info(f"Loaded: **{la['name']}** by {la['author']}\n\n_{la.get('description', '')}_")
     if st.sidebar.button("Clear loaded algorithm"): st.session_state.ol_loaded_algo = None
 
-st.markdown("### Which stats should count?")
-st.caption("Check more boxes to include more types of stats. More boxes = more data, but less certainty.")
-tier_cols = st.columns(4)
-new_enabled = []
-for i, tier in enumerate([1, 2, 3, 4]):
-    with tier_cols[i]:
-        checked = st.checkbox(f"{tier_badge(tier)} {TIER_LABELS[tier]}", value=(tier in st.session_state.ol_tiers_enabled), help=TIER_DESCRIPTIONS[tier], key=f"ol_tier_checkbox_{tier}")
-        if checked: new_enabled.append(tier)
+# HIDDEN 2026-05-03 — tier-checkbox UI; defaults
+# applied via session_state read below.
+if False:
+    st.markdown("### Which stats should count?")
+    st.caption("Check more boxes to include more types of stats. More boxes = more data, but less certainty.")
+    tier_cols = st.columns(4)
+    new_enabled = []
+    for i, tier in enumerate([1, 2, 3, 4]):
+        with tier_cols[i]:
+            checked = st.checkbox(f"{tier_badge(tier)} {TIER_LABELS[tier]}", value=(tier in st.session_state.ol_tiers_enabled), help=TIER_DESCRIPTIONS[tier], key=f"ol_tier_checkbox_{tier}")
+            if checked: new_enabled.append(tier)
+new_enabled = list(
+    st.session_state.get(
+        "ol_tiers_enabled", [1, 2])
+) or [1, 2]
 st.session_state.ol_tiers_enabled = new_enabled
 if not new_enabled: st.warning("Enable at least one tier."); st.stop()
 active_bundles = filter_bundles_by_tier(BUNDLES, stat_tiers, new_enabled)

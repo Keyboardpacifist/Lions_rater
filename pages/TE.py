@@ -192,9 +192,12 @@ if "algo" in st.query_params and st.session_state.te_loaded_algo is None:
 # ══════════════════════════════════════════════════════════════
 # PAGE
 # ══════════════════════════════════════════════════════════════
-st.subheader(f"{team_name} tight ends")
-st.markdown("What makes a great TE? **You decide.** Use the sliders on the left to tell us what you value most, and the rankings update instantly.")
-st.caption(f"{selected_season} regular season · Compared to all TEs league-wide with 100+ offensive snaps")
+# HIDDEN 2026-05-03 — visible page header
+# (referenced sliders that are now hidden).
+if False:
+    st.subheader(f"{team_name} tight ends")
+    st.markdown("What makes a great TE? **You decide.** Use the sliders on the left to tell us what you value most, and the rankings update instantly.")
+    st.caption(f"{selected_season} regular season · Compared to all TEs league-wide with 100+ offensive snaps")
 
 st.sidebar.header("What matters to you?")
 st.sidebar.markdown("Each slider controls how much a skill affects the final score. Slide right to prioritize it, or all the way left to ignore it.")
@@ -205,20 +208,27 @@ if st.session_state.te_loaded_algo:
     st.sidebar.info(f"Loaded: **{la['name']}** by {la['author']}\n\n_{la.get('description', '')}_")
     if st.sidebar.button("Clear loaded algorithm"): st.session_state.te_loaded_algo = None
 
-st.markdown("### Which stats should count?")
-st.markdown("Check more boxes to include more types of stats. More boxes = more data, but less certainty.")
-available_tiers = set(stat_tiers.values()) if stat_tiers else {1, 2}
-tier_cols = st.columns(4)
-new_enabled = []
-for i, tier in enumerate([1, 2, 3, 4]):
-    with tier_cols[i]:
-        has_stats = tier in available_tiers
-        if has_stats:
-            checked = st.checkbox(f"{tier_badge(tier)} {TIER_LABELS[tier]}", value=(tier in st.session_state.te_tiers_enabled), help=TIER_DESCRIPTIONS[tier], key=f"te_tier_checkbox_{tier}")
-            if checked: new_enabled.append(tier)
-        else:
-            st.markdown(f"<span style='opacity:0.35'>{tier_badge(tier)} {TIER_LABELS[tier]}</span>", unsafe_allow_html=True)
-            st.caption("No stats available")
+# HIDDEN 2026-05-03 — tier-checkbox UI; defaults
+# applied via session_state read below.
+if False:
+    st.markdown("### Which stats should count?")
+    st.markdown("Check more boxes to include more types of stats. More boxes = more data, but less certainty.")
+    available_tiers = set(stat_tiers.values()) if stat_tiers else {1, 2}
+    tier_cols = st.columns(4)
+    new_enabled = []
+    for i, tier in enumerate([1, 2, 3, 4]):
+        with tier_cols[i]:
+            has_stats = tier in available_tiers
+            if has_stats:
+                checked = st.checkbox(f"{tier_badge(tier)} {TIER_LABELS[tier]}", value=(tier in st.session_state.te_tiers_enabled), help=TIER_DESCRIPTIONS[tier], key=f"te_tier_checkbox_{tier}")
+                if checked: new_enabled.append(tier)
+            else:
+                st.markdown(f"<span style='opacity:0.35'>{tier_badge(tier)} {TIER_LABELS[tier]}</span>", unsafe_allow_html=True)
+                st.caption("No stats available")
+new_enabled = list(
+    st.session_state.get(
+        "te_tiers_enabled", [1, 2])
+) or [1, 2]
 st.session_state.te_tiers_enabled = new_enabled
 if not new_enabled: st.warning("Check at least one box."); st.stop()
 active_bundles = filter_bundles_by_tier(BUNDLES, stat_tiers, new_enabled)

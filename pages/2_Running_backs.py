@@ -536,19 +536,26 @@ if st.session_state.rb_loaded_algo:
 # ============================================================
 # Tier filter (main content area)
 # ============================================================
-tier_cols = st.columns(4)
-new_enabled = []
-for i, tier in enumerate([1, 2, 3, 4]):
-    with tier_cols[i]:
-        checked = st.checkbox(
-            f"{tier_badge(tier)} {TIER_LABELS[tier]}",
-            value=(tier in st.session_state.rb_tiers_enabled),
-            help=TIER_DESCRIPTIONS[tier],
-            key=f"rb_tier_checkbox_{tier}",
-        )
-        if checked:
-            new_enabled.append(tier)
+# HIDDEN 2026-05-03 — tier-checkbox UI; defaults
+# applied via session_state read below.
+if False:
+    tier_cols = st.columns(4)
+    new_enabled = []
+    for i, tier in enumerate([1, 2, 3, 4]):
+        with tier_cols[i]:
+            checked = st.checkbox(
+                f"{tier_badge(tier)} {TIER_LABELS[tier]}",
+                value=(tier in st.session_state.rb_tiers_enabled),
+                help=TIER_DESCRIPTIONS[tier],
+                key=f"rb_tier_checkbox_{tier}",
+            )
+            if checked:
+                new_enabled.append(tier)
 
+new_enabled = list(
+    st.session_state.get(
+        "rb_tiers_enabled", [1, 2])
+) or [1, 2]
 st.session_state.rb_tiers_enabled = new_enabled
 
 if not new_enabled:

@@ -141,13 +141,20 @@ st.sidebar.markdown("Each slider controls how much a skill affects the final sco
 st.sidebar.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 advanced_mode = st.sidebar.toggle("🔬 Advanced mode", value=False)
 
-st.markdown("### Which stats should count?")
-tier_cols = st.columns(4)
-new_enabled = []
-for i, tier in enumerate([1, 2, 3, 4]):
-    with tier_cols[i]:
-        checked = st.checkbox(f"{tier_badge(tier)} {TIER_LABELS[tier]}", value=(tier in st.session_state.oc_tiers_enabled), help=TIER_DESCRIPTIONS[tier], key=f"oc_tier_checkbox_{tier}")
-        if checked: new_enabled.append(tier)
+# HIDDEN 2026-05-03 — tier-checkbox UI; defaults
+# applied via session_state read below.
+if False:
+    st.markdown("### Which stats should count?")
+    tier_cols = st.columns(4)
+    new_enabled = []
+    for i, tier in enumerate([1, 2, 3, 4]):
+        with tier_cols[i]:
+            checked = st.checkbox(f"{tier_badge(tier)} {TIER_LABELS[tier]}", value=(tier in st.session_state.oc_tiers_enabled), help=TIER_DESCRIPTIONS[tier], key=f"oc_tier_checkbox_{tier}")
+            if checked: new_enabled.append(tier)
+new_enabled = list(
+    st.session_state.get(
+        "oc_tiers_enabled", [1, 2])
+) or [1, 2]
 st.session_state.oc_tiers_enabled = new_enabled
 if not new_enabled: st.warning("Enable at least one tier."); st.stop()
 active_bundles = filter_bundles_by_tier(BUNDLES, stat_tiers, new_enabled)
