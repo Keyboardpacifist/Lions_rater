@@ -13,6 +13,9 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+import json
+from pathlib import Path
+
 from lib_draft_2027 import (
     attach_composite_z,
     attach_nfl_comps,
@@ -22,6 +25,49 @@ from lib_draft_2027 import (
 from lib_draft_stats import render_prospect_stats
 from lib_shared import inject_css
 from lib_top_nav import render_home_button
+
+
+_REPO = Path(__file__).resolve().parent.parent
+_PREBUILT_PATH = _REPO / "data" / "draft" / "draft_2027_board_prebuilt.parquet"
+_PREBUILT_SIG = _REPO / "data" / "draft" / "draft_2027_board_prebuilt.signature.json"
+_PREBUILT_SERIAL_COLS = (
+    "nfl_comps", "pedigree_components", "tested_components",
+    "contextual_components", "strengths", "concerns",
+)
+
+
+@st.cache_data(show_spinner=False)
+def _load_prebuilt_nfl_comps(consensus_sig_hash: int) -> pd.DataFrame:
+    """Read the pre-computed NFL comps parquet (built by
+    tools/prebuild_draft_board.py). Returns empty DataFrame if the
+    file is missing OR the consensus signature has drifted, in which
+    case the caller falls back to the live attach_nfl_comps().
+
+    The 18.7-second similarity loop runs at build time, not at page
+    load — so the page renders ~instantly when the prebuilt is fresh.
+    """
+    if not _PREBUILT_PATH.exists() or not _PREBUILT_SIG.exists():
+        return pd.DataFrame()
+    try:
+        sig_data = json.loads(_PREBUILT_SIG.read_text())
+    except json.JSONDecodeError:
+        return pd.DataFrame()
+    # Hash the prebuilt's signature to compare against the live one
+    # the caller passes in.
+    prebuilt_hash = hash(tuple(
+        (int(r[0]), str(r[1]), str(r[2]))
+        for r in sig_data.get("signature", [])
+    ))
+    if prebuilt_hash != consensus_sig_hash:
+        return pd.DataFrame()  # stale — caller will live-recompute
+    df = pd.read_parquet(_PREBUILT_PATH)
+    # Re-hydrate JSON-serialized columns
+    for col in _PREBUILT_SERIAL_COLS:
+        if col in df.columns:
+            df[col] = df[col].apply(
+                lambda s: json.loads(s) if isinstance(s, str) else s
+            )
+    return df
 
 
 def _fmt(v, fmt: str = "{:.0f}") -> str:
@@ -133,10 +179,18 @@ if consensus.empty:
 board = attach_composite_z(consensus, prospects)
 
 # NFL comps — cached on a signature of the consensus list so it
-# invalidates if you reorder/edit the seed.
+# invalidates if you reorder/edit the seed. Try the prebuilt parquet
+# first (built offline by tools/prebuild_draft_board.py) — that
+# turns an 18-second cold-start hit into a fast file read. Live
+# fallback runs only if the prebuilt is missing or stale.
 _board_sig = tuple((int(r["expert_rank"]), r["player"], r["school"])
                     for _, r in consensus.iterrows())
-nfl_comps_df = attach_nfl_comps(_board_sig)
+_sig_hash = hash(_board_sig)
+nfl_comps_df = _load_prebuilt_nfl_comps(_sig_hash)
+if nfl_comps_df.empty:
+    # Cache miss — recompute live (and the @st.cache_data on
+    # attach_nfl_comps will hold it for the rest of the session).
+    nfl_comps_df = attach_nfl_comps(_board_sig)
 if not nfl_comps_df.empty:
     board = board.merge(nfl_comps_df, on="expert_rank", how="left")
 
