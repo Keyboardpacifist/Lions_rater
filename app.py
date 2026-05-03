@@ -204,14 +204,29 @@ if mode == "NFL":
     def _on_landing_team_change():
         """When user picks a team in the landing dropdown, defer a
         page switch to pages/Team.py — matches the team-grid card
-        click behavior. League-wide stays on landing."""
+        click behavior in lib_team_grid.py. League-wide stays on
+        landing.
+
+        Team.py reads `team_pick` + `season_pick` from session_state
+        (not `selected_team`), and falls back to query params on
+        first render. Mirror the team-grid handler exactly.
+        """
         label = st.session_state.get("landing_team_v2")
         if not label or label == LEAGUE_WIDE_LABEL:
             return
         abbr_part = label.split(" — ")[0] if " — " in label else label
         abbr = internal_abbr(abbr_part)
         if abbr in NFL_TEAMS:
+            season = st.session_state.get("landing_season", 2025)
+            st.session_state["team_pick"] = abbr
+            st.session_state["season_pick"] = int(season)
+            # selected_team kept in sync for any other consumers
             st.session_state["selected_team"] = abbr
+            st.session_state["selected_season"] = int(season)
+            st.query_params.update({
+                "abbr": abbr,
+                "season": str(int(season)),
+            })
             st.session_state["_pending_nfl_page_switch"] = "pages/Team.py"
 
     col_search, col_team, col_position, col_season = st.columns(
