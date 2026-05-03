@@ -34,6 +34,9 @@ from lib_shared import inject_css
 REPO = Path(__file__).resolve().parent.parent
 WEEKLY_PATH = REPO / "data" / "nfl_player_stats_weekly.parquet"
 ADP_PATH = REPO / "data" / "fantasy" / "sleeper_adp.parquet"
+ATTRIBUTION_PATH = REPO / "data" / "scheme" / "team_route_attribution.parquet"
+TRANSITIONS_PATH = REPO / "data" / "scheme" / "roster_transitions.parquet"
+PLAYER_ROUTE_PATH = REPO / "data" / "scheme" / "player_route_profile.parquet"
 
 POSITION_TO_GAS = {"QB": "qb", "RB": "rb", "WR": "wr", "TE": "te"}
 
@@ -59,6 +62,27 @@ def load_adp() -> pd.DataFrame:
     if not ADP_PATH.exists():
         return pd.DataFrame()
     return pd.read_parquet(ADP_PATH)
+
+
+@st.cache_data(show_spinner=False)
+def load_attribution() -> pd.DataFrame:
+    if not ATTRIBUTION_PATH.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(ATTRIBUTION_PATH)
+
+
+@st.cache_data(show_spinner=False)
+def load_transitions() -> pd.DataFrame:
+    if not TRANSITIONS_PATH.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(TRANSITIONS_PATH)
+
+
+@st.cache_data(show_spinner=False)
+def load_player_route_profile() -> pd.DataFrame:
+    if not PLAYER_ROUTE_PATH.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(PLAYER_ROUTE_PATH)
 
 
 @st.cache_data(show_spinner=False)
@@ -411,3 +435,385 @@ sidebar to surface bigger or smaller mispricings.
   because they have no NFL FP yet; college GAS / projected GAS
   features will fill that gap.
 """)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Section 2: 🚪 Vacated Demand & Scheme Fit (per-team narratives)
+# ══════════════════════════════════════════════════════════════════
+
+st.markdown("---")
+st.header("🚪 Vacated demand & scheme fit")
+st.markdown(
+    "When teams lose receivers, **specific routes lose specific "
+    "volume.** This section quantifies the dig-merchant problem: "
+    "*\"Team X lost their dig merchant — 47 IN/DIG targets unfilled, "
+    "and only Player Y on the existing roster has the career profile "
+    "to absorb them.\"* Pick a team and see the story."
+)
+
+
+def _route_row_fp(catches, yards, tds, position, config):
+    rec_value = config.reception
+    if position == "TE" and config.te_premium_bonus > 0:
+        rec_value += config.te_premium_bonus
+    return ((catches or 0) * rec_value
+            + (yards or 0) * config.rec_yard
+            + (tds or 0) * config.rec_td)
+
+
+attribution = load_attribution()
+transitions = load_transitions()
+player_route_df = load_player_route_profile()
+
+if attribution.empty or transitions.empty:
+    st.info(
+        "Scheme data not built yet. Run the scheme builders:\n"
+        "```\n"
+        "python tools/build_team_passing_fingerprint.py\n"
+        "python tools/build_player_route_profile.py\n"
+        "python tools/build_team_route_attribution.py\n"
+        "python tools/build_roster_transitions.py\n"
+        "```"
+    )
+else:
+    # Pre-compute total vacated FP per team to sort the picker by
+    # "biggest story this offseason"
+    config = fs.CONFIG_BY_NAME[config_name]
+    last_year_attr = attribution[attribution["season"] == 2025].copy()
+    last_year_attr["row_fp"] = last_year_attr.apply(
+        lambda r: _route_row_fp(r.get("catches"), r.get("yards"),
+                                  r.get("tds"), r.get("position", ""),
+                                  config),
+        axis=1,
+    )
+
+    departure_ids_per_team = (
+        transitions[transitions["transition_type"] == "departure"]
+        .dropna(subset=["player_id"])
+        .groupby("team")["player_id"].apply(list).to_dict()
+    )
+
+    team_vacated_totals = []
+    for team, dep_ids in departure_ids_per_team.items():
+        team_attr = last_year_attr[last_year_attr["team"] == team]
+        vacated_fp = team_attr[
+            team_attr["receiver_player_id"].isin(dep_ids)
+        ]["row_fp"].sum()
+        team_vacated_totals.append({
+            "team": team,
+            "vacated_fp": float(vacated_fp),
+            "n_departures": len(dep_ids),
+        })
+    team_vacated = pd.DataFrame(team_vacated_totals).sort_values(
+        "vacated_fp", ascending=False)
+
+    # Team picker (default: biggest story)
+    team_options = team_vacated["team"].tolist()
+    if not team_options:
+        st.info("No team transition data available.")
+    else:
+        # Show top 5 biggest stories at top
+        st.markdown(f"**Biggest offseason transitions ({config_name}):**")
+        big_stories = team_vacated.head(5).copy()
+        big_stories["vacated_fp"] = big_stories["vacated_fp"].round(1)
+        big_stories.columns = [
+            "Team", f"Vacated {config_name} FP", "Departures",
+        ]
+        st.dataframe(big_stories, use_container_width=True,
+                        hide_index=True, height=215)
+
+        selected_scheme_team = st.selectbox(
+            "Pick a team to drill into",
+            team_options,
+            index=0,
+            help="Defaults to the biggest vacated-FP event of the offseason.",
+        )
+
+        team_trans = transitions[
+            transitions["team"] == selected_scheme_team
+        ]
+        team_deps = team_trans[
+            team_trans["transition_type"] == "departure"
+        ].dropna(subset=["player_id"])
+        dep_ids = team_deps["player_id"].tolist()
+
+        team_attr = last_year_attr[
+            last_year_attr["team"] == selected_scheme_team
+        ]
+
+        # Departure summary
+        dep_summary = (
+            team_attr[team_attr["receiver_player_id"].isin(dep_ids)]
+            .groupby(["receiver_player_id", "player_display_name",
+                       "position"], as_index=False)
+            .agg(targets=("targets", "sum"),
+                 fp=("row_fp", "sum"))
+            .sort_values("fp", ascending=False)
+        )
+        dep_summary["fp"] = dep_summary["fp"].round(1)
+
+        # Vacated by route (with FP)
+        vacated = (
+            team_attr[team_attr["receiver_player_id"].isin(dep_ids)]
+            .groupby("route", as_index=False)
+            .agg(vacated_targets=("targets", "sum"),
+                 vacated_fp=("row_fp", "sum"))
+        )
+        team_route_total = (
+            team_attr.groupby("route", as_index=False)
+                     .agg(team_total_fp=("row_fp", "sum"))
+        )
+        vacated = vacated.merge(team_route_total, on="route", how="left")
+        vacated["vacated_fp_pct"] = (
+            (vacated["vacated_fp"] / vacated["team_total_fp"]) * 100
+        )
+        vacated = vacated.sort_values("vacated_fp", ascending=False)
+
+        # Internal absorbers — last year's roster minus departures
+        last_year_recv = (
+            team_attr.groupby(
+                ["receiver_player_id", "player_display_name",
+                 "position"], as_index=False)
+            .agg(prior_targets=("targets", "sum"))
+        )
+        last_year_recv = last_year_recv[
+            last_year_recv["prior_targets"] >= 10
+        ]
+        incumbent_ids = [
+            pid for pid in last_year_recv["receiver_player_id"]
+            if pid not in dep_ids
+        ]
+        # Vet arrivals
+        vet_arr_ids = team_trans[
+            (team_trans["transition_type"] == "arrival")
+            & (team_trans["is_rookie"] == False)
+        ]["player_id"].dropna().tolist()
+        candidate_ids = incumbent_ids + vet_arr_ids
+
+        # Career FP/target on each route for candidates
+        cand_attr = attribution[
+            attribution["receiver_player_id"].isin(candidate_ids)
+        ].copy()
+        cand_attr["row_fp"] = cand_attr.apply(
+            lambda r: _route_row_fp(r.get("catches"), r.get("yards"),
+                                      r.get("tds"),
+                                      r.get("position", ""), config),
+            axis=1,
+        )
+        career_fp_per_route = (
+            cand_attr.groupby(["receiver_player_id", "route"],
+                                as_index=False)
+            .agg(career_targets=("targets", "sum"),
+                 career_fp=("row_fp", "sum"))
+        )
+        career_fp_per_route["career_fp_per_target"] = (
+            career_fp_per_route["career_fp"]
+            / career_fp_per_route["career_targets"]
+        )
+
+        # Player names for candidates
+        if not player_route_df.empty:
+            name_lookup = player_route_df[[
+                "player_id", "player_display_name", "position",
+            ]].drop_duplicates(subset="player_id")
+        else:
+            name_lookup = (
+                attribution[["receiver_player_id",
+                              "player_display_name", "position"]]
+                .drop_duplicates(subset="receiver_player_id")
+                .rename(columns={"receiver_player_id": "player_id"})
+            )
+        career_fp_per_route = career_fp_per_route.merge(
+            name_lookup.rename(
+                columns={"player_id": "receiver_player_id"}),
+            on="receiver_player_id", how="left",
+        )
+        career_fp_per_route["origin"] = career_fp_per_route[
+            "receiver_player_id"
+        ].apply(lambda pid: "Incumbent"
+                  if pid in incumbent_ids else "New (FA/trade)")
+
+        col_a, col_b = st.columns([1, 1])
+        with col_a:
+            st.markdown(
+                f"**📤 Departures** "
+                f"({len(dep_summary)} significant)")
+            if dep_summary.empty:
+                st.caption("Nobody significant left.")
+            else:
+                disp = dep_summary[[
+                    "player_display_name", "position",
+                    "targets", "fp",
+                ]].copy()
+                disp.columns = ["Player", "Pos", "Targets",
+                                  f"{config_name} FP"]
+                st.dataframe(disp, use_container_width=True,
+                                hide_index=True, height=240)
+
+        with col_b:
+            st.markdown(
+                f"**🎯 Vacated demand by route** "
+                f"({vacated['vacated_fp'].sum():.1f} {config_name} "
+                "FP total)"
+            )
+            if vacated.empty:
+                st.caption("No route demand vacated.")
+            else:
+                disp = vacated[[
+                    "route", "vacated_targets", "vacated_fp",
+                    "vacated_fp_pct",
+                ]].copy()
+                disp.columns = ["Route", "Targets",
+                                  f"{config_name} FP",
+                                  "% of team's FP"]
+                disp[f"{config_name} FP"] = disp[
+                    f"{config_name} FP"].round(1)
+                disp["% of team's FP"] = disp[
+                    "% of team's FP"].round(1)
+                st.dataframe(disp, use_container_width=True,
+                                hide_index=True, height=240)
+
+        # Best fit per vacated route
+        st.markdown(f"### 🎯 Best absorbers per vacated route — "
+                      f"{config_name} conversion")
+        st.caption(
+            "For each route, the **top 3 candidates** ranked by "
+            "career FP/target on that specific route. Tags show "
+            "**Incumbent** (already on team) vs **New** (FA/trade). "
+            "**Incumbent + elite FP/target = the alpha pick** the "
+            "market hasn't yet priced into ADP."
+        )
+        fits = []
+        for _, vrow in vacated.head(8).iterrows():
+            if vrow["vacated_fp"] <= 0:
+                continue
+            cands = career_fp_per_route[
+                (career_fp_per_route["route"] == vrow["route"])
+                & (career_fp_per_route["career_targets"] >= 5)
+            ].sort_values("career_fp_per_target", ascending=False)
+            if cands.empty:
+                continue
+            for i, (_, c) in enumerate(cands.head(3).iterrows()):
+                fits.append({
+                    "Route": vrow["route"] if i == 0 else "",
+                    f"Vacated FP": (f"{vrow['vacated_fp']:.1f}"
+                                       if i == 0 else ""),
+                    "Rank": i + 1,
+                    "Origin": c["origin"],
+                    "Candidate": c["player_display_name"],
+                    "Pos": c["position"],
+                    f"Career {config_name} FP/target":
+                        f"{c['career_fp_per_target']:.2f}",
+                    "Career targets on route":
+                        int(c["career_targets"]),
+                })
+        if fits:
+            st.dataframe(pd.DataFrame(fits),
+                            use_container_width=True,
+                            hide_index=True)
+        else:
+            st.info("No candidates with career history on the "
+                      "vacated routes (rookies / low-volume only).")
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Section 3: 🏆 Per-route FP conversion leaderboard
+# ══════════════════════════════════════════════════════════════════
+
+st.markdown("---")
+st.header("🏆 Per-route FP conversion — league-wide")
+st.markdown(
+    "**The stat nobody else publishes.** For each route type, the "
+    "league's top **fantasy-points-per-target converters** across "
+    "their NFL careers. Bateman's career PPR/target on IN/DIG is "
+    "**2.99** — top in the league. Use this to identify route "
+    "specialists at the player level (great for finding "
+    "DFS-stack pieces, dynasty trade targets, and waiver-wire "
+    "specialists)."
+)
+
+if attribution.empty:
+    st.info("Run scheme builders to populate this section.")
+else:
+    config = fs.CONFIG_BY_NAME[config_name]
+
+    # Compute career FP per (player, route) league-wide
+    full_attr = attribution.copy()
+    full_attr["row_fp"] = full_attr.apply(
+        lambda r: _route_row_fp(r.get("catches"), r.get("yards"),
+                                  r.get("tds"),
+                                  r.get("position", ""), config),
+        axis=1,
+    )
+    leaderboard = (
+        full_attr.groupby(
+            ["receiver_player_id", "player_display_name", "position",
+             "route"], as_index=False)
+        .agg(targets=("targets", "sum"),
+             fp=("row_fp", "sum"))
+    )
+    leaderboard["fp_per_target"] = (
+        leaderboard["fp"] / leaderboard["targets"]
+    )
+
+    # Filter controls
+    routes = sorted(leaderboard["route"].unique())
+    if "" in routes:
+        routes.remove("")
+    col_r, col_p, col_n = st.columns([2, 2, 1])
+    with col_r:
+        selected_route = st.selectbox(
+            "Route", routes,
+            index=routes.index("IN/DIG") if "IN/DIG" in routes else 0,
+            key="lb_route",
+        )
+    with col_p:
+        position_filter = st.multiselect(
+            "Positions", ["WR", "TE", "RB"],
+            default=["WR", "TE"],
+            key="lb_position",
+        )
+    with col_n:
+        min_targets = st.slider(
+            "Min career targets on route", 5, 100, 20,
+            key="lb_min_targets",
+        )
+
+    sub = leaderboard[
+        (leaderboard["route"] == selected_route)
+        & (leaderboard["position"].isin(position_filter))
+        & (leaderboard["targets"] >= min_targets)
+    ].sort_values("fp_per_target", ascending=False)
+
+    if sub.empty:
+        st.info("No qualifying players. Lower the min-targets filter.")
+    else:
+        disp = sub.head(20)[[
+            "player_display_name", "position", "targets",
+            "fp", "fp_per_target",
+        ]].copy()
+        disp.columns = [
+            "Player", "Pos", "Career targets",
+            f"Career {config_name} FP",
+            f"{config_name} FP / target",
+        ]
+        disp[f"Career {config_name} FP"] = disp[
+            f"Career {config_name} FP"].round(1)
+        disp[f"{config_name} FP / target"] = disp[
+            f"{config_name} FP / target"].round(2)
+
+        st.markdown(f"**Top 20 {config_name} converters on "
+                      f"{selected_route} routes** "
+                      f"(min {min_targets} career targets):")
+        st.dataframe(disp, use_container_width=True,
+                        hide_index=True, height=560)
+
+        # Quick "narrative" callout
+        leader = sub.iloc[0]
+        st.success(
+            f"**The {selected_route} {config_name} king:** "
+            f"{leader['player_display_name']} "
+            f"({leader['position']}) — "
+            f"**{leader['fp_per_target']:.2f} FP/target** across "
+            f"{int(leader['targets'])} career targets on this route."
+        )
