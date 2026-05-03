@@ -31,12 +31,10 @@ if "_app_session_initialized_v3" not in st.session_state:
 
 COLLEGE_DATA_DIR = Path(__file__).resolve().parent / "data" / "college"
 
-# ── Top tabs (replaces sidebar nav) ───────────────────────────
-# Streamlit's left sidebar is hidden globally via lib_shared.SHARED_CSS.
-# These four tabs + the position dropdown below ARE the navigation now.
-from lib_top_nav import render_top_nav
-render_top_nav(active="landing")
-st.markdown("---")
+# Top tabs (Gambling/Fantasy/Draft/Scheme) + position dropdown both
+# render below — tabs go right above the team grid, position dropdown
+# slots into the search row between Team and Season.
+from lib_top_nav import render_top_tabs, render_position_dropdown
 
 # ── Mode toggle ───────────────────────────────────────────────
 col_title, col_toggle = st.columns([3, 2])
@@ -203,7 +201,8 @@ if mode == "NFL":
             st.session_state[f"{key_prefix}_selected_player_{sel_team}_{sel_season}"] = sel_name
             st.session_state["_pending_nfl_page_switch"] = page_path
 
-    col_search, col_team, col_season = st.columns([3, 2, 1])
+    col_search, col_team, col_position, col_season = st.columns(
+        [3, 2, 2, 1])
     with col_search:
         st.selectbox(
             "🔎 Search any NFL player",
@@ -218,6 +217,13 @@ if mode == "NFL":
     with col_team:
         selected_label = st.selectbox("Team", options=team_labels, index=current_idx,
                                        key="landing_team_v2", label_visibility="collapsed")
+    with col_position:
+        # Position dropdown — jumps to position page on pick.
+        render_position_dropdown(
+            key="landing_position_jump",
+            label="Position",
+            placeholder_idx=0,
+        )
     with col_season:
         selected_season = st.selectbox("Season", options=AVAILABLE_SEASONS,
                                         index=0, key="landing_season", label_visibility="collapsed")
@@ -229,6 +235,11 @@ if mode == "NFL":
     st.session_state.selected_team = selected_team
     st.session_state.selected_season = selected_season
     team_name = NFL_TEAMS.get(selected_team, selected_team)
+
+    # ── Top tabs (Gambling/Fantasy/Draft/Scheme) — sit just above
+    # the team grid per Brett's 2026-05-03 layout call.
+    st.markdown("---")
+    render_top_tabs(active="landing")
 
     # ── Stylized team grid — moved below the search row so player
     # search lives just under the College/Pro selector at the top.

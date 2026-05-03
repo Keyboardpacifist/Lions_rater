@@ -54,16 +54,12 @@ POSITION_OPTIONS = [
 ]
 
 
-def render_top_nav(*, active: str | None = None,
-                     show_position_dropdown: bool = True) -> None:
-    """Render the top tab bar + position dropdown.
+def render_top_tabs(*, active: str | None = None) -> None:
+    """Render just the 4 top-tab buttons (Gambling/Fantasy/Draft/Scheme)
+    in a single row. Each button switch_page's to its target.
 
     `active` — key of the currently-active top tab (or "landing").
-               Used to visually distinguish the active tab.
-    `show_position_dropdown` — set False on pages where it'd be redundant
-                                 (e.g., the position pages themselves).
     """
-    # ── Top tabs row ─────────────────────────────────────────────
     cols = st.columns(len(TOP_TABS))
     for col, (label, icon, page_path, key) in zip(cols, TOP_TABS):
         with col:
@@ -77,23 +73,44 @@ def render_top_nav(*, active: str | None = None,
             ):
                 st.switch_page(page_path)
 
-    # ── Position dropdown ────────────────────────────────────────
+
+def render_position_dropdown(*, key: str = "topnav_position_pick",
+                                label: str = "Jump to a position",
+                                label_visibility: str = "collapsed",
+                                placeholder_idx: int = 0) -> None:
+    """Render JUST the position dropdown — the 16-entry selectbox that
+    jumps to the chosen position page. Designed to be dropped inside
+    an existing column. No labels by default so it nests cleanly.
+    """
+    labels = [opt[0] for opt in POSITION_OPTIONS]
+    pick_label = st.selectbox(
+        label,
+        options=labels,
+        index=placeholder_idx,
+        key=key,
+        label_visibility=label_visibility,
+    )
+    page_path = dict(POSITION_OPTIONS).get(pick_label)
+    if page_path:
+        # Reset the dropdown to the sentinel so the next render
+        # doesn't immediately re-trigger the navigation.
+        st.session_state[key] = labels[placeholder_idx]
+        st.switch_page(page_path)
+
+
+def render_top_nav(*, active: str | None = None,
+                     show_position_dropdown: bool = True) -> None:
+    """Convenience: render top tabs + position dropdown stacked.
+    Kept for any pages that want both in one call."""
+    render_top_tabs(active=active)
     if show_position_dropdown:
-        labels = [opt[0] for opt in POSITION_OPTIONS]
-        pick_label = st.selectbox(
-            "Jump to a position",
-            options=labels,
-            index=0,
-            key="topnav_position_pick",
-            label_visibility="collapsed",
-        )
-        # On pick, navigate. The "—" sentinel option does nothing.
-        page_path = dict(POSITION_OPTIONS).get(pick_label)
-        if page_path:
-            # Reset the dropdown to the sentinel so the next render
-            # doesn't immediately re-trigger the navigation.
-            st.session_state["topnav_position_pick"] = labels[0]
-            st.switch_page(page_path)
+        render_position_dropdown()
 
 
-__all__ = ["render_top_nav", "TOP_TABS", "POSITION_OPTIONS"]
+__all__ = [
+    "render_top_nav",
+    "render_top_tabs",
+    "render_position_dropdown",
+    "TOP_TABS",
+    "POSITION_OPTIONS",
+]
