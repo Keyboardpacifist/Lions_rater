@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import nflreadpy as nfl
 import pandas as pd
 
 REPO = Path(__file__).resolve().parent.parent
@@ -46,6 +47,24 @@ def main() -> None:
     print(f"→ loading attribution + Sleeper rosters...")
     attr = pd.read_parquet(ATTRIBUTION)
     sleeper = pd.read_parquet(SLEEPER_ADP)
+
+    # Authoritative prior-year team rosters from nflverse — used to:
+    #   (a) keep IR / depth players (Aiyuk, Cowing) as INCUMBENTS even
+    #       though they had <10 targets, and
+    #   (b) reject Sleeper "ghost arrivals" — fringe veterans Sleeper
+    #       still has rostered who weren't on ANY 2025 NFL team
+    #       (e.g., Levine Toilolo). They're not actual signings.
+    print(f"→ loading nflverse rosters({PRIOR_SEASON}) for incumbent + "
+          f"active-vet checks...")
+    rost = nfl.load_rosters(PRIOR_SEASON).to_pandas()
+    rost = rost[rost["position"].isin(RECEIVING_POSITIONS)
+                  & rost["gsis_id"].notna()]
+    prior_team_roster = set(zip(rost["team"], rost["gsis_id"]))
+    active_in_prior_year_set = set(rost["gsis_id"])
+    print(f"  prior-year (team, player) pairs: "
+          f"{len(prior_team_roster):,}")
+    print(f"  prior-year active receivers: "
+          f"{len(active_in_prior_year_set):,}")
 
     # ── ALL prior-season NFL receivers (any role, any team) ────────
     # Used to distinguish rookies (no last-year footprint) from
@@ -104,9 +123,26 @@ def main() -> None:
         lambda r: (r["player_id"], r["team"]) in last_year_set,
         axis=1,
     )
-    sl["was_in_nfl_last_year"] = sl["player_id"].isin(all_last_year_ids)
+    # Authoritative roster check: was this player on the team's
+    # prior-year roster? Catches IR / low-target depth (e.g., Aiyuk
+    # missed 2025 with ACL → 0 targets but rostered all year). Without
+    # this they'd be misclassified as new arrivals.
+    sl["was_on_team_roster_last_year"] = sl.apply(
+        lambda r: (
+            pd.notna(r["player_id"])
+            and (r["team"], r["player_id"]) in prior_team_roster
+        ),
+        axis=1,
+    )
+    sl["was_in_nfl_last_year"] = (
+        sl["player_id"].isin(all_last_year_ids)
+        | sl["player_id"].isin(active_in_prior_year_set)
+    )
 
-    arrivals = sl[~sl["was_in_team_cohort_last_year"]].copy()
+    arrivals = sl[
+        ~sl["was_in_team_cohort_last_year"]
+        & ~sl["was_on_team_roster_last_year"]
+    ].copy()
 
     # Rookie detection — must satisfy BOTH:
     #   1. No NFL PBP footprint last year, AND
@@ -117,6 +153,21 @@ def main() -> None:
             lambda x: pd.isna(x) or float(x) <= 0)
     )
     arrivals["transition_type"] = "arrival"
+
+    # Drop "ghost vets": Sleeper-rostered players who weren't on ANY
+    # NFL roster in the prior season AND aren't rookies. Retired/cut
+    # vets that Sleeper still has cached. Without this, we project
+    # absorption for players who aren't actually in the league.
+    ghost_mask = (
+        ~arrivals["is_rookie"]
+        & ~arrivals["was_in_nfl_last_year"]
+    )
+    n_ghosts = int(ghost_mask.sum())
+    if n_ghosts:
+        sample = arrivals.loc[ghost_mask, "full_name"].head(5).tolist()
+        print(f"  dropping {n_ghosts} ghost vets (no {PRIOR_SEASON} "
+              f"NFL footprint): {sample}")
+    arrivals = arrivals[~ghost_mask].copy()
 
     # For VET arrivals, find their primary prior team last year
     vet_mask = ~arrivals["is_rookie"]
