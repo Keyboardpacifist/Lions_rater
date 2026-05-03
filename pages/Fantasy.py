@@ -38,6 +38,7 @@ ATTRIBUTION_PATH = REPO / "data" / "scheme" / "team_route_attribution.parquet"
 TRANSITIONS_PATH = REPO / "data" / "scheme" / "roster_transitions.parquet"
 PLAYER_ROUTE_PATH = REPO / "data" / "scheme" / "player_route_profile.parquet"
 TEAM_QB_PATH = REPO / "data" / "scheme" / "team_qb_profile.parquet"
+QB_TRAJECTORY_PATH = REPO / "data" / "scheme" / "qb_trajectory.parquet"
 
 POSITION_TO_GAS = {"QB": "qb", "RB": "rb", "WR": "wr", "TE": "te"}
 
@@ -91,6 +92,13 @@ def load_team_qb_profile() -> pd.DataFrame:
     if not TEAM_QB_PATH.exists():
         return pd.DataFrame()
     return pd.read_parquet(TEAM_QB_PATH)
+
+
+@st.cache_data(show_spinner=False)
+def load_qb_trajectory() -> pd.DataFrame:
+    if not QB_TRAJECTORY_PATH.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(QB_TRAJECTORY_PATH)
 
 
 @st.cache_data(show_spinner=False)
@@ -1315,6 +1323,146 @@ else:
         else:
             st.info("No candidates with career history on the "
                       "vacated routes (rookies / low-volume only).")
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Section 2.5: 🛫 QB TRAJECTORY TAILWINDS
+# ══════════════════════════════════════════════════════════════════
+
+st.markdown("---")
+st.header("🛫 QB Trajectory Tailwinds")
+st.markdown(
+    "**Vacancy alpha is only one source of fantasy edge.** Receivers "
+    "also gain when their QB is about to play *better*. This module "
+    "scores every team's primary QB on three trajectory axes — "
+    "**Y2/Y3 sophomore leap**, **return from injury**, **aging "
+    "decline** — and surfaces the receivers attached to rising QBs."
+)
+
+qb_traj_df = load_qb_trajectory()
+if qb_traj_df.empty:
+    st.info(
+        "QB trajectory data not built yet. Run:\n"
+        "```\npython tools/build_qb_trajectory.py\n```"
+    )
+else:
+    # ── QB-level table ───────────────────────────────────────────
+    st.markdown("### 📋 Per-team QB trajectory grades")
+    st.caption(
+        "Sorted by projected GAS delta. Y2 leap = rookies stepping "
+        "into year two. Injury recovery = QB missed games last year "
+        "AND has a higher career peak. Aging drag = NFL years_exp ≥ "
+        "12 with declining trajectory."
+    )
+    show = qb_traj_df.copy()
+    show = show.sort_values("trajectory_delta", ascending=False)
+    show_cols = [
+        "trajectory_label", "team", "qb_name", "nfl_years_exp",
+        "last_games", "last_gas", "peak_gas", "projected_gas",
+        "trajectory_delta", "rationale",
+    ]
+    show.columns = list(show.columns)  # keep originals
+    rename = {
+        "trajectory_label": "Verdict",
+        "team": "Team",
+        "qb_name": "QB",
+        "nfl_years_exp": "NFL yrs",
+        "last_games": "2025 games",
+        "last_gas": "2025 GAS",
+        "peak_gas": "Peak GAS",
+        "projected_gas": "Proj 2026 GAS",
+        "trajectory_delta": "Δ GAS",
+        "rationale": "Why",
+    }
+    st.dataframe(
+        show[show_cols].rename(columns=rename),
+        use_container_width=True, hide_index=True, height=400,
+    )
+
+    st.caption(
+        "⚠️ **Caveats:** the model assumes the 2025 primary QB is "
+        "still the 2026 primary. Teams with QB battles or retirements "
+        "(PIT post-Rodgers, WAS Daniels return, ARI Murray return) "
+        "should be treated with extra uncertainty. Camp Battles "
+        "module will let you override these assumptions."
+    )
+
+    # ── Receiver leaderboard: receivers on rising-QB teams ──────
+    st.markdown("### 🎯 Receivers attached to rising-QB teams")
+    st.caption(
+        "Ranks each rising QB's top 2025 receivers by **estimated "
+        "fantasy-point tailwind** = (2025 PPR FP) × (Δ GAS / 100). "
+        "A +27 GAS leap (Lamar) on a 150-FP receiver projects ~+40 "
+        "PPR of QB-driven upside before any vacancy redistribution."
+    )
+
+    rising = qb_traj_df[qb_traj_df["trajectory_delta"] > 0]
+    if rising.empty:
+        st.info("No teams with rising QB trajectories.")
+    else:
+        # Build last-year FP per receiver per team from attribution
+        attr_local = load_attribution()
+        config_local = fs.CONFIG_BY_NAME[config_name]
+        attr_2025 = attr_local[attr_local["season"] == 2025].copy()
+        attr_2025["row_fp"] = attr_2025.apply(
+            lambda r: _route_row_fp(
+                r.get("catches"), r.get("yards"), r.get("tds"),
+                r.get("position", ""), config_local),
+            axis=1,
+        )
+        rec_team_fp = (
+            attr_2025.groupby(
+                ["team", "receiver_player_id",
+                 "player_display_name", "position"],
+                as_index=False)["row_fp"].sum()
+            .rename(columns={"row_fp": "fp_2025"})
+        )
+        # Only keep receivers with meaningful prior-year volume
+        rec_team_fp = rec_team_fp[rec_team_fp["fp_2025"] >= 20]
+
+        merged = rec_team_fp.merge(
+            rising[["team", "qb_name", "trajectory_delta",
+                       "trajectory_label"]],
+            on="team", how="inner",
+        )
+        merged["tailwind_fp"] = (
+            merged["fp_2025"] * (merged["trajectory_delta"] / 100.0)
+        ).round(1)
+        merged = merged.sort_values(
+            "tailwind_fp", ascending=False).reset_index(drop=True)
+
+        # Filter UI
+        col1, col2 = st.columns(2)
+        with col1:
+            pos_filter = st.multiselect(
+                "Position", ["WR", "TE", "RB"],
+                default=["WR", "TE", "RB"], key="qb_traj_pos")
+        with col2:
+            min_tail = st.slider(
+                "Min tailwind FP", 0, 30, 5, step=1,
+                key="qb_traj_mintail")
+
+        filt = merged[
+            merged["position"].isin(pos_filter)
+            & (merged["tailwind_fp"] >= min_tail)
+        ].copy()
+        filt.insert(0, "Rank", range(1, len(filt) + 1))
+        display = filt[[
+            "Rank", "player_display_name", "position", "team",
+            "qb_name", "trajectory_label", "fp_2025",
+            "trajectory_delta", "tailwind_fp",
+        ]].rename(columns={
+            "player_display_name": "Player",
+            "position": "Pos",
+            "team": "Team",
+            "qb_name": "QB",
+            "trajectory_label": "QB Verdict",
+            "fp_2025": "2025 PPR FP",
+            "trajectory_delta": "Δ GAS",
+            "tailwind_fp": "Est. tailwind PPR",
+        })
+        st.dataframe(display, use_container_width=True,
+                        hide_index=True, height=560)
 
 
 # ══════════════════════════════════════════════════════════════════
