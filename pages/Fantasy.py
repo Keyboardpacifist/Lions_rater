@@ -1615,16 +1615,57 @@ with tab4:
         # Filter to meaningful share
         rec = rec[rec["targets_2025"] >= 10]
 
+        # ── v2: Bayesian shrinkage on target share ───────────────
+        # Elite shares (>30%) regress YoY toward archetype mean.
+        # Without this, JSN at 34.6% projects ~199 targets (Jefferson
+        # tier) for 2026 — too aggressive. Shrink each receiver's
+        # 2025 share toward their (position, team-rank) archetype:
+        #   proj_share = 0.85 * actual + 0.15 * archetype_mean
+        # 0.85/0.15 weight = empirical YoY share correlation (~0.7-
+        # 0.85 for established receivers). Bucket means computed
+        # from the same 2025 distribution we're using.
+        SHRINK_W = 0.85
+        # Rank within (team, position) so we can pick the right
+        # archetype bucket for each receiver
+        rec["team_pos_rank"] = (
+            rec.groupby(["team", "position"])["target_share"]
+               .rank(method="first", ascending=False)
+               .clip(upper=3.0)
+        )
+        # Bucket means (computed from the same population, so the
+        # shrinkage is internally consistent)
+        archetype = (
+            rec.groupby(["position", "team_pos_rank"])
+               ["target_share"].mean()
+               .rename("archetype_share")
+               .reset_index()
+        )
+        rec = rec.merge(
+            archetype, on=["position", "team_pos_rank"], how="left",
+        )
+        rec["archetype_share"] = rec["archetype_share"].fillna(
+            rec["target_share"])
+        rec["proj_share_2026"] = (
+            SHRINK_W * rec["target_share"]
+            + (1 - SHRINK_W) * rec["archetype_share"]
+        )
+
         # Bring in team volume delta
         rec = rec.merge(
-            vdf[["team", "attempts_delta", "volume_label"]],
+            vdf[["team", "attempts_delta",
+                 "pass_attempts_2025", "volume_label"]],
             on="team", how="left",
         )
-        # Pass attempts ≈ targets (close enough; sacks/scrambles
-        # subtract from attempts but not from targets, so this slightly
-        # underestimates the receiver effect — fine for v1).
+        # Projected 2026 receiver targets = (team_2026_attempts) ×
+        # (proj_share). The TARGET CHANGE is the delta from 2025:
+        #     proj_change = team_2025 × (proj_share - 2025_share)
+        #                 + delta × proj_share
+        # First term = the share-regression effect (negative for
+        # elite shares). Second = the volume effect. Both feed FP.
         rec["projected_added_targets"] = (
-            rec["attempts_delta"] * rec["target_share"]
+            rec["pass_attempts_2025"]
+            * (rec["proj_share_2026"] - rec["target_share"])
+            + rec["attempts_delta"] * rec["proj_share_2026"]
         ).round(1)
 
         # Career FP/target conversion
@@ -1659,6 +1700,7 @@ with tab4:
         show = filt[[
             "Rank", "player_display_name", "position", "team",
             "volume_label", "targets_2025", "target_share",
+            "proj_share_2026",
             "attempts_delta", "projected_added_targets",
             "fp_per_target", "volume_tailwind_fp",
         ]].rename(columns={
@@ -1667,14 +1709,17 @@ with tab4:
             "team": "Team",
             "volume_label": "Team Verdict",
             "targets_2025": "2025 Tgts",
-            "target_share": "Share",
+            "target_share": "2025 Share",
+            "proj_share_2026": "Proj 2026 Share",
             "attempts_delta": "Team Δ Att",
             "projected_added_targets": "Δ Tgts",
             "fp_per_target": "Career FP/Tgt",
             "volume_tailwind_fp": "Tailwind FP",
         })
-        # Format Share as percentage in display
-        show["Share"] = (show["Share"] * 100).round(1)
+        # Format share columns as percentages
+        for c in ("2025 Share", "Proj 2026 Share"):
+            if c in show.columns:
+                show[c] = (show[c] * 100).round(1)
         st.dataframe(
             show, use_container_width=True, hide_index=True,
             height=560,
