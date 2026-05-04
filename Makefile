@@ -1,4 +1,4 @@
-.PHONY: install run test lint data-refresh game-logs game-logs-nfl game-logs-college game-logs-pbp game-logs-participation defense-scheme data-upload clean
+.PHONY: install run test lint data-refresh game-logs game-logs-nfl game-logs-college game-logs-pbp game-logs-participation defense-scheme data-upload clean api-install api-run api-test
 
 PYTHON := python3
 VENV := venv
@@ -6,6 +6,7 @@ PIP := $(VENV)/bin/pip
 STREAMLIT := $(VENV)/bin/streamlit
 PYTEST := $(VENV)/bin/pytest
 RUFF := $(VENV)/bin/ruff
+UVICORN := $(VENV)/bin/uvicorn
 
 # ── Setup ────────────────────────────────────────────────────
 
@@ -78,6 +79,17 @@ defense-scheme: install
 # Run after `make game-logs` / `make defense-scheme` to refresh live.
 data-upload: install
 	$(VENV)/bin/python tools/game_logs/upload_to_supabase.py
+
+# ── EdgeAcademy API ──────────────────────────────────────────
+
+api-install: install
+	$(PIP) install -r api/requirements.txt
+
+api-run: api-install
+	$(UVICORN) api.main:app --reload --host 0.0.0.0 --port 8000
+
+api-test: api-install
+	$(PYTEST) api/tests/ -v
 
 # ── Cleanup ──────────────────────────────────────────────────
 
