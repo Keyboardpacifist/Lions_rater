@@ -38,6 +38,7 @@ def render_alpha_card(*, player: str, position: str, team: str,
                          logo_url: str | None = None,
                          unit_label: str = "PROJECTED PPR TAILWIND",
                          number_format: str = "{sign}{value:.1f}",
+                         subtitle: str | None = None,
                          ) -> None:
     """Render one alpha card. `theme` is the dict returned by
     lib_shared.team_theme(team_abbr). `breakdown` is an optional
@@ -111,7 +112,10 @@ def render_alpha_card(*, player: str, position: str, team: str,
         f'<div style="font-size:11px;font-weight:600;opacity:0.85;'
         f'margin-top:3px;letter-spacing:0.6px;">'
         f'{position} · {team}</div>'
-        f'</div>'
+        + (f'<div style="font-size:12px;font-weight:700;opacity:0.95;'
+           f'margin-top:6px;letter-spacing:0.2px;">'
+           f'{subtitle}</div>' if subtitle else '')
+        + f'</div>'
         # Big number
         f'<div style="margin-top:10px;">'
         f'<div style="font-size:32px;font-weight:900;line-height:1;'

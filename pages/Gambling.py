@@ -203,6 +203,243 @@ else:
 st.markdown("---")
 
 
+# ══════════════════════════════════════════════════════════════
+# 🗂️  YOUR BINDER (mock / demo) — portfolio harness preview
+# ══════════════════════════════════════════════════════════════
+# Brett's vision: every bet you place lives here as a card. Below
+# the binder, a time-series chart shows how your portfolio's value
+# is evolving as projections / lines move. This is a static demo
+# using 5 hardcoded Week 18 2024 bets to prove out the look-and-
+# feel — no real bet ingestion yet.
+import numpy as np
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
+
+st.markdown(
+    "<div style='margin:14px 0 10px 0;'>"
+    "<div style='font-size:24px;font-weight:900;letter-spacing:-0.5px;"
+    "color:#0a3d62;'>🗂️  Your Binder — bet portfolio</div>"
+    "<div style='font-size:13px;color:#5b6b7e;margin-top:4px;'>"
+    "Every bet you place lives here. Cards re-price live as our "
+    "model updates and book lines move. Below: time-series of "
+    "your portfolio's evolving value."
+    "</div></div>",
+    unsafe_allow_html=True,
+)
+
+MOCK_BETS = [
+    {
+        "id": "saq_rush",
+        "player": "Saquon Barkley", "position": "RB", "team": "PHI",
+        "market": "Rushing yards",
+        "subtitle": "OVER 90.5 RUSH YDS",
+        "odds_american": -110, "odds_decimal": 1.91,
+        "book": "DraftKings", "wager": 100.0,
+        "buy_prob": 0.61, "now_prob": 0.68,
+        "thesis": "PHI clinched 1 seed rest day risk — but Sirianni said starters playing 1H. Edge widened on news.",
+        "trend_bias": +0.08,  # drifts up over time
+    },
+    {
+        "id": "jefferson_rec",
+        "player": "Justin Jefferson", "position": "WR", "team": "MIN",
+        "market": "Receptions",
+        "subtitle": "OVER 6.5 REC",
+        "odds_american": -115, "odds_decimal": 1.87,
+        "book": "FanDuel", "wager": 100.0,
+        "buy_prob": 0.59, "now_prob": 0.64,
+        "thesis": "Detroit secondary nicked up — JJ's primary CB matchup downgraded. Volume should be there.",
+        "trend_bias": +0.05,
+    },
+    {
+        "id": "cook_rush",
+        "player": "James Cook", "position": "RB", "team": "BUF",
+        "market": "Rushing yards",
+        "subtitle": "OVER 75.5 RUSH YDS",
+        "odds_american": -110, "odds_decimal": 1.91,
+        "book": "DraftKings", "wager": 100.0,
+        "buy_prob": 0.55, "now_prob": 0.49,
+        "thesis": "Bills locked into 2 seed — pulled starters early last week. Edge eroding as game plan hints emerge.",
+        "trend_bias": -0.07,
+    },
+    {
+        "id": "laporta_rec",
+        "player": "Sam LaPorta", "position": "TE", "team": "DET",
+        "market": "Receptions",
+        "subtitle": "OVER 4.5 REC",
+        "odds_american": -120, "odds_decimal": 1.83,
+        "book": "BetMGM", "wager": 75.0,
+        "buy_prob": 0.62, "now_prob": 0.71,
+        "thesis": "Williams ruled out — LaPorta target share spikes when WR1 sits. Strong historical comp.",
+        "trend_bias": +0.10,
+    },
+    {
+        "id": "mixon_atd",
+        "player": "Joe Mixon", "position": "RB", "team": "HOU",
+        "market": "Anytime TD",
+        "subtitle": "ANYTIME TD",
+        "odds_american": +135, "odds_decimal": 2.35,
+        "book": "Caesars", "wager": 50.0,
+        "buy_prob": 0.42, "now_prob": 0.46,
+        "thesis": "Goal-line role looks intact. Texans clinched but motivation high for division-winner seeding.",
+        "trend_bias": +0.04,
+    },
+]
+
+# ── Render bet cards ─────────────────────────────────────────
+from lib_shared import team_theme as _bin_team_theme
+
+cols_bin = st.columns(5)
+for col, bet in zip(cols_bin, MOCK_BETS):
+    with col:
+        theme = _bin_team_theme(bet["team"])
+        # Live-EV: if we're right (now_prob > 1/decimal_odds), the
+        # current "fair" payout exceeds the locked book payout. We
+        # show $-value of the position right now: wager × (now_prob
+        # × decimal_odds - 1). Positive = the bet has gained EV
+        # since you placed it.
+        fair_payout = bet["wager"] * bet["now_prob"] * bet["odds_decimal"]
+        current_ev = fair_payout - bet["wager"]
+        # Verdict color — green when live edge widened, red when narrowed
+        delta_prob = bet["now_prob"] - bet["buy_prob"]
+        if delta_prob >= 0.03:
+            verdict = "🟢 EDGE UP"
+        elif delta_prob <= -0.03:
+            verdict = "🔴 EDGE DOWN"
+        else:
+            verdict = "⚪ STEADY"
+        breakdown = [
+            (f"@{bet['book'][:3].upper()}", bet["odds_american"]),
+            ("Δp", delta_prob * 100),
+        ]
+        render_alpha_card(
+            player=bet["player"],
+            position=bet["position"],
+            team=bet["team"],
+            theme=theme,
+            total_fp=current_ev,
+            verdict=verdict,
+            reason=bet["thesis"],
+            breakdown=breakdown,
+            unit_label="LIVE EV ON $1 WAGER",
+            number_format="${sign}{value:.0f}",
+            subtitle=bet["subtitle"] + f" @ {bet['odds_american']:+d}",
+        )
+
+
+# ── Time-series chart ────────────────────────────────────────
+st.markdown(
+    "<div style='margin:24px 0 6px 0;'>"
+    "<div style='font-size:18px;font-weight:800;letter-spacing:-0.3px;"
+    "color:#0a3d62;'>📈 Portfolio performance over time</div>"
+    "<div style='font-size:12px;color:#5b6b7e;margin-top:2px;'>"
+    "Track each card's evolving value through the week. Pick which "
+    "metric you want to watch — edge, payout, probability — from the "
+    "dropdown below.</div></div>",
+    unsafe_allow_html=True,
+)
+
+METRIC_OPTIONS = {
+    "Live EV ($)":              ("ev",        "${value:+.0f}"),
+    "Current implied prob (%)": ("imp_prob",  "{value:.0%}"),
+    "Our model prob (%)":       ("model_prob","{value:.0%}"),
+    "Edge (basis points)":      ("edge_bps",  "{value:+.0f}"),
+    "Decimal odds":             ("dec_odds",  "{value:.2f}"),
+}
+
+metric_label = st.selectbox(
+    "Metric", list(METRIC_OPTIONS.keys()),
+    index=0, key="binder_chart_metric",
+    help="Switch the chart between dollar EV, probability, edge, "
+         "or odds — whichever lens you care about today.",
+)
+metric_key, _ = METRIC_OPTIONS[metric_label]
+
+
+def _simulate_bet_series(bet: dict, days: int = 10) -> list[dict]:
+    """Synthetic time series of one bet's evolution. Reproducible
+    via per-bet seeded RNG so the chart is stable across reruns."""
+    rng = np.random.default_rng(seed=hash(bet["id"]) % (2**31))
+    timestamps = [datetime(2025, 1, 4) + timedelta(hours=i * 6)
+                  for i in range(days * 4)]
+    n = len(timestamps)
+
+    # Probability: start at buy_prob, drift toward (buy_prob +
+    # trend_bias) with small random walk
+    target = bet["buy_prob"] + bet["trend_bias"]
+    probs = np.linspace(bet["buy_prob"], target, n)
+    probs += rng.normal(0, 0.015, size=n).cumsum() * 0.3
+    probs = np.clip(probs, 0.05, 0.95)
+
+    rows = []
+    for ts, p in zip(timestamps, probs):
+        ev = bet["wager"] * (p * bet["odds_decimal"] - 1)
+        imp_prob = 1.0 / bet["odds_decimal"]
+        # Pretend the book line moves a touch in step with p
+        dec_odds = bet["odds_decimal"] * (1 + (bet["buy_prob"] - p) * 0.15)
+        edge_bps = (p - imp_prob) * 10_000
+        rows.append({
+            "timestamp": ts,
+            "ev": ev,
+            "imp_prob": imp_prob,
+            "model_prob": p,
+            "edge_bps": edge_bps,
+            "dec_odds": dec_odds,
+        })
+    return rows
+
+
+fig_bin = go.Figure()
+COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
+for bet, color in zip(MOCK_BETS, COLORS):
+    series = _simulate_bet_series(bet)
+    xs = [r["timestamp"] for r in series]
+    ys = [r[metric_key] for r in series]
+    fig_bin.add_trace(go.Scatter(
+        x=xs, y=ys, mode="lines",
+        name=f"{bet['player']} {bet['subtitle'].split(' @')[0]}",
+        line=dict(width=2.5, color=color),
+        hovertemplate=(
+            f"<b>{bet['player']}</b><br>"
+            "%{x|%a %b %d %H:%M}<br>"
+            f"{metric_label}: %{{y}}<extra></extra>"
+        ),
+    ))
+
+# DEMO badge — top-left annotation
+fig_bin.add_annotation(
+    xref="paper", yref="paper", x=0.005, y=0.985,
+    text="<b>DEMO PURPOSES ONLY</b>",
+    showarrow=False,
+    font=dict(size=11, color="#ffffff", family="Arial Black"),
+    bgcolor="rgba(220,38,38,0.92)",
+    bordercolor="rgba(0,0,0,0.2)", borderwidth=1,
+    borderpad=4, xanchor="left", yanchor="top",
+)
+
+fig_bin.update_layout(
+    xaxis=dict(title="", gridcolor="#eee"),
+    yaxis=dict(title=metric_label, gridcolor="#eee", zeroline=True,
+               zerolinecolor="#888"),
+    height=380,
+    margin=dict(l=60, r=20, t=30, b=40),
+    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(250,250,252,0.6)",
+    hovermode="x unified",
+    legend=dict(orientation="h", yanchor="bottom", y=-0.35,
+                xanchor="left", x=0),
+)
+
+st.plotly_chart(fig_bin, use_container_width=True,
+                  key="binder_perf_chart")
+
+st.caption(
+    "_Synthetic data for demo purposes — real version would re-price "
+    "from the OddsAPI feed (already budgeted) plus our model's live "
+    "projections. Cards would settle automatically when games end._"
+)
+
+st.markdown("---")
+
+
 section_game, section_props = st.tabs([
     "🏟️  GAME BETS  —  spread / total / moneyline",
     "👤  PLAYER PROPS  —  yards / TDs / receptions / parlays",
