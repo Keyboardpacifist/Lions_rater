@@ -292,23 +292,24 @@ cols_bin = st.columns(5)
 for col, bet in zip(cols_bin, MOCK_BETS):
     with col:
         theme = _bin_team_theme(bet["team"])
-        # Live-EV: if we're right (now_prob > 1/decimal_odds), the
-        # current "fair" payout exceeds the locked book payout. We
-        # show $-value of the position right now: wager × (now_prob
-        # × decimal_odds - 1). Positive = the bet has gained EV
-        # since you placed it.
+        # Live-EV on the wager: positive = bet has gained EV since
+        # you placed it. (wager × prob × decimal_odds) − wager.
         fair_payout = bet["wager"] * bet["now_prob"] * bet["odds_decimal"]
         current_ev = fair_payout - bet["wager"]
-        # Verdict color — green when live edge widened, red when narrowed
         delta_prob = bet["now_prob"] - bet["buy_prob"]
+        # Edge-direction emoji prepended to the bet line — keeps the
+        # "what's the bet" front-and-center while still flagging the
+        # green/red status at a glance.
         if delta_prob >= 0.03:
-            verdict = "🟢 EDGE UP"
+            edge_icon = "🟢"
         elif delta_prob <= -0.03:
-            verdict = "🔴 EDGE DOWN"
+            edge_icon = "🔴"
         else:
-            verdict = "⚪ STEADY"
+            edge_icon = "⚪"
+        verdict = (f"{edge_icon} {bet['subtitle']} "
+                   f"@ {bet['odds_american']:+d}")
         breakdown = [
-            (f"@{bet['book'][:3].upper()}", bet["odds_american"]),
+            (bet["book"][:3].upper(), bet["odds_american"]),
             ("Δp", delta_prob * 100),
         ]
         render_alpha_card(
@@ -320,9 +321,8 @@ for col, bet in zip(cols_bin, MOCK_BETS):
             verdict=verdict,
             reason=bet["thesis"],
             breakdown=breakdown,
-            unit_label="LIVE EV ON $1 WAGER",
+            unit_label="LIVE EV ON YOUR WAGER",
             number_format="${sign}{value:.0f}",
-            subtitle=bet["subtitle"] + f" @ {bet['odds_american']:+d}",
         )
 
 
