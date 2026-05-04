@@ -51,9 +51,21 @@ _DEFAULT_COLORS = ("#1F2A44", "#0B1730")
 
 def _route_to_team(team: str, on_pick_session_key: str) -> None:
     """Click handler for grid tiles — set session_state for both the
-    legacy school filter (so College mode still works as a fallback)
-    AND the CollegeTeam page selectbox, then navigate."""
-    st.session_state[on_pick_session_key] = team
+    CollegeTeam page selectbox AND (best-effort) the legacy school
+    filter, then navigate.
+
+    The legacy `on_pick_session_key` write is wrapped in try/except
+    because, since the landing page reorder put the school selectbox
+    above the grid, the selectbox now instantiates first and claims
+    `college_school_v2` — Streamlit forbids writing to a widget's
+    key after the widget renders. Switch_page navigation is the real
+    path; the legacy write is only useful when the user STAYS on the
+    landing page (which they don't anymore after a grid click)."""
+    try:
+        st.session_state[on_pick_session_key] = team
+    except Exception:
+        # Selectbox owns the key — fine, switch_page below handles nav
+        pass
     st.session_state["college_team_pick"] = team
     st.query_params.update({"team": team})
     try:
