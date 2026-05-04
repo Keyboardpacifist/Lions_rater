@@ -16,12 +16,13 @@
 6. [Key User Flows](#key-user-flows)
 7. [Security Model](#security-model)
 8. [Deployment Plan](#deployment-plan)
-9. [Cost Projection](#cost-projection)
-10. [Migration Plan (Streamlit → API)](#migration-plan-streamlit--api)
-11. [Pre-Launch Action Items](#pre-launch-action-items)
-12. [Phase 1 Scope (Launch)](#phase-1-scope-launch)
-13. [Deferred to Phase 2+](#deferred-to-phase-2)
-14. [Open Items](#open-items-still-tbd)
+9. [Revenue Model Summary](#revenue-model-summary)
+10. [Cost Projection](#cost-projection)
+11. [Migration Plan (Streamlit → API)](#migration-plan-streamlit--api)
+12. [Pre-Launch Action Items](#pre-launch-action-items)
+13. [Phase 1 Scope (Launch)](#phase-1-scope-launch)
+14. [Deferred to Phase 2+](#deferred-to-phase-2)
+15. [Open Items](#open-items-still-tbd)
 
 ---
 
@@ -728,12 +729,31 @@ Subscription
 - cancellation_scheduled_at: nullable
 ```
 
-**Pricing model:**
-- $8.99/month or $79/year — same on all platforms
-- In-app subscription on iOS + Android (eat 15-30% Apple/Google cut)
+**Tier structure:**
+
+| Tier | Price | What it includes |
+|---|---|---|
+| **Free** (the default — full Betting Academy experience) | **$0** | Unlimited paper betting, complete educational curriculum (all lessons free forever), standard binder, basic Hall of Fame/Shame, standard card art, basic pack-opening animations, sportsbook affiliate links, NCAA in-state routing |
+| **Pro** (optional upgrade) | **$8.99/mo or $79/yr** | Premium card art + extended variant pool, premium pack-opening animations, daily login bonus pack, advanced alpha analytics (deep scheme-fit + all 4 factors at full depth), larger binder limit, global leaderboards access (opt-in), priority graduation bonuses, exclusive event-pack art |
+
+**The app is FREE to download and use.** The entire Betting Academy — paper betting, full educational curriculum, basic collectible mechanics, sportsbook affiliate routing — is permanently free. Pro is purely an *amplification* upgrade for users who love the product enough to want more polish, more depth, and exclusive cosmetics.
+
+Same model as Spotify (free with ads vs. ad-free Premium), Strava (free tracking vs. premium analytics), Duolingo (free lessons vs. unlimited hearts).
+
+**Why Pro never gates paper betting or education:**
+
+If we paywall paper betting or the curriculum, we break two load-bearing things:
+1. **The compliance moat** — "educational/simulation" classification depends on the school being accessible. Paywalled curriculum invites gambling-app regulatory scrutiny.
+2. **The funnel economics** — beginners who hit a paywall don't graduate to real money, so we lose affiliate revenue (which is the dominant revenue stream — see Revenue Model Summary).
+
+Pro tier exists to monetize amplification, not access.
+
+**Billing model:**
+- Same price on all platforms — $8.99/mo or $79/yr (no platform price discrimination)
+- In-app subscription on iOS + Android (we eat the 15-30% Apple/Google cut rather than friction users with web-only signup)
 - Stripe for web subscriptions
 - Apply for Apple Small Business Program Day 1 (drops Apple cut from 30% → 15% under $1M revenue)
-- Google external billing skipped at launch
+- Google external billing skipped at launch — revisit Phase 2 if Android volume justifies the compliance overhead
 
 **Pro tier feature gates: API-layer enforcement (security)**
 
@@ -974,6 +994,66 @@ GitHub Actions:
 - Fly.io built-in metrics for resource usage
 - Custom Postgres queries for business metrics (signups/day, bets/day, conversions/day)
 - Phase 2: dedicated dashboard tool (Grafana on Fly.io, or Tinybird)
+
+---
+
+## Revenue Model Summary
+
+EdgeAcademy has **three revenue paths per user**, and they have very different economics. Understanding the mix is critical to product strategy and prevents misreading the business.
+
+### The three paths
+
+| Path | Expected % of users | Revenue per user |
+|---|---|---|
+| **Pro subscription** | 2-10% | $8.99/mo (~$108/yr) |
+| **Sportsbook affiliate conversion** | 10-30% | $200-500 CPA + $20-50/mo lifetime rev-share |
+| **Free, paper-only forever** | 60-85% | $0 direct; community, virality, alpha calibration, conversion candidates over time |
+
+### The critical insight
+
+A single sportsbook conversion is worth **22+ months of Pro subscription** in CPA alone, plus perpetual rev-share on top.
+
+Strategic implications:
+- A free user who never subscribes but converts to a sportsbook is **dramatically more valuable** than a Pro subscriber who never graduates.
+- Hobbyist free users (who never graduate) are still genuinely valuable — community, virality, conversion candidates over time, alpha-factor calibration data.
+- **Do NOT optimize for Pro conversion at the cost of free-user happiness.** That kills affiliate revenue, which is the actual moat.
+- The freemium model exists to keep the funnel wide; the Pro tier exists to monetize a small slice of power users without damaging the rest.
+- The educational positioning is non-negotiable — paywalling lessons would crush both the compliance moat and the funnel.
+
+### Projected revenue scenarios at 50K total users (Month 12)
+
+These are illustrative scenarios, not promises. They show sensitivity to conversion rates.
+
+| Scenario | Pro conv | Affiliate conv | Pro MRR | CPA total (cumulative) | Lifetime rev-share/mo |
+|---|---|---|---|---|---|
+| Conservative | 5% | 15% | $22K | $1.5M | $150K |
+| Realistic | 5% | 20% | $22K | $2M | $200-300K |
+| Optimistic | 10% | 25% | $45K | $3M+ | $400-500K |
+
+Notes:
+- **CPA is one-time per conversion at signup.** The $1.5-3M figure is cumulative across all conversions over the year, not monthly recurring.
+- **Lifetime rev-share is monthly recurring** (typically 20-30% of Net Gaming Revenue, paid monthly with 30-60 day lag).
+- Infrastructure cost holds at ~$875/mo regardless of paid mix (it scales with total active users, not paid users).
+- These scenarios assume successful funnel mechanics. Without sportsbook partnerships activated and effective graduation flow, affiliate conversion drops to <5% and the model relies more heavily on Pro subscriptions.
+
+### Industry benchmarks (for context on Pro conversion rates)
+
+| App | Pro conversion |
+|---|---|
+| Spotify | 40-50% (best-in-class) |
+| Robinhood Gold | 8-12% |
+| Duolingo | 7-8% |
+| Strava | 5-7% |
+| Most freemium consumer apps | 2-5% |
+
+EdgeAcademy is more analogous to Strava/Duolingo than Spotify — the free tier is fully usable; paid is amplification. Plan for **2-5% Pro conversion at launch, growing to 5-10% if the product is sticky**. Don't model Spotify-tier conversion; that's an outlier driven by audio-quality + offline + ads-free, none of which directly map to our value proposition.
+
+### Why this section exists
+
+This is operational/strategic context, not API design. It lives in this document because:
+1. The cost projection (next section) is meaningless without revenue context — $875/mo at 50K users is a number; whether that's profitable depends on the revenue model.
+2. Future-Brett, future investors, future engineers reading this should understand the funnel logic immediately, so they don't optimize for the wrong metric (e.g., Pro conversion at the expense of affiliate conversion).
+3. Several API design decisions only make sense given this revenue model — for example, gentle graduation nudging, opt-in leaderboards, and the refusal to paywall lessons all derive from preserving the affiliate funnel.
 
 ---
 
