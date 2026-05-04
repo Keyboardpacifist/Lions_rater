@@ -1956,6 +1956,47 @@ def render_splits_section(*, player_name: str, season,
 
     base_mask = ((adj["player_display_name"] == player_name)
                  & (adj["position_group"] == position_group))
+
+    # ── In-panel "View" picker ─────────────────────────────────
+    # Override is_career_view + season based on the user's per-
+    # section choice. Falls back to the page-level picker's value
+    # as the default. Only renders when the player has multiple
+    # NFL seasons in the data (otherwise there's nothing to toggle).
+    seasons_present = sorted(
+        int(s) for s in adj[base_mask]["season"].dropna().unique()
+    )
+    seasons_present.reverse()  # most recent first
+
+    if len(seasons_present) > 1:
+        options = [f"Season {s}" for s in seasons_present] + ["All career"]
+        if is_career_view:
+            default_label = "All career"
+        else:
+            default_label = (f"Season {int(season)}"
+                              if season in seasons_present
+                              else f"Season {seasons_present[0]}")
+        try:
+            default_idx = options.index(default_label)
+        except ValueError:
+            default_idx = 0
+        picker = st.selectbox(
+            "📊 Splits view",
+            options=options,
+            index=default_idx,
+            key=f"{key_prefix}_splits_view_pick",
+            help=("Switch this section between a single NFL season "
+                  "and the player's full career — independent of "
+                  "the page-level year picker above."),
+        )
+        if picker == "All career":
+            is_career_view = True
+        else:
+            try:
+                season = int(picker.replace("Season ", ""))
+                is_career_view = False
+            except ValueError:
+                pass
+
     if is_career_view:
         games = adj[base_mask].copy()
     else:
