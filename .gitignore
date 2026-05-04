@@ -55,3 +55,7 @@ data.zip
 
 # Game logs — reproducible from tools/game_logs/ scripts; do not commit
 data/games/
+
+# Internal strategy docs — not for public repo
+roadmap.md
+.company/
