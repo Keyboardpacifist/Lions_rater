@@ -59,3 +59,11 @@ data/games/
 # Internal strategy docs — not for public repo
 roadmap.md
 .company/
+
+# Office docs — internal, not for repo
+*.docx
+*.xlsx
+~$*
+
+# Claude Code session state
+.claude/
