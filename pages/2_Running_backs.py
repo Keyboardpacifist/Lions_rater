@@ -48,6 +48,7 @@ from lib_shared import (
     render_player_year_picker,
     score_players,
 )
+from lib_top_nav import render_home_button
 
 # ============================================================
 # Page config
@@ -938,7 +939,6 @@ _card_stats = [
 
 from lib_shared import team_theme as _theme
 from lib_trading_card import render_card_download_button as _render_card
-from lib_top_nav import render_home_button
 
 _render_card(
     player_name=selected,
