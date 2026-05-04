@@ -123,6 +123,86 @@ def player_picker(options: list[str], key: str,
     )
 
 
+# ══════════════════════════════════════════════════════════════
+# 🚀 TODAY'S 5 — gamified hero strip
+# ══════════════════════════════════════════════════════════════
+# Auto-pulls the latest week's edge findings (largest projection
+# divergence × confidence) and renders the top 5 as alpha cards.
+# Same visual primitive as the Fantasy hero. Sub-tabs below remain
+# the Bloomberg view.
+from lib_alpha_card import render_alpha_card
+
+st.markdown(
+    "<div style='margin:14px 0 18px 0;'>"
+    "<div style='font-size:24px;font-weight:900;letter-spacing:-0.5px;"
+    "color:#0a3d62;'>🚀 Today's 5 — biggest market edges</div>"
+    "<div style='font-size:13px;color:#5b6b7e;margin-top:4px;'>"
+    "Top 5 player-prop divergences from the edge-finder, ranked by "
+    "confidence × magnitude. Each card is a single mispriced market "
+    "vs. our model's projection. Drill the sub-tabs for the full "
+    "audit trail."
+    "</div></div>",
+    unsafe_allow_html=True,
+)
+
+try:
+    _ts5_season = 2025
+    _ts5_week = _edge_latest_week(_ts5_season)
+    _ts5_findings = generate_edge_findings(_ts5_season, _ts5_week)
+except Exception as _ts5_e:
+    _ts5_findings = pd.DataFrame()
+    st.caption(f"_Edge finder unavailable: {_ts5_e}_")
+
+if _ts5_findings.empty:
+    st.info("No edges flagged for the current week. The edge-finder "
+            "needs a week with games + complete projection data.")
+else:
+    from lib_shared import team_theme as _ts5_team_theme
+
+    _ts5_top = _ts5_findings.head(5)
+    st.caption(f"**Week {_ts5_week} · {_ts5_season}** · "
+                f"{len(_ts5_findings)} total findings · top 5 shown.")
+
+    _ts5_cols = st.columns(5)
+    for _col, (_, _row) in zip(_ts5_cols, _ts5_top.iterrows()):
+        with _col:
+            _theme = _ts5_team_theme(str(_row["team"]))
+            _direction = str(_row["direction"]).upper()
+            _conf = int(_row["confidence"])
+            _stars = "⭐" * _conf
+            if _direction == "OVER":
+                _verdict = (f"🚀 STRONG OVER {_stars}"
+                             if _conf >= 4 else f"🚀 OVER {_stars}")
+            else:
+                _verdict = (f"⚠️ STRONG UNDER {_stars}"
+                             if _conf >= 4 else f"⚠️ UNDER {_stars}")
+            _pct = float(_row["pct_shift"]) * 100
+            _stat_label = str(_row["stat"]).replace("_", " ").title()
+            _breakdown = [
+                (_stat_label, float(_row["magnitude"])),
+            ]
+            render_alpha_card(
+                player=str(_row["player_name"]),
+                position=str(_row["position"]),
+                team=str(_row["team"]),
+                theme=_theme,
+                total_fp=_pct,
+                verdict=_verdict,
+                reason=str(_row["blurb"]),
+                breakdown=_breakdown,
+                unit_label="% VS RECENT BASELINE",
+                number_format="{sign}{value:.0f}%",
+            )
+
+    st.caption(
+        "Drill into **🎯 Matchup Edge Finder** under GAME BETS or "
+        "**🎯 Edge Finder** under PLAYER PROPS for the full ranked "
+        "list and per-finding audit."
+    )
+
+st.markdown("---")
+
+
 section_game, section_props = st.tabs([
     "🏟️  GAME BETS  —  spread / total / moneyline",
     "👤  PLAYER PROPS  —  yards / TDs / receptions / parlays",

@@ -35,11 +35,22 @@ def render_alpha_card(*, player: str, position: str, team: str,
                          theme: dict, total_fp: float, verdict: str,
                          reason: str,
                          breakdown: list[tuple[str, float]] | None = None,
-                         logo_url: str | None = None) -> None:
+                         logo_url: str | None = None,
+                         unit_label: str = "PROJECTED PPR TAILWIND",
+                         number_format: str = "{sign}{value:.1f}",
+                         ) -> None:
     """Render one alpha card. `theme` is the dict returned by
     lib_shared.team_theme(team_abbr). `breakdown` is an optional
     list of (factor_label, fp) tuples shown as small chips at the
-    bottom of the card (e.g., ("Lamar bounce", 64.0))."""
+    bottom of the card (e.g., ("Lamar bounce", 64.0)).
+
+    `unit_label` is the small caption under the headline number —
+    fantasy uses "PROJECTED PPR TAILWIND", gambling overrides to
+    "% VS BASELINE" or similar.
+
+    `number_format` is the format string for the headline number.
+    Default "{sign}{value:.1f}" works for FP. Use "{sign}{value:.0f}%"
+    for percentage edges."""
     primary = theme.get("primary", "#1F2A44")
     secondary = theme.get("secondary", "#0B1730")
     text_color = _readable_text(primary)
@@ -50,7 +61,7 @@ def render_alpha_card(*, player: str, position: str, team: str,
     chip_text = text_color
 
     sign = "+" if total_fp >= 0 else ""
-    fp_str = f"{sign}{total_fp:.1f}"
+    fp_str = number_format.format(sign=sign, value=total_fp)
 
     breakdown_html = ""
     if breakdown:
@@ -107,7 +118,7 @@ def render_alpha_card(*, player: str, position: str, team: str,
         f'letter-spacing:-1px;">{fp_str}</div>'
         f'<div style="font-size:10px;font-weight:600;opacity:0.85;'
         f'letter-spacing:0.5px;margin-top:2px;">'
-        f'PROJECTED PPR TAILWIND</div>'
+        f'{unit_label}</div>'
         f'</div>'
         # Reason
         f'<div style="margin-top:10px;font-size:12px;line-height:1.4;'
