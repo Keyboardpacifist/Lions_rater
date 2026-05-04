@@ -571,11 +571,16 @@ with tab_hero:
     )
 
     # ── Compute per-player combined alpha ────────────────────────
-    if attribution.empty or transitions.empty:
+    # Load fresh inside the tab — `attribution` and `transitions`
+    # at module scope aren't defined until tab2's setup runs, but
+    # tab_hero executes before that.
+    attribution_h = load_attribution()
+    transitions_h = load_transitions()
+    if attribution_h.empty or transitions_h.empty:
         st.info("Scheme data not built yet — see sub-tabs below.")
     else:
         config_hero = fs.CONFIG_BY_NAME[config_name]
-        attr_hero = attribution.copy()
+        attr_hero = attribution_h.copy()
         attr_hero["row_fp"] = attr_hero.apply(
             lambda r: _route_row_fp(
                 r.get("catches"), r.get("yards"), r.get("tds"),
