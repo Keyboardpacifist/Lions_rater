@@ -534,7 +534,8 @@ def compute_league_wide_alpha(config_name: str) -> pd.DataFrame:
 #  Tabs — four alpha lenses
 # ══════════════════════════════════════════════════════════════════
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab_hero, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "🚀 Today's 5",
     "📊 ADP Triangulation",
     "🔍 Usage Autopsy",
     "🛫 QB Trajectory",
@@ -542,6 +543,228 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "⚖️ Camp Battles",
     "🏆 Route Conversion",
 ])
+
+
+with tab_hero:
+    # ══════════════════════════════════════════════════════════════
+    # 🚀 TODAY'S 5 — gamified hero strip
+    # ══════════════════════════════════════════════════════════════
+    # Aggregates tailwind FP across all four alpha factors per
+    # player (Vacancy + QB Trajectory + Volume + … Scheme Shift TBD)
+    # and renders the top 5 as trading-card-style alpha cards. The
+    # detailed Bloomberg view lives in the sub-tabs that follow.
+    from lib_alpha_card import render_alpha_card, verdict_for
+    from lib_shared import team_theme
+
+    st.markdown(
+        "<div style='margin:14px 0 18px 0;'>"
+        "<div style='font-size:24px;font-weight:900;letter-spacing:-0.5px;"
+        "color:#0a3d62;'>🚀 Today's 5 — biggest fantasy alpha</div>"
+        "<div style='font-size:13px;color:#5b6b7e;margin-top:4px;'>"
+        "Top 5 receivers / TEs by combined alpha (Vacancy + QB "
+        "Trajectory + Volume Amplification). Each card adds the "
+        "factors together so the headline number is the full "
+        "tailwind story. Drill into the sub-tabs below for the "
+        "math behind each."
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Compute per-player combined alpha ────────────────────────
+    if attribution.empty or transitions.empty:
+        st.info("Scheme data not built yet — see sub-tabs below.")
+    else:
+        config_hero = fs.CONFIG_BY_NAME[config_name]
+        attr_hero = attribution.copy()
+        attr_hero["row_fp"] = attr_hero.apply(
+            lambda r: _route_row_fp(
+                r.get("catches"), r.get("yards"), r.get("tds"),
+                r.get("position", ""), config_hero),
+            axis=1,
+        )
+        attr_25_hero = attr_hero[attr_hero["season"] == 2025].copy()
+
+        rec_team_25_hero = (
+            attr_25_hero.groupby(
+                ["team", "receiver_player_id",
+                 "player_display_name", "position"], as_index=False)
+            .agg(targets_2025=("targets", "sum"),
+                 fp_2025=("row_fp", "sum"))
+        )
+        team_total_25_hero = (
+            attr_25_hero.groupby("team", as_index=False)
+            .agg(team_targets_2025=("targets", "sum"))
+        )
+        rec_career_hero = (
+            attr_hero.groupby("receiver_player_id", as_index=False)
+            .agg(career_targets=("targets", "sum"),
+                 career_fp=("row_fp", "sum"))
+        )
+        rec_career_hero["fp_per_target"] = (
+            rec_career_hero["career_fp"]
+            / rec_career_hero["career_targets"].clip(lower=1)
+        )
+
+        rec_h = rec_team_25_hero.merge(
+            team_total_25_hero, on="team", how="left")
+        rec_h["target_share"] = (
+            rec_h["targets_2025"]
+            / rec_h["team_targets_2025"].clip(lower=1)
+        )
+        rec_h = rec_h[rec_h["targets_2025"] >= 20]
+        rec_h = rec_h.merge(
+            rec_career_hero[["receiver_player_id", "fp_per_target"]],
+            on="receiver_player_id", how="left",
+        )
+
+        # ── Factor 1: Volume Alpha (with v2 shrinkage) ────────
+        SHRINK_W = 0.85
+        rec_h["team_pos_rank"] = (
+            rec_h.groupby(["team", "position"])["target_share"]
+                  .rank(method="first", ascending=False)
+                  .clip(upper=3.0)
+        )
+        arch_h = (
+            rec_h.groupby(["position", "team_pos_rank"])
+                  ["target_share"].mean()
+                  .rename("archetype_share").reset_index()
+        )
+        rec_h = rec_h.merge(
+            arch_h, on=["position", "team_pos_rank"], how="left")
+        rec_h["archetype_share"] = rec_h["archetype_share"].fillna(
+            rec_h["target_share"])
+        rec_h["proj_share_2026"] = (
+            SHRINK_W * rec_h["target_share"]
+            + (1 - SHRINK_W) * rec_h["archetype_share"]
+        )
+
+        vol_df = load_volume_alpha() if (
+            "load_volume_alpha" in dir()
+        ) else None
+        # Inline-load if helper isn't defined
+        VOLUME_PATH_LOCAL = (
+            REPO / "data" / "scheme" / "volume_alpha.parquet")
+        if VOLUME_PATH_LOCAL.exists():
+            vol_df = pd.read_parquet(VOLUME_PATH_LOCAL)
+        else:
+            vol_df = pd.DataFrame()
+
+        if not vol_df.empty:
+            rec_h = rec_h.merge(
+                vol_df[["team", "attempts_delta",
+                         "pass_attempts_2025"]],
+                on="team", how="left",
+            )
+            rec_h["volume_fp"] = (
+                rec_h["pass_attempts_2025"]
+                * (rec_h["proj_share_2026"]
+                   - rec_h["target_share"])
+                + rec_h["attempts_delta"]
+                  * rec_h["proj_share_2026"]
+            ) * rec_h["fp_per_target"].fillna(1.5)
+        else:
+            rec_h["volume_fp"] = 0.0
+        rec_h["volume_fp"] = rec_h["volume_fp"].fillna(0).round(1)
+
+        # ── Factor 2: QB Trajectory ───────────────────────────
+        traj_h = load_qb_trajectory()
+        if not traj_h.empty:
+            rec_h = rec_h.merge(
+                traj_h[["team", "trajectory_delta", "qb_name"]],
+                on="team", how="left",
+            )
+            # Same formula the QB Trajectory tab uses:
+            #   tailwind_fp = 2025_fp × (delta_GAS / 100)
+            rec_h["qb_traj_fp"] = (
+                rec_h["fp_2025"]
+                * (rec_h["trajectory_delta"].fillna(0) / 100.0)
+            ).round(1)
+        else:
+            rec_h["qb_traj_fp"] = 0.0
+            rec_h["qb_name"] = ""
+        rec_h["qb_traj_fp"] = rec_h["qb_traj_fp"].fillna(0)
+
+        # ── Factor 3: Vacancy alpha (Usage Autopsy) ───────────
+        # Use the cached league-wide alpha leaderboard — same logic
+        # as the Usage Autopsy tab. Sum projected absorbed FP per
+        # (team, player) so the same player on multiple sources
+        # combines cleanly.
+        try:
+            la_df = compute_league_wide_alpha(config_name)
+        except Exception:
+            la_df = pd.DataFrame()
+        if not la_df.empty:
+            la_slim = la_df[["team", "player_id",
+                              "Projected absorbed FP"]].rename(
+                columns={"player_id": "receiver_player_id",
+                         "Projected absorbed FP": "vacancy_fp"})
+            rec_h = rec_h.merge(la_slim,
+                                on=["team", "receiver_player_id"],
+                                how="left")
+        else:
+            rec_h["vacancy_fp"] = 0.0
+        rec_h["vacancy_fp"] = rec_h["vacancy_fp"].fillna(0)
+
+        # ── Combine ───────────────────────────────────────────
+        rec_h["total_alpha_fp"] = (
+            rec_h["volume_fp"]
+            + rec_h["qb_traj_fp"]
+            + rec_h["vacancy_fp"]
+        ).round(1)
+
+        top5 = rec_h.sort_values(
+            "total_alpha_fp", ascending=False).head(5)
+        if top5.empty:
+            st.info("No alpha candidates surfaced.")
+        else:
+            cols_top = st.columns(5)
+            for col, (_, r) in zip(cols_top, top5.iterrows()):
+                with col:
+                    theme = team_theme(r["team"])
+                    breakdown = []
+                    if abs(r["vacancy_fp"]) >= 1:
+                        breakdown.append(
+                            ("Vacancy", float(r["vacancy_fp"])))
+                    if abs(r["qb_traj_fp"]) >= 1:
+                        breakdown.append(
+                            ("QB tailwind",
+                             float(r["qb_traj_fp"])))
+                    if abs(r["volume_fp"]) >= 1:
+                        breakdown.append(
+                            ("Team volume",
+                             float(r["volume_fp"])))
+                    # Pick the dominant factor for the rationale
+                    dominant = max(
+                        [("vacancy_fp", "vacated targets opening up"),
+                         ("qb_traj_fp", f"QB ({r.get('qb_name','')}) "
+                          "projected to play better"),
+                         ("volume_fp", "team projects to throw more")],
+                        key=lambda kv: float(r.get(kv[0], 0)),
+                    )
+                    reason = (
+                        f"{dominant[1].capitalize()} "
+                        f"→ +{r['total_alpha_fp']:.0f} PPR projected."
+                    )
+                    verdict = verdict_for(
+                        float(r["total_alpha_fp"]),
+                        share_2025=float(r["target_share"]))
+                    render_alpha_card(
+                        player=str(r["player_display_name"]),
+                        position=str(r["position"]),
+                        team=str(r["team"]),
+                        theme=theme,
+                        total_fp=float(r["total_alpha_fp"]),
+                        verdict=verdict,
+                        reason=reason,
+                        breakdown=breakdown,
+                    )
+
+            st.caption(
+                "Click any sub-tab below to drill into the math "
+                "behind these picks. Cards combine three of the "
+                "four alpha factors — Scheme Shift (factor 4) "
+                "still pending."
+            )
 
 
 with tab1:
