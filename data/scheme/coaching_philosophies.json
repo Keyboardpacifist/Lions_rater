@@ -1,0 +1,82 @@
+{
+  "_doc": "Canonical offensive philosophies with their EXPECTED route-distribution fingerprints. Each fingerprint is a 12-route share dictionary using the harmonized taxonomy (matches data/scheme/team_route_harmonized.parquet). Used as templates to compute a 'philosophy mix' score for any team's actual route distribution. Edit by hand to refine — these are seed values informed by known practitioners, not learned from data.",
+
+  "_schema": {
+    "label": "Display name",
+    "lineage": "Origin coach / school of thought",
+    "philosophy": "1-2 sentence description of the offensive identity",
+    "expected_route_shares": "Dict of route → expected share (must sum to ~1.0 across the 12-route harmonized taxonomy)",
+    "modern_practitioners": "List of OCs/HCs currently or recently running this scheme",
+    "color": "Hex color used in UI radar / stacked bar visualizations"
+  },
+
+  "WCO": {
+    "label": "West Coast Offense",
+    "lineage": "Bill Walsh (49ers, 1979–88)",
+    "philosophy": "Short, timing-based, rhythm passing. Ball-control with high-completion%, lots of yards-after-catch. Pre-snap motion, condensed sets, run after the catch.",
+    "expected_route_shares": {
+      "HITCH": 0.18, "FLAT": 0.14, "SLANT": 0.10,
+      "OUT": 0.12, "CROSS": 0.11, "SCREEN": 0.10,
+      "IN": 0.07, "GO": 0.06, "POST": 0.04,
+      "CORNER": 0.04, "ANGLE": 0.03, "WHEEL": 0.01
+    },
+    "modern_practitioners": ["Sean McVay", "Kyle Shanahan", "Matt LaFleur", "Mike McDaniel", "Ben Johnson"],
+    "color": "#1f77b4"
+  },
+
+  "Air Coryell": {
+    "label": "Air Coryell",
+    "lineage": "Don Coryell (Cardinals/Chargers, 1973–86)",
+    "philosophy": "Vertical attack — push the ball downfield, route-tree-numbered system, RB as a receiving threat. Classic 'air it out' mentality with deep crossers and double-moves.",
+    "expected_route_shares": {
+      "GO": 0.14, "POST": 0.08, "HITCH": 0.12,
+      "IN": 0.11, "OUT": 0.15, "CROSS": 0.12,
+      "CORNER": 0.07, "FLAT": 0.09, "SLANT": 0.05,
+      "SCREEN": 0.05, "ANGLE": 0.01, "WHEEL": 0.01
+    },
+    "modern_practitioners": ["Norv Turner (legacy)", "Tom Moore (legacy)", "Frank Reich"],
+    "color": "#d62728"
+  },
+
+  "Erhardt-Perkins": {
+    "label": "Erhardt-Perkins",
+    "lineage": "Ron Erhardt + Ray Perkins (Giants/Patriots, 1980s) — formalized by Belichick",
+    "philosophy": "Concept-based — every route concept is a named entity ('Ghost', 'Dagger', 'Sail') and any player can run any spot in the concept. Adaptable, matchup-driven, often less verbal than WCO.",
+    "expected_route_shares": {
+      "HITCH": 0.14, "IN": 0.11, "OUT": 0.14,
+      "SLANT": 0.10, "CROSS": 0.13, "POST": 0.05,
+      "GO": 0.07, "FLAT": 0.11, "SCREEN": 0.07,
+      "CORNER": 0.05, "ANGLE": 0.02, "WHEEL": 0.01
+    },
+    "modern_practitioners": ["Bill O'Brien", "Josh McDaniels", "Brian Daboll", "Matt Patricia (defensive but in this tree)"],
+    "color": "#9467bd"
+  },
+
+  "Spread/RPO": {
+    "label": "Spread / RPO",
+    "lineage": "College Air Raid + RPO innovations (2010s) imported to NFL",
+    "philosophy": "Shotgun-heavy, quick-passing concepts grafted onto run schemes. Lots of slants, screens, RPOs. Built around mobile QBs and quick-twitch decision-making.",
+    "expected_route_shares": {
+      "SLANT": 0.13, "HITCH": 0.16, "SCREEN": 0.14,
+      "FLAT": 0.11, "OUT": 0.11, "CROSS": 0.09,
+      "IN": 0.08, "GO": 0.07, "POST": 0.04,
+      "CORNER": 0.04, "ANGLE": 0.02, "WHEEL": 0.01
+    },
+    "modern_practitioners": ["Andy Reid (hybrid)", "Nick Sirianni", "Doug Pederson", "Liam Coen"],
+    "color": "#2ca02c"
+  },
+
+  "Power Run / Vertical": {
+    "label": "Power Run / Vertical",
+    "lineage": "Greg Roman (49ers/Bills/Ravens) + classic NFL run-first schemes",
+    "philosophy": "Establish the run, build the pass game off play-action vertical shots. Heavy 12/13 personnel, designed QB runs, pin-and-pull blocking schemes. Pass attempts often longer/deeper than league average.",
+    "expected_route_shares": {
+      "GO": 0.16, "POST": 0.08, "HITCH": 0.10,
+      "IN": 0.09, "OUT": 0.10, "CROSS": 0.09,
+      "SLANT": 0.06, "SCREEN": 0.12, "FLAT": 0.11,
+      "CORNER": 0.06, "ANGLE": 0.02, "WHEEL": 0.01
+    },
+    "modern_practitioners": ["Greg Roman (legacy)", "Sean Payton (TEN/DEN era)", "Bobby Slowik (HOU run-first variant)"],
+    "color": "#ff7f0e"
+  }
+}
