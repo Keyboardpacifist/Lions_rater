@@ -268,14 +268,28 @@ def decompose(player_id: str, position: str, team: str, stat: str,
                 target_roof=target_roof, target_surface=target_surface,
             )
             if wr.n_games >= 5 and wr.cohort_mode in ("player", "tier_blend"):
-                weather_adj = wr.p50 - baseline
-                decomp.add(
-                    label="Weather",
-                    note=(f"{wr.cohort_mode} cohort, n={wr.n_games}, "
-                          f"P50={wr.p50:.0f} vs baseline {baseline:.0f} "
-                          f"({wr.confidence})"),
-                    additive=weather_adj,
-                )
+                # Stabilized weather adjustment — was naive
+                # `cohort_p50 - baseline` (two medians of different
+                # samples, unstable for small n). Now: convert to a
+                # multiplier (cohort_p50 / baseline), shrink toward 1.0
+                # by sample size (tau=8 effective games), and cap to
+                # [0.6, 1.4] to prevent extreme small-sample swings.
+                if baseline > 0:
+                    raw_mult = wr.p50 / baseline
+                    TAU_W = 8.0
+                    w = wr.n_games / (wr.n_games + TAU_W)
+                    weather_mult = w * raw_mult + (1 - w) * 1.0
+                    weather_mult = max(0.6, min(1.4, weather_mult))
+                    if abs(weather_mult - 1.0) > 0.01:
+                        decomp.add(
+                            label="Weather",
+                            note=(f"{wr.cohort_mode} cohort, n="
+                                  f"{wr.n_games}, P50={wr.p50:.0f} "
+                                  f"vs baseline {baseline:.0f} "
+                                  f"(shrunk ×{weather_mult:.2f}, "
+                                  f"{wr.confidence})"),
+                            multiplier=weather_mult,
+                        )
 
     # ── Matchup / DvP (5.8)
     if opponent and season is not None:

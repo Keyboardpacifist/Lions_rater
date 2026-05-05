@@ -228,11 +228,26 @@ def wilson_interval(k: int, n: int,
 
 @dataclass
 class RungEV:
+    """Per-rung EV estimate for an alt-line ladder.
+
+    Display recommendation: SURFACE THE LOWER-CI VARIANTS PROMINENTLY.
+    The point estimates (`p_model`, `edge`, `ev`, `kelly_quarter`)
+    treat the model probability as known with certainty — but it
+    isn't, especially at low n. The `*_low` variants compute the
+    same metric at the lower 95% Wilson CI bound, giving a
+    conservative read-out that's still positive only when the bet
+    is +EV with high confidence.
+
+    Recommended UI hierarchy:
+      1. `ev_low` and `kelly_low` as the headline numbers (primary)
+      2. `ev` and `kelly_quarter` as "point estimate" reference
+      3. `n_games` to communicate sample-size confidence
+    """
     threshold: float
     side: str           # "over" / "under"
     american_odds: int
     decimal_odds: float
-    p_model: float          # Beta-shrunk posterior — preferred for display
+    p_model: float          # Beta-shrunk posterior — preferred over raw
     p_model_raw: float      # Raw empirical k/n (legacy, high-variance)
     p_model_ci_low: float   # Wilson 95% CI lower bound (on raw)
     p_model_ci_high: float  # Wilson 95% CI upper bound (on raw)
@@ -240,11 +255,11 @@ class RungEV:
     p_implied_fair: float   # vig-removed implied — book's TRUE estimate
     edge: float             # p_model_shrunk - p_implied_fair (real edge)
     edge_raw: float         # p_model_raw - p_implied (legacy, biased)
-    ev: float           # EV per unit risked at shrunk p_model
-    ev_raw: float       # EV per unit risked at raw p_model
-    ev_low: float       # EV at lower CI bound (conservative)
-    kelly_quarter: float    # quarter-Kelly fraction at p_model_shrunk
-    kelly_low: float        # quarter-Kelly at lower CI bound (conservative)
+    ev: float               # EV at p_model_shrunk (point estimate)
+    ev_raw: float           # EV at p_model_raw (legacy)
+    ev_low: float           # EV at lower CI bound — RECOMMENDED PRIMARY
+    kelly_quarter: float    # ¼-Kelly at p_model_shrunk (point)
+    kelly_low: float        # ¼-Kelly at lower CI bound — RECOMMENDED
     n_games: int
 
 

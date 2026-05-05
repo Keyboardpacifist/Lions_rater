@@ -188,23 +188,31 @@ def _trend_findings(season: int, week: int,
     pre = pre.sort_values(["player_id", "season", "week"],
                             ascending=[True, False, False])
 
+    # Hardened trend window — was last-3 vs season-prior, raised to
+    # last-5 vs at-least-3-prior and z>=1.5 (was 1.0). The audit found
+    # n=3 trend signals have empirical R² < 0.05 against next-game
+    # outcomes; the books absolutely DO incorporate recent form
+    # (the old blurb's claim that "books anchor to season averages"
+    # is largely false). Tighter gating reduces noise pollution.
+    RECENT_WINDOW = 5
+    MIN_PRIOR = 3
+    HARDENED_MIN_Z = max(min_z, 1.5)
+
     for stat in TREND_STATS:
         if stat not in pre.columns:
             continue
         min_avg = MIN_RECENT_AVG_FOR_TREND.get(stat, 0.0)
-        # For each player: compute recent (last 3) and season-prior
-        # means, plus union variance for z-score.
         for pid, group in pre.groupby("player_id", sort=False):
             sub = group[group[stat].notna()]
-            if len(sub) < 4:
+            if len(sub) < (RECENT_WINDOW + MIN_PRIOR):
                 continue
-            recent = sub.head(3)
-            earlier = sub.iloc[3:]
-            if len(recent) < 1 or len(earlier) < 1:
+            recent = sub.head(RECENT_WINDOW)
+            earlier = sub.iloc[RECENT_WINDOW:]
+            if len(recent) < RECENT_WINDOW or len(earlier) < MIN_PRIOR:
                 continue
             recent_avg = float(recent[stat].astype(float).mean())
             season_avg = float(earlier[stat].astype(float).mean())
-            # Union-variance z (matches lib_trend_divergence semantics)
+            # Union-variance z
             all_vals = pd.concat([recent[stat].astype(float),
                                     earlier[stat].astype(float)])
             std = float(all_vals.std(ddof=0))
@@ -212,22 +220,26 @@ def _trend_findings(season: int, week: int,
                 continue
             delta = recent_avg - season_avg
             z = delta / std
-            if abs(z) < min_z:
+            if abs(z) < HARDENED_MIN_Z:
                 continue
             if recent_avg < min_avg and season_avg < min_avg:
                 continue
             direction = "OVER" if delta > 0 else "UNDER"
             stat_label = stat.replace("_", " ")
             verb = "expanded" if delta > 0 else "shrunk"
-            confidence = min(5, max(1, int(round(abs(z)))))
-            # Pull static cols from the first row of the group
+            # Confidence stars now penalize for thin earlier-prior
+            # samples (a 5-vs-3 split is shakier than 5-vs-12).
+            base_conf = int(round(abs(z)))
+            sample_penalty = 0 if len(earlier) >= 8 else 1
+            confidence = min(5, max(1, base_conf - sample_penalty))
             first = group.iloc[0]
             blurb = (
                 f"{first['player_display_name']} ({first['position']}, "
-                f"{first['team']}): {stat_label} role {verb} recently — "
-                f"{recent_avg:.1f}/g last 3 vs {season_avg:.1f}/g "
-                f"season prior (z={z:+.1f}). Books usually "
-                f"anchor to season averages."
+                f"{first['team']}): {stat_label} {verb} recently — "
+                f"{recent_avg:.1f}/g last {len(recent)} vs "
+                f"{season_avg:.1f}/g over prior {len(earlier)} games "
+                f"(z={z:+.1f}). Recent-form trend — books typically "
+                f"price this in; treat as supporting evidence."
             )
             # Cap pct_shift at ±200% — beyond that, percent is
             # misleading because the season_avg denominator is too
