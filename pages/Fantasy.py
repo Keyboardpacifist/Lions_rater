@@ -534,12 +534,13 @@ def compute_league_wide_alpha(config_name: str) -> pd.DataFrame:
 #  Tabs — four alpha lenses
 # ══════════════════════════════════════════════════════════════════
 
-tab_hero, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab_hero, tab1, tab2, tab3, tab4, tab_scheme, tab5, tab6 = st.tabs([
     "🚀 Today's 5",
     "📊 ADP Triangulation",
     "🔍 Usage Autopsy",
     "🛫 QB Trajectory",
     "📈 Volume Alpha",
+    "🧪 Scheme Shift",
     "⚖️ Camp Battles",
     "🏆 Route Conversion",
 ])
@@ -710,11 +711,35 @@ with tab_hero:
             rec_h["vacancy_fp"] = 0.0
         rec_h["vacancy_fp"] = rec_h["vacancy_fp"].fillna(0)
 
-        # ── Combine ───────────────────────────────────────────
+        # ── Factor 4: Scheme Shift (NEW) ─────────────────────
+        # Receivers whose team's offense moved toward their career
+        # profile gain alpha; those whose team moved away lose it.
+        # fit_delta is bounded ~[-0.15, +0.15] — multiply by 2025
+        # FP to convert to a fantasy-points contribution.
+        SCHEME_FIT_PATH = REPO / "data" / "scheme" / "scheme_shift_receiver_fit.parquet"
+        if SCHEME_FIT_PATH.exists():
+            scheme_fit = pd.read_parquet(SCHEME_FIT_PATH)
+            scheme_fit_slim = scheme_fit[[
+                "player_id", "team", "fit_delta",
+            ]].rename(columns={"player_id": "receiver_player_id"})
+            rec_h = rec_h.merge(
+                scheme_fit_slim,
+                on=["team", "receiver_player_id"], how="left",
+            )
+            rec_h["scheme_fp"] = (
+                rec_h["fp_2025"]
+                * rec_h["fit_delta"].fillna(0)
+            ).round(1)
+        else:
+            rec_h["scheme_fp"] = 0.0
+        rec_h["scheme_fp"] = rec_h["scheme_fp"].fillna(0)
+
+        # ── Combine ALL FOUR FACTORS ─────────────────────────
         rec_h["total_alpha_fp"] = (
             rec_h["volume_fp"]
             + rec_h["qb_traj_fp"]
             + rec_h["vacancy_fp"]
+            + rec_h["scheme_fp"]
         ).round(1)
 
         top5 = rec_h.sort_values(
@@ -738,12 +763,18 @@ with tab_hero:
                         breakdown.append(
                             ("Team volume",
                              float(r["volume_fp"])))
+                    if abs(r.get("scheme_fp", 0)) >= 1:
+                        breakdown.append(
+                            ("Scheme fit",
+                             float(r["scheme_fp"])))
                     # Pick the dominant factor for the rationale
                     dominant = max(
                         [("vacancy_fp", "vacated targets opening up"),
                          ("qb_traj_fp", f"QB ({r.get('qb_name','')}) "
                           "projected to play better"),
-                         ("volume_fp", "team projects to throw more")],
+                         ("volume_fp", "team projects to throw more"),
+                         ("scheme_fp", "team's offense moving toward "
+                          "his profile")],
                         key=lambda kv: float(r.get(kv[0], 0)),
                     )
                     reason = (
@@ -766,9 +797,9 @@ with tab_hero:
 
             st.caption(
                 "Click any sub-tab below to drill into the math "
-                "behind these picks. Cards combine three of the "
-                "four alpha factors — Scheme Shift (factor 4) "
-                "still pending."
+                "behind these picks. **All four alpha factors live**: "
+                "Vacancy + QB Trajectory + Volume Amplification + "
+                "Scheme Shift."
             )
 
 
@@ -1951,6 +1982,161 @@ with tab4:
         st.dataframe(
             show, use_container_width=True, hide_index=True,
             height=560,
+        )
+
+
+with tab_scheme:
+    # ══════════════════════════════════════════════════════════════════
+    #  Section 4.5: 🧪 SCHEME SHIFT ALPHA — factor 4 of 4
+    # ══════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.header("🧪 Scheme Shift Alpha")
+    st.markdown(
+        "**The fourth alpha factor.** When a team's offensive scheme "
+        "changes year-over-year, receivers whose career route profile "
+        "matches the NEW distribution gain alpha; receivers locked "
+        "into the old distribution lose alpha. We measure this from "
+        "the team's actual route distribution data — no OC tracking "
+        "required (the offense IS the data).\n\n"
+        "Three layers: "
+        "**📈 Team drift** (which offenses are evolving), "
+        "**🎯 Route delta** (what's changing), and "
+        "**🧬 Receiver fit** (who wins/loses)."
+    )
+
+    DRIFT_PATH = REPO / "data" / "scheme" / "scheme_shift_team_drift.parquet"
+    CHANGE_PATH = REPO / "data" / "scheme" / "scheme_shift_route_change.parquet"
+    FIT_PATH = REPO / "data" / "scheme" / "scheme_shift_receiver_fit.parquet"
+
+    if not (DRIFT_PATH.exists() and CHANGE_PATH.exists()
+            and FIT_PATH.exists()):
+        st.info(
+            "Scheme Shift data not built yet. Run:\n"
+            "```\npython tools/build_scheme_shift.py\n```"
+        )
+    else:
+        drift_df = pd.read_parquet(DRIFT_PATH)
+        change_df = pd.read_parquet(CHANGE_PATH)
+        fit_df = pd.read_parquet(FIT_PATH)
+
+        # ── 1. Team drift table ────────────────────────────────
+        st.markdown("### 📈 Team route-distribution drift "
+                    "(2024 → 2025)")
+        st.caption(
+            "Jensen-Shannon divergence between consecutive seasons' "
+            "route distributions. **High JSD = team's offense "
+            "materially changed.** Low JSD = continuity. The 2023+ "
+            "filter excludes pre-taxonomy-change comparisons."
+        )
+        latest_drift = drift_df[
+            drift_df["to_season"] == 2025
+        ].sort_values("jsd", ascending=False).copy()
+        latest_drift["jsd_pct"] = (latest_drift["jsd"] * 100).round(1)
+        st.dataframe(
+            latest_drift[["team", "from_season", "to_season",
+                           "jsd_pct"]].rename(columns={
+                "team": "Team",
+                "from_season": "From",
+                "to_season": "To",
+                "jsd_pct": "Drift (JSD ×100)",
+            }),
+            use_container_width=True, hide_index=True, height=400,
+        )
+
+        # ── 2. Per-team route-change explorer ─────────────────
+        st.markdown("### 🎯 Per-team route-share change "
+                    "(2024 vs 2025)")
+        team_options = sorted(change_df["team"].unique())
+        # Default to the highest-drift team
+        if not latest_drift.empty:
+            default_team = str(latest_drift.iloc[0]["team"])
+        else:
+            default_team = team_options[0]
+        team_pick = st.selectbox(
+            "Team",
+            options=team_options,
+            index=team_options.index(default_team)
+                  if default_team in team_options else 0,
+            key="scheme_shift_team_pick",
+        )
+        team_changes = change_df[
+            change_df["team"] == team_pick
+        ].sort_values("delta", ascending=False).copy()
+        team_changes["share_2024"] = (
+            team_changes["share_2024"] * 100).round(1)
+        team_changes["share_2025"] = (
+            team_changes["share_2025"] * 100).round(1)
+        team_changes["delta_pct"] = (
+            team_changes["delta"] * 100).round(1)
+        st.dataframe(
+            team_changes[["route", "share_2024", "share_2025",
+                           "delta_pct"]].rename(columns={
+                "route": "Route",
+                "share_2024": "2024 share %",
+                "share_2025": "2025 share %",
+                "delta_pct": "Δ (pp)",
+            }),
+            use_container_width=True, hide_index=True, height=420,
+        )
+
+        # ── 3. League-wide receiver scheme-fit leaderboard ─────
+        st.markdown("### 🧬 Receiver scheme fit "
+                    "— who's winning the shift")
+        st.caption(
+            "**Fit score** = how well the receiver's career route "
+            "profile aligns with the team's 2025 distribution "
+            "(1.0 = perfect, 0.0 = disjoint). **Δ vs 2024** is the "
+            "change — positive means the team's offense moved "
+            "toward this player's strengths, negative means away "
+            "from them. Min 5 career targets required."
+        )
+        col_a_s, col_b_s = st.columns(2)
+        with col_a_s:
+            pos_pick_s = st.multiselect(
+                "Position", ["WR", "TE", "RB"],
+                default=["WR", "TE", "RB"],
+                key="scheme_shift_pos")
+        with col_b_s:
+            min_fit_delta = st.slider(
+                "Min |fit Δ|",
+                0.00, 0.15, 0.03, step=0.01,
+                key="scheme_shift_min_delta",
+                help="Filter to meaningful shifts only")
+
+        fit_show = fit_df[
+            fit_df["position"].isin(pos_pick_s)
+            & (fit_df["fit_delta"].abs() >= min_fit_delta)
+        ].copy().sort_values("fit_delta", ascending=False)
+        fit_show.insert(0, "Rank", range(1, len(fit_show) + 1))
+        fit_show["Verdict"] = fit_show["fit_delta"].apply(
+            lambda d: ("🚀 SCHEME WINNER" if d >= 0.05
+                       else "⬆️ small lift" if d > 0
+                       else "⬇️ small headwind" if d > -0.05
+                       else "⚠️ SCHEME LOSER"))
+        display_fit = fit_show[[
+            "Rank", "player_display_name", "position", "team",
+            "Verdict", "fit_2024", "fit_2025", "fit_delta",
+        ]].rename(columns={
+            "player_display_name": "Player",
+            "position": "Pos",
+            "team": "Team",
+            "fit_2024": "Fit '24",
+            "fit_2025": "Fit '25",
+            "fit_delta": "Δ Fit",
+        })
+        for c in ("Fit '24", "Fit '25", "Δ Fit"):
+            display_fit[c] = display_fit[c].round(3)
+        st.dataframe(
+            display_fit, use_container_width=True,
+            hide_index=True, height=560,
+        )
+
+        st.caption(
+            "💡 **How to use this.** A SCHEME WINNER is a receiver "
+            "whose team's offense is evolving toward his strengths "
+            "— buy candidates as defenses adjust. A SCHEME LOSER's "
+            "team has shifted away from his profile — sell candidate "
+            "until usage redirects."
         )
 
 
