@@ -1,0 +1,93 @@
+{
+  "_doc": "Per-team scheme-evolution landmarks. Each entry annotates a season with a coaching change, OC change, key acquisition, or scheme inflection. Edit by hand; reload picks up automatically. Start with DET, expand to other teams as the curation cycle warrants.",
+  "_schema": {
+    "season": "int — the season the landmark APPLIES TO (i.e., first season under the new HC/OC, year of the draft, etc.)",
+    "label": "string — short headline shown on the chart",
+    "type": "hc | oc | dc | qb | acquisition | scheme_inflection",
+    "story": "string — 1-3 sentence context shown on hover/expand"
+  },
+  "DET": [
+    {
+      "season": 2017,
+      "label": "Cooter offense",
+      "type": "scheme_inflection",
+      "story": "Jim Bob Cooter's last full year as OC under Caldwell. Stafford-led pass-first offense; explosive-pass attempts at career highs."
+    },
+    {
+      "season": 2018,
+      "label": "Patricia HC",
+      "type": "hc",
+      "story": "Matt Patricia hired as HC after Caldwell era. Defensive-minded coach; offensive identity drifts. Roster turnover begins."
+    },
+    {
+      "season": 2019,
+      "label": "Bevell OC",
+      "type": "oc",
+      "story": "Darrell Bevell takes over as OC. More play-action, deeper drop-back game; the original Russell-Wilson-era Seattle template ported to Detroit."
+    },
+    {
+      "season": 2021,
+      "label": "Campbell HC + Lynn OC",
+      "type": "hc",
+      "story": "Dan Campbell hired as HC; Anthony Lynn hired as OC. Reset season — Goff acquired in Stafford trade. Run-heavy, conservative passing identity for one year."
+    },
+    {
+      "season": 2022,
+      "label": "Ben Johnson OC ⚡",
+      "type": "oc",
+      "story": "Ben Johnson promoted from passing-game coordinator to OC. Offense transforms — pre-snap motion, condensed sets, aggressive intermediate passing. Lions become a top-5 offense by EPA."
+    },
+    {
+      "season": 2023,
+      "label": "Gibbs + LaPorta drafted",
+      "type": "acquisition",
+      "story": "Jahmyr Gibbs (1st round) + Sam LaPorta (2nd round) join. RB-receiving and TE usage explode. Passing distribution shifts toward intermediate/short."
+    },
+    {
+      "season": 2024,
+      "label": "Peak Ben Johnson",
+      "type": "scheme_inflection",
+      "story": "15-2 regular-season run. Lions offense leads the NFL in EPA per play. Ben Johnson interviews for HC jobs. Most likely his last year as Lions OC."
+    },
+    {
+      "season": 2025,
+      "label": "post-Ben Johnson era",
+      "type": "scheme_inflection",
+      "story": "OC transition. Watch the route distribution: any shift away from the Ben Johnson template signals a real philosophical change vs continuity hire."
+    }
+  ],
+  "BAL": [
+    {
+      "season": 2018,
+      "label": "Lamar takes over",
+      "type": "qb",
+      "story": "Lamar Jackson replaces Joe Flacco mid-season. Run-heavy designed-QB scheme begins. Greg Roman builds offense around Lamar's mobility."
+    },
+    {
+      "season": 2023,
+      "label": "Todd Monken OC",
+      "type": "oc",
+      "story": "Greg Roman out, Todd Monken in. Offense modernizes — more play-action, more intermediate passing. Lamar wins MVP. Receiver-route distribution evolves materially."
+    },
+    {
+      "season": 2024,
+      "label": "Derrick Henry signs",
+      "type": "acquisition",
+      "story": "Henry's arrival shifts run/pass split and play-action efficiency. Mark Andrews + Hopkins absorb intermediate passing share."
+    }
+  ],
+  "KC": [
+    {
+      "season": 2018,
+      "label": "Mahomes era begins",
+      "type": "qb",
+      "story": "Patrick Mahomes takes over as starter. Reid offense unleashed — deep ball + Tyreek Hill + Travis Kelce becomes the league's most dangerous trio."
+    },
+    {
+      "season": 2023,
+      "label": "Tyreek-less offense",
+      "type": "scheme_inflection",
+      "story": "First full year without Tyreek Hill (traded 2022). Kelce + Rice become route-tree centerpieces. Distribution shifts shorter / more underneath."
+    }
+  ]
+}

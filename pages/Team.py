@@ -850,61 +850,182 @@ with tab_evolution:
         # ── TWO COLUMNS — chart + top gainers/losers ──────────
         _ec1, _ec2 = st.columns([3, 2])
 
-        # Multi-year route-share chart (2023+ for taxonomy stability)
+        # Multi-year route-share chart (2016-2025 with harmonized
+        # taxonomy + landmark annotations)
         with _ec1:
-            st.markdown("##### 📈  Route share over time")
-            team_fp = _fp[
-                (_fp["team"] == team)
-                & (_fp["dimension"] == "route")
-                & (_fp["season"] >= 2023)
-            ].copy()
-            if team_fp.empty:
-                st.info("No route distribution history for this team.")
-            else:
-                # Pick the top routes by 2025 share to keep chart readable
-                latest = (team_fp[team_fp["season"] == 2025]
-                          .sort_values("share", ascending=False))
-                top_routes = latest["category"].head(8).tolist()
-                fig_e = _evo_go.Figure()
-                _evo_palette = [
-                    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
-                    "#9467bd", "#8c564b", "#e377c2", "#17becf",
-                ]
-                for color, route in zip(_evo_palette, top_routes):
-                    sub = (team_fp[team_fp["category"] == route]
-                           .sort_values("season"))
-                    if sub.empty:
-                        continue
-                    fig_e.add_trace(_evo_go.Scatter(
-                        x=sub["season"].astype(int),
-                        y=sub["share"] * 100,
-                        mode="lines+markers",
-                        name=route,
-                        line=dict(width=2.5, color=color),
-                        marker=dict(size=8),
-                        hovertemplate=(
-                            f"<b>{route}</b><br>%{{x}}: %{{y:.1f}}%"
-                            "<extra></extra>"),
-                    ))
-                fig_e.update_layout(
-                    xaxis=dict(
-                        title="Season",
-                        dtick=1, gridcolor="#eee"),
-                    yaxis=dict(title="Share %", gridcolor="#eee"),
-                    height=360,
-                    margin=dict(l=50, r=20, t=10, b=40),
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(250,250,252,0.6)",
-                    legend=dict(
-                        orientation="h", yanchor="bottom",
-                        y=-0.32, xanchor="left", x=0,
-                        font=dict(size=10)),
+            st.markdown("##### 📈  Scheme evolution roadmap "
+                        "— 2016 to 2025")
+            _HAR_PATH = (_evo_repo / "data" / "scheme"
+                         / "team_route_harmonized.parquet")
+            _LMK_PATH = (_evo_repo / "data" / "scheme"
+                         / "scheme_landmarks.json")
+
+            if not _HAR_PATH.exists():
+                st.info(
+                    "Multi-year harmonized data not built. Run:\n"
+                    "```\npython tools/build_scheme_shift.py\n```"
                 )
-                st.plotly_chart(fig_e, use_container_width=True,
-                                  key=f"team_evo_chart_{team}")
-                st.caption("_Top 8 routes by 2025 share. 2023+ "
-                           "filter excludes pre-taxonomy-change "
-                           "comparisons._")
+            else:
+                team_fp = pd.read_parquet(_HAR_PATH)
+                team_fp = team_fp[team_fp["team"] == team].copy()
+                if team_fp.empty:
+                    st.info("No route distribution history for this team.")
+                else:
+                    # Top routes by 2025 share for readability
+                    latest = (team_fp[team_fp["season"] == 2025]
+                              .sort_values("share", ascending=False))
+                    if latest.empty:
+                        # Fall back to most recent available season
+                        max_yr = int(team_fp["season"].max())
+                        latest = (team_fp[team_fp["season"] == max_yr]
+                                  .sort_values("share", ascending=False))
+                    top_routes = latest["route"].head(8).tolist()
+
+                    # Load landmarks (may be empty for teams not yet
+                    # curated)
+                    import json as _json
+                    landmarks = []
+                    try:
+                        if _LMK_PATH.exists():
+                            with open(_LMK_PATH) as _lf:
+                                _lmk = _json.load(_lf)
+                            landmarks = _lmk.get(team, [])
+                    except Exception:
+                        landmarks = []
+
+                    fig_e = _evo_go.Figure()
+                    _evo_palette = [
+                        "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
+                        "#9467bd", "#8c564b", "#e377c2", "#17becf",
+                    ]
+                    for color, route in zip(_evo_palette, top_routes):
+                        sub = (team_fp[team_fp["route"] == route]
+                               .sort_values("season"))
+                        if sub.empty:
+                            continue
+                        fig_e.add_trace(_evo_go.Scatter(
+                            x=sub["season"].astype(int),
+                            y=sub["share"] * 100,
+                            mode="lines+markers",
+                            name=route,
+                            line=dict(width=2.5, color=color),
+                            marker=dict(size=7),
+                            hovertemplate=(
+                                f"<b>{route}</b><br>"
+                                "%{x}: %{y:.1f}%<extra></extra>"),
+                        ))
+
+                    # Taxonomy-change marker — vertical band 2022→2023
+                    fig_e.add_vrect(
+                        x0=2022.5, x1=2023.5,
+                        fillcolor="rgba(120,120,120,0.08)",
+                        layer="below", line_width=0,
+                        annotation_text="route taxonomy "
+                                        "refined (harmonized)",
+                        annotation_position="top right",
+                        annotation_font_size=9,
+                        annotation_font_color="#888",
+                    )
+
+                    # Landmark vertical lines + annotations
+                    LM_TYPE_COLOR = {
+                        "hc":                 "#dc2626",
+                        "oc":                 "#ea580c",
+                        "dc":                 "#9333ea",
+                        "qb":                 "#0891b2",
+                        "acquisition":        "#16a34a",
+                        "scheme_inflection":  "#facc15",
+                    }
+                    for i, lm in enumerate(landmarks):
+                        s = int(lm.get("season", 0))
+                        if s < 2016 or s > 2025:
+                            continue
+                        color = LM_TYPE_COLOR.get(
+                            lm.get("type", ""), "#666")
+                        # Stagger annotation y to avoid overlap
+                        y_anchor = 92 - (i % 3) * 8
+                        fig_e.add_vline(
+                            x=s, line_color=color, line_width=1.5,
+                            line_dash="dot", opacity=0.55)
+                        fig_e.add_annotation(
+                            x=s, y=y_anchor,
+                            text=f"<b>{lm.get('label','')}</b>",
+                            showarrow=False,
+                            font=dict(size=10, color=color),
+                            bgcolor="rgba(255,255,255,0.85)",
+                            bordercolor=color, borderwidth=1,
+                            borderpad=2,
+                            xanchor="left", xshift=4,
+                        )
+
+                    fig_e.update_layout(
+                        xaxis=dict(
+                            title="Season",
+                            dtick=1, gridcolor="#eee",
+                            range=[2015.6, 2025.4]),
+                        yaxis=dict(title="Share %",
+                                    gridcolor="#eee",
+                                    range=[0, 100]),
+                        height=440,
+                        margin=dict(l=50, r=20, t=10, b=40),
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(250,250,252,0.6)",
+                        legend=dict(
+                            orientation="h", yanchor="bottom",
+                            y=-0.28, xanchor="left", x=0,
+                            font=dict(size=10)),
+                    )
+                    st.plotly_chart(fig_e,
+                                      use_container_width=True,
+                                      key=f"team_evo_chart_{team}")
+
+                    if landmarks:
+                        st.caption(
+                            f"_Annotated with **{len(landmarks)} "
+                            "scheme landmarks** for this team._ "
+                            "Hover any line for the season's % "
+                            "share. Routes harmonized 2016-2025; "
+                            "pre/post-2023 differences in route "
+                            "vocabulary collapsed for "
+                            "comparability."
+                        )
+
+                        # Landmark detail table
+                        with st.expander(
+                                f"📖 The {team_name} scheme story "
+                                f"({len(landmarks)} landmarks)",
+                                expanded=False):
+                            for lm in sorted(landmarks,
+                                              key=lambda x: x.get("season", 0)):
+                                ic = LM_TYPE_COLOR.get(
+                                    lm.get("type", ""), "#666")
+                                st.markdown(
+                                    f"<div style='border-left:4px "
+                                    f"solid {ic};padding:6px 14px;"
+                                    f"margin:8px 0;'>"
+                                    f"<b style='color:{ic};'>"
+                                    f"{lm.get('season')}</b> · "
+                                    f"<b>{lm.get('label','')}</b> "
+                                    f"<span style='font-size:10px;"
+                                    f"color:#888;text-transform:"
+                                    f"uppercase;letter-spacing:"
+                                    f"0.5px;'>{lm.get('type','')}"
+                                    f"</span><br>"
+                                    f"<span style='color:#444;"
+                                    f"font-size:13px;'>"
+                                    f"{lm.get('story','')}</span>"
+                                    f"</div>",
+                                    unsafe_allow_html=True,
+                                )
+                    else:
+                        st.caption(
+                            f"_No landmarks curated for **{team}** "
+                            "yet. Edit `data/scheme/"
+                            "scheme_landmarks.json` to add HC/OC "
+                            "changes, key acquisitions, or scheme "
+                            "inflections — they'll annotate the "
+                            "chart automatically._"
+                        )
 
         # Top gainers / losers — what's actually changing
         with _ec2:

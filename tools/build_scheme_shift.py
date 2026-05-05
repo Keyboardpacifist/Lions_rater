@@ -43,6 +43,36 @@ OUT_DIR = REPO / "data" / "scheme"
 DRIFT_OUT = OUT_DIR / "scheme_shift_team_drift.parquet"
 CHANGE_OUT = OUT_DIR / "scheme_shift_route_change.parquet"
 FIT_OUT = OUT_DIR / "scheme_shift_receiver_fit.parquet"
+HARMONIZED_OUT = OUT_DIR / "team_route_harmonized.parquet"
+
+# Harmonized route taxonomy that bridges the 2022→2023 schema break.
+# Pre-2023 had 12 categories; 2023+ split a few (HITCH/CURL added a
+# variant, OUT split into DEEP/QUICK, IN became IN/DIG, etc.). To
+# enable 10-year multi-season visualization, we collapse the post-
+# 2023 finer categories back to the pre-2023 12-class taxonomy.
+ROUTE_TO_HARMONIZED = {
+    # Already-canonical (both eras)
+    "ANGLE": "ANGLE",
+    "CORNER": "CORNER",
+    "CROSS": "CROSS",
+    "FLAT": "FLAT",
+    "GO": "GO",
+    "HITCH": "HITCH",
+    "IN": "IN",
+    "OUT": "OUT",
+    "POST": "POST",
+    "SCREEN": "SCREEN",
+    "SLANT": "SLANT",
+    "WHEEL": "WHEEL",
+    # Post-2023 finer categories → collapse to pre-2023 12-class
+    "HITCH/CURL": "HITCH",
+    "IN/DIG": "IN",
+    "DEEP OUT": "OUT",
+    "QUICK OUT": "OUT",
+    "SHALLOW CROSS/DRAG": "CROSS",
+    "TEXAS/ANGLE": "ANGLE",
+    "SWING": "FLAT",
+}
 
 PRIOR_SEASON = 2025  # last completed season
 LOOKBACK_SEASON = 2024  # comparison year
@@ -74,12 +104,35 @@ def jensen_shannon_div(p: np.ndarray, q: np.ndarray) -> float:
 
 def main() -> None:
     print("→ loading team passing fingerprint...")
-    fp = pd.read_parquet(TEAM_FP)
-    fp = fp[fp["dimension"] == "route"].copy()
-    # Drop pre-taxonomy-change seasons so YoY drift is apples-to-apples
-    fp = fp[fp["season"] >= TAXONOMY_STABLE_SINCE]
+    fp_full = pd.read_parquet(TEAM_FP)
+    fp_full = fp_full[fp_full["dimension"] == "route"].copy()
+
+    # ── Harmonized timeline 2016-2025 (collapses post-2023 finer
+    # categories back to the pre-2023 12-class taxonomy) ──────
+    print("→ harmonizing route taxonomy across 2016-2025...")
+    fp_full["route_unified"] = fp_full["category"].map(
+        ROUTE_TO_HARMONIZED).fillna(fp_full["category"])
+    # Re-aggregate by harmonized route
+    har = (fp_full.groupby(["team", "season", "route_unified"],
+                              as_index=False)
+                    .agg(count=("count", "sum")))
+    # Re-compute shares per (team, season)
+    season_total = (har.groupby(["team", "season"])["count"]
+                       .sum().rename("season_total").reset_index())
+    har = har.merge(season_total, on=["team", "season"])
+    har["share"] = har["count"] / har["season_total"].clip(lower=1)
+    har = har.rename(columns={"route_unified": "route"})
+    har = har[["team", "season", "route", "count", "share"]]
+    har.to_parquet(HARMONIZED_OUT, index=False)
+    print(f"  ✓ wrote {HARMONIZED_OUT.relative_to(REPO)} "
+          f"({len(har):,} rows, {har['season'].min()}–"
+          f"{har['season'].max()})")
+
+    # The drift / change / fit calculations below stay in the
+    # post-2023 era — within-taxonomy comparisons only.
+    fp = fp_full[fp_full["season"] >= TAXONOMY_STABLE_SINCE].copy()
     print(f"  {len(fp):,} (team, season, route) rows "
-          f"({TAXONOMY_STABLE_SINCE}+)")
+          f"({TAXONOMY_STABLE_SINCE}+) for drift/fit calcs")
 
     # Wide: (team, season) → {route: share}
     wide = fp.pivot_table(
