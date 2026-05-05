@@ -132,6 +132,49 @@ def expected_value(p_win: float, decimal_odds: float) -> float:
     return p_win * decimal_odds - 1.0
 
 
+def kelly_fraction(p_win: float, decimal_odds: float,
+                     fraction: float = 0.25,
+                     max_cap: float = 0.05) -> float:
+    """Kelly criterion — optimal fraction of bankroll to bet given an
+    edge. The standard formula for a binary bet:
+
+        f* = (b × p − q) / b
+
+    where b = decimal_odds − 1, p = win probability, q = 1 − p.
+
+    Returns 0.0 when no edge (f* ≤ 0) — never bet -EV regardless.
+
+    Two important practical adjustments built in:
+      • `fraction` — multiplier on full Kelly. Default 0.25 (quarter
+        Kelly) balances growth rate against drawdown risk. Full Kelly
+        (1.0) maximizes long-run growth but has brutal variance — even
+        sharp bettors generally use 0.25-0.5 in practice.
+      • `max_cap` — hard ceiling on the recommended fraction. Default
+        5% of bankroll. Prevents over-concentration even when the
+        edge looks huge — a 10% Kelly recommendation on one bet
+        usually means the model is overconfident, not the bet is great.
+
+    For UNCERTAINTY-ADJUSTED Kelly: pass the lower CI bound of p_win
+    instead of the point estimate. This is the recommended way to
+    use Kelly with model probabilities — accounts for the fact that
+    p_win itself is uncertain.
+    """
+    if p_win <= 0 or p_win >= 1 or decimal_odds <= 1:
+        return 0.0
+    b = decimal_odds - 1.0
+    q = 1.0 - p_win
+    f_star = (b * p_win - q) / b
+    if f_star <= 0:
+        return 0.0
+    return min(max_cap, f_star * fraction)
+
+
+def kelly_stake(p_win: float, decimal_odds: float, bankroll: float,
+                  fraction: float = 0.25, max_cap: float = 0.05) -> float:
+    """Convenience: Kelly fraction × bankroll = recommended stake."""
+    return kelly_fraction(p_win, decimal_odds, fraction, max_cap) * bankroll
+
+
 def beta_shrink(k: int, n: int,
                   alpha: float = 2.0, beta: float = 2.0) -> float:
     """Beta-Binomial posterior mean — shrinks raw k/n toward a prior.
@@ -200,6 +243,8 @@ class RungEV:
     ev: float           # EV per unit risked at shrunk p_model
     ev_raw: float       # EV per unit risked at raw p_model
     ev_low: float       # EV at lower CI bound (conservative)
+    kelly_quarter: float    # quarter-Kelly fraction at p_model_shrunk
+    kelly_low: float        # quarter-Kelly at lower CI bound (conservative)
     n_games: int
 
 
@@ -299,6 +344,11 @@ def rank_ladder(player_id: str, stat: str,
         ev = expected_value(p_shrunk, decimal)
         ev_raw = expected_value(p_raw, decimal)
         ev_low = expected_value(ci_lo, decimal)
+        # Quarter-Kelly recommendation, with uncertainty-adjusted
+        # variant using the lower CI bound (the conservative size
+        # — recommended over the point estimate)
+        kq = kelly_fraction(p_shrunk, decimal, fraction=0.25)
+        kq_low = kelly_fraction(ci_lo, decimal, fraction=0.25)
         rows.append(RungEV(
             threshold=float(threshold),
             side=side.lower(),
@@ -315,6 +365,8 @@ def rank_ladder(player_id: str, stat: str,
             ev=ev,
             ev_raw=ev_raw,
             ev_low=ev_low,
+            kelly_quarter=kq,
+            kelly_low=kq_low,
             n_games=n,
         ))
     if not rows:

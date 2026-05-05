@@ -308,9 +308,14 @@ for col, bet in zip(cols_bin, MOCK_BETS):
             edge_icon = "⚪"
         verdict = (f"{edge_icon} {bet['subtitle']} "
                    f"@ {bet['odds_american']:+d}")
+        # Quarter-Kelly recommendation at current model probability
+        from lib_alt_line_ev import kelly_fraction as _kf
+        kelly_pct = _kf(bet["now_prob"], bet["odds_decimal"],
+                          fraction=0.25) * 100
         breakdown = [
             (bet["book"][:3].upper(), bet["odds_american"]),
             ("Δp", delta_prob * 100),
+            ("¼-Kelly%", kelly_pct),
         ]
         render_alpha_card(
             player=bet["player"],
