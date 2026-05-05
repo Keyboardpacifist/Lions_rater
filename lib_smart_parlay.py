@@ -51,22 +51,47 @@ class ParlayScoreResult:
     verdict: str
 
 
+MIN_JOINT_GAMES_FOR_PLUS_EV = 30
+
+
 def _verdict_from_ev(ev: float | None,
-                       ev_low: float | None = None) -> str:
-    """EV-based verdict. When `ev_low` (lower-CI EV) is also provided
-    AND the lower bound is still positive, that's a high-confidence
-    +EV bet. When the point EV is positive but the lower bound is
-    negative, downgrade the conviction."""
+                       ev_low: float | None = None,
+                       n_joint: int | None = None) -> str:
+    """EV-based verdict with sample-size and CI gating.
+
+    A +EV label requires BOTH:
+      (a) Enough joint games (`n_joint >= MIN_JOINT_GAMES_FOR_PLUS_EV`)
+          — else the point estimate is too noisy to trust.
+      (b) Lower-CI EV is still positive (`ev_low >= 0`)
+          — else even the conservative bound says it's not a win.
+
+    Without those gates, a parlay with `n_joint=8` and Wilson CI
+    [0.04, 0.59] could surface as "STRONG +EV (point estimate)"
+    despite the lower bound being deeply negative. The gating
+    forces honest labels: "insufficient sample" when n is too low.
+    """
     if ev is None:
         return "—"
+
+    insufficient = (n_joint is not None
+                    and n_joint < MIN_JOINT_GAMES_FOR_PLUS_EV)
+    ci_unsafe = (ev_low is not None and ev_low < 0)
+
     if ev >= 0.10:
+        if insufficient:
+            return (f"Insufficient sample — point EV {ev:+.0%} but "
+                    f"only {n_joint} joint games (need "
+                    f"{MIN_JOINT_GAMES_FOR_PLUS_EV})")
         if ev_low is not None and ev_low >= 0:
             return "STRONG +EV — high-confidence +EV at lower CI bound"
-        return "STRONG +EV (point estimate) — but uncertainty wide"
+        return "Wide-CI +EV — point estimate strong, but lower bound negative"
     if ev >= 0.03:
+        if insufficient:
+            return (f"Insufficient sample — point EV {ev:+.0%} but "
+                    f"only {n_joint} joint games")
         if ev_low is not None and ev_low >= 0:
             return "Positive EV — confidence interval still positive"
-        return "Positive EV (point estimate) — sample noise possible"
+        return "Wide-CI +EV — point estimate positive, but lower bound negative"
     if ev >= -0.03:
         return "Roughly fair — pass unless price improves"
     if ev >= -0.15:
@@ -111,7 +136,8 @@ def score_parlay(legs: list[Leg],
         edge_vs_book=res.edge_vs_book,
         ev_vs_book=res.ev_vs_book,
         ev_vs_book_low=res.ev_vs_book_low,
-        verdict=_verdict_from_ev(res.ev_vs_book, res.ev_vs_book_low),
+        verdict=_verdict_from_ev(res.ev_vs_book, res.ev_vs_book_low,
+                                    n_joint=res.n_games_joint),
     )
 
 

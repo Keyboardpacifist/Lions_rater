@@ -132,6 +132,31 @@ def expected_value(p_win: float, decimal_odds: float) -> float:
     return p_win * decimal_odds - 1.0
 
 
+def beta_shrink(k: int, n: int,
+                  alpha: float = 2.0, beta: float = 2.0) -> float:
+    """Beta-Binomial posterior mean — shrinks raw k/n toward a prior.
+
+    With alpha=beta=2 (the default), the prior is "2 imaginary games
+    that came in at 50%". This is mild but does the right thing:
+      • n=3, k=3 (raw 100%) → shrinks to 5/7 = 71% (sensible)
+      • n=8, k=6 (raw 75%) → shrinks to 8/12 = 67%
+      • n=50, k=37 (raw 74%) → shrinks to 39/54 = 72% (barely moves)
+
+    Why this matters for prop betting: empirical hit rates from
+    small samples are extremely high-variance. A WR who went over
+    his target line in 3 of his last 5 games has empirical p=0.60,
+    but the right Bayesian estimate is closer to 50% — and the
+    book's price reflects that. Without shrinkage, hot-streak
+    players get systematically over-projected.
+
+    Adjust alpha/beta if you have a stronger prior (e.g., alpha=3,
+    beta=2 for an "expected slightly favored" line).
+    """
+    if n < 0 or alpha <= 0 or beta <= 0:
+        return float("nan")
+    return (k + alpha) / (n + alpha + beta)
+
+
 def wilson_interval(k: int, n: int,
                      z: float = 1.96
                      ) -> tuple[float, float]:
@@ -164,14 +189,16 @@ class RungEV:
     side: str           # "over" / "under"
     american_odds: int
     decimal_odds: float
-    p_model: float
-    p_model_ci_low: float    # Wilson 95% CI lower bound
-    p_model_ci_high: float   # Wilson 95% CI upper bound
+    p_model: float          # Beta-shrunk posterior — preferred for display
+    p_model_raw: float      # Raw empirical k/n (legacy, high-variance)
+    p_model_ci_low: float   # Wilson 95% CI lower bound (on raw)
+    p_model_ci_high: float  # Wilson 95% CI upper bound (on raw)
     p_implied: float        # RAW (vig-included) implied — for reference
     p_implied_fair: float   # vig-removed implied — book's TRUE estimate
-    edge: float             # p_model - p_implied_fair (the real edge)
-    edge_raw: float         # p_model - p_implied (legacy, biased toward 0)
-    ev: float           # EV per unit risked at p_model
+    edge: float             # p_model_shrunk - p_implied_fair (real edge)
+    edge_raw: float         # p_model_raw - p_implied (legacy, biased)
+    ev: float           # EV per unit risked at shrunk p_model
+    ev_raw: float       # EV per unit risked at raw p_model
     ev_low: float       # EV at lower CI bound (conservative)
     n_games: int
 
@@ -235,12 +262,16 @@ def rank_ladder(player_id: str, stat: str,
         if np.isnan(p_over):
             continue
         if side.lower() == "over":
-            p_model = p_over
+            k_side = k_over
+            p_raw = p_over
             ci_lo, ci_hi = wilson_interval(k_over, n)
         else:
-            p_model = 1.0 - p_over
-            # For "under," successes are n - k_over
+            k_side = n - k_over
+            p_raw = 1.0 - p_over
             ci_lo, ci_hi = wilson_interval(n - k_over, n)
+
+        # Beta-shrunk posterior — preferred over raw for display
+        p_shrunk = beta_shrink(k_side, n)
         decimal = american_to_decimal(odds)
         p_imp_raw = decimal_to_implied_prob(decimal)
 
@@ -252,21 +283,24 @@ def rank_ladder(player_id: str, stat: str,
             p_o_fair, p_u_fair = vig_free_implied(other_side_odds, odds)
             p_imp_fair = p_u_fair
 
-        ev = expected_value(p_model, decimal)
+        ev = expected_value(p_shrunk, decimal)
+        ev_raw = expected_value(p_raw, decimal)
         ev_low = expected_value(ci_lo, decimal)
         rows.append(RungEV(
             threshold=float(threshold),
             side=side.lower(),
             american_odds=int(odds),
             decimal_odds=decimal,
-            p_model=p_model,
+            p_model=p_shrunk,
+            p_model_raw=p_raw,
             p_model_ci_low=ci_lo,
             p_model_ci_high=ci_hi,
             p_implied=p_imp_raw,
             p_implied_fair=p_imp_fair,
-            edge=p_model - p_imp_fair,
-            edge_raw=p_model - p_imp_raw,
+            edge=p_shrunk - p_imp_fair,
+            edge_raw=p_raw - p_imp_raw,
             ev=ev,
+            ev_raw=ev_raw,
             ev_low=ev_low,
             n_games=n,
         ))
