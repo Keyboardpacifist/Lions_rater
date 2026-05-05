@@ -207,8 +207,15 @@ def p_over_threshold(player_id: str, stat: str, threshold: float,
                       lookback_games: int | None = None
                       ) -> tuple[float, int, int]:
     """Empirical probability that the player's stat exceeds threshold
-    in the next game. Returns (p_model, k_successes, n_games_in_sample)
+    in the next game. Returns (p_model, k_successes, n_decided)
     so callers can compute their own confidence intervals.
+
+    PUSHES (stat exactly equal to threshold) are EXCLUDED from the
+    denominator — real markets refund pushes, so they don't decide
+    a winner or loser. The probability returned is conditional on
+    "the bet is decided" (i.e., not a push). Without this exclusion
+    a whole-number line like "carries OVER 12" would systematically
+    under-estimate P(over) every time the player carries exactly 12.
 
     `lookback_games` (optional) restricts to the player's most-recent
     N games, useful when role has changed."""
@@ -224,10 +231,16 @@ def p_over_threshold(player_id: str, stat: str, threshold: float,
     vals = sub[stat].astype(float)
     if len(vals) == 0:
         return float("nan"), 0, 0
-    k = int((vals > float(threshold)).sum())
-    n = len(vals)
-    p = float(k) / float(n)
-    return p, k, n
+    thr = float(threshold)
+    # Push detection — exact equality. Practical tolerance for
+    # floating-point: 1e-9 (yardage stats are integer-valued).
+    push_mask = (vals - thr).abs() < 1e-9
+    k = int((vals > thr).sum())
+    n_decided = int(len(vals) - push_mask.sum())
+    if n_decided <= 0:
+        return float("nan"), 0, 0
+    p = float(k) / float(n_decided)
+    return p, k, n_decided
 
 
 def rank_ladder(player_id: str, stat: str,

@@ -76,9 +76,21 @@ def _load_gs() -> pd.DataFrame:
 
 @dataclass
 class DecompContribution:
+    """One adjustment to the projection. Each contribution is EITHER
+    proportional (multiplier) OR offset (additive) — set the relevant
+    field; the other defaults to identity (1.0 / 0.0).
+
+    `delta` is the EFFECTIVE yards change this contribution makes
+    against the running projection (computed by `Decomposition.add`).
+    Kept as a top-level field so existing callers that rank by
+    `c.delta` (e.g., edge_finder picking the biggest driver) keep
+    working without changes.
+    """
     label: str
-    delta: float        # additive yards relative to running total
-    note: str           # one-line explanation
+    note: str               # one-line explanation
+    multiplier: float = 1.0  # proportional adjustment (1.0 = no-op)
+    additive: float = 0.0    # offset in yards (0.0 = no-op)
+    delta: float = 0.0       # effective yards delta vs running proj
 
 
 @dataclass
@@ -93,7 +105,38 @@ class Decomposition:
 
     @property
     def projection(self) -> float:
-        return self.baseline + sum(c.delta for c in self.contributions)
+        """Multiplicative composition of proportional effects + sum of
+        additive offsets, applied in insertion order:
+            value = baseline
+            for each contribution:
+                value = value × multiplier + additive
+        Stacking ×0.85 (injury) and ×0.90 (game-script) on a baseline
+        of 80 now correctly yields 80 × 0.85 × 0.90 = 61.2 instead of
+        the old additive math (80 + (80×−0.15) + (80×−0.10) = 60),
+        which over-reduced by 1+ yard per stacked multiplier."""
+        v = self.baseline
+        for c in self.contributions:
+            v = v * c.multiplier + c.additive
+        return v
+
+    def add(self, *, label: str, note: str,
+              multiplier: float = 1.0, additive: float = 0.0) -> None:
+        """Append a contribution. Computes the EFFECTIVE delta (yards
+        change against the running projection at this point in the
+        chain) and stores it so display/ranking code can use a single
+        `c.delta` field regardless of whether the contribution is
+        proportional or additive."""
+        # Current running value before this contribution
+        cur = self.baseline
+        for c in self.contributions:
+            cur = cur * c.multiplier + c.additive
+        new_val = cur * multiplier + additive
+        eff_delta = new_val - cur
+        self.contributions.append(DecompContribution(
+            label=label, note=note,
+            multiplier=multiplier, additive=additive,
+            delta=eff_delta,
+        ))
 
     def book_compare(self, book_line: float, book_odds: int = -110
                      ) -> dict:
@@ -180,7 +223,6 @@ def decompose(player_id: str, position: str, team: str, stat: str,
             # prior with tau=5 effective games of evidence.
             retention = max(0.0, min(1.10, own.shrunk_retention))
             if abs(retention - 1.0) > 0.01:
-                adj = baseline * (retention - 1.0)
                 # Compose a transparent note showing the shrinkage:
                 # cell rate → blended with prior → final shrunk.
                 note = (f"{injury_status}/{injury_practice}, "
@@ -191,11 +233,11 @@ def decompose(player_id: str, position: str, team: str, stat: str,
                         f"{own.prior_retention:.0%} cohort prior; "
                         f"player has {own.n_total} total games "
                         f"at this stat)")
-                decomp.contributions.append(DecompContribution(
+                decomp.add(
                     label="Injury — player's own history (shrunk)",
-                    delta=adj,
                     note=note,
-                ))
+                    multiplier=retention,
+                )
         else:
             # Fall back to league-cohort (existing behavior)
             cohort = cohort_predict(
@@ -205,16 +247,15 @@ def decompose(player_id: str, position: str, team: str, stat: str,
             )
             retention = max(0.0, min(1.10, cohort.snap_retention_if_played))
             if abs(retention - 1.0) > 0.01:
-                adj = baseline * (retention - 1.0)
-                decomp.contributions.append(DecompContribution(
+                decomp.add(
                     label="Injury — league cohort",
-                    delta=adj,
                     note=(f"{injury_status}/{injury_practice}, "
                           f"{injury_body_part}: league cohort "
                           f"retention {retention:.0%} "
                           f"(player-own sample too thin; "
                           f"cohort n={cohort.n})"),
-                ))
+                    multiplier=retention,
+                )
 
     # ── Weather (4.5)
     if any(x is not None for x in (target_temp, target_wind,
@@ -228,13 +269,13 @@ def decompose(player_id: str, position: str, team: str, stat: str,
             )
             if wr.n_games >= 5 and wr.cohort_mode in ("player", "tier_blend"):
                 weather_adj = wr.p50 - baseline
-                decomp.contributions.append(DecompContribution(
+                decomp.add(
                     label="Weather",
-                    delta=weather_adj,
                     note=(f"{wr.cohort_mode} cohort, n={wr.n_games}, "
                           f"P50={wr.p50:.0f} vs baseline {baseline:.0f} "
                           f"({wr.confidence})"),
-                ))
+                    additive=weather_adj,
+                )
 
     # ── Matchup / DvP (5.8)
     if opponent and season is not None:
@@ -251,20 +292,35 @@ def decompose(player_id: str, position: str, team: str, stat: str,
                     if pd.notna(delta_pg):
                         # The DvP delta is per-game allowed by this team
                         # vs. league avg. Distribute across the team's
-                        # position group (rough estimate: top-N players
-                        # absorb most of it). For v1, allocate 35% to
-                        # WR1, 25% TE1, 50% RB1.
-                        share = {"WR1": 0.35, "TE1": 0.25, "RB1": 0.50}.get(
-                            f"{pg}1", 0.30)
-                        # Without role info, default share
+                        # position group based on the EMPIRICAL median
+                        # share of team-position-group yards captured by
+                        # the lead player at each position.
+                        #
+                        # Computed from 2024 NFL: WR1 captures ~52% of
+                        # team WR rec-yards, TE1 ~87% (TE rooms are
+                        # top-heavy), RB1 ~75% of team RB rush-yards.
+                        # Prior hardcode (0.35/0.25/0.50) was made up
+                        # and dramatically under-attributed matchup
+                        # effects — flagged in the head-of-analytics
+                        # audit. TODO: role-aware shares (use the
+                        # player's actual season target share rather
+                        # than assuming "lead at position").
+                        EMPIRICAL_LEAD_SHARES = {
+                            "WR1": 0.52,
+                            "TE1": 0.87,
+                            "RB1": 0.75,
+                        }
+                        share = EMPIRICAL_LEAD_SHARES.get(
+                            f"{pg}1", 0.50)
                         adj = float(delta_pg) * share
-                        decomp.contributions.append(DecompContribution(
+                        decomp.add(
                             label="Matchup (DvP)",
-                            delta=adj,
                             note=(f"{opponent} {season} vs. {pg}: "
                                   f"{delta_pg:+.1f} yds/game vs league "
-                                  f"(allocated {share:.0%} share)"),
-                        ))
+                                  f"(empirical lead-{pg} share "
+                                  f"{share:.0%}, 2024-derived)"),
+                            additive=adj,
+                        )
 
     # ── Key starter unavailable (4.2) — when a teammate is OUT
     if key_starter_out and key_starter_out.upper() in ("QB1", "RB1",
@@ -276,20 +332,23 @@ def decompose(player_id: str, position: str, team: str, stat: str,
             if not row.empty:
                 pass_rate_delta = float(
                     row.iloc[0].get("pass_rate_delta") or 0)
+                # Convert the prior additive logic to a multiplier.
+                # Old: adj = baseline × pass_rate_delta × 1.5 × sign
+                # New: multiplier = 1 + (pass_rate_delta × 1.5 × sign)
                 if stat in ("receiving_yards", "passing_yards"):
-                    sign = 1 if stat == "receiving_yards" else 1
-                    adj = baseline * pass_rate_delta * 1.5 * sign
+                    pass_mult = 1.0 + pass_rate_delta * 1.5
                 elif stat == "rushing_yards":
-                    adj = baseline * (-pass_rate_delta) * 1.5
+                    pass_mult = 1.0 - pass_rate_delta * 1.5
                 else:
-                    adj = 0
-                decomp.contributions.append(DecompContribution(
-                    label="Key starter unavailable",
-                    delta=adj,
-                    note=(f"{key_starter_out} OUT: league pass-rate "
-                          f"shift {pass_rate_delta:+.1%} (n="
-                          f"{int(row.iloc[0]['n_games'])})"),
-                ))
+                    pass_mult = 1.0
+                if abs(pass_mult - 1.0) > 0.005:
+                    decomp.add(
+                        label="Key starter unavailable",
+                        note=(f"{key_starter_out} OUT: league pass-rate "
+                              f"shift {pass_rate_delta:+.1%} (n="
+                              f"{int(row.iloc[0]['n_games'])})"),
+                        multiplier=pass_mult,
+                    )
 
     # ── Expected game-script — usage shift based on game flow
     # Multiplier comes from the player's own historical splits in
@@ -304,15 +363,14 @@ def decompose(player_id: str, position: str, team: str, stat: str,
             target_bucket=bucket, fallback_position=position,
         )
         if abs(mult - 1.0) > 0.005:
-            adj = baseline * (mult - 1.0)
             label_pretty = BUCKET_LABEL.get(bucket, bucket.value)
-            decomp.contributions.append(DecompContribution(
+            decomp.add(
                 label="Game-script",
-                delta=adj,
                 note=(f"Expected: {label_pretty}. "
                       f"Player avg in this bucket = "
                       f"{mult:.2f}x baseline "
                       f"({source} cohort, n={n})"),
-            ))
+                multiplier=mult,
+            )
 
     return decomp

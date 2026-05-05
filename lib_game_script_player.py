@@ -219,22 +219,38 @@ def position_game_script_splits(position: str, stat: str
 def multiplier_for_game_script(player_id: str, stat: str,
                                 target_bucket: GameScriptBucket,
                                 fallback_position: str | None = None,
-                                min_player_n: int = 5
+                                min_player_n: int = 5,
+                                shrink_tau: float = 8.0,
                                 ) -> tuple[float, str, int]:
     """Return (multiplier, source, n) for a target game-script bucket.
 
     `source` is one of: 'player' (cohort matched), 'position' (league
     fallback), or 'none' (no data, multiplier=1.0).
+
+    Shrinkage: the raw multiplier is pulled toward 1.0 (no game-script
+    effect) by `shrink_tau` effective games of pseudo-prior weight.
+    A player with n=8 games of split data gets w=0.5 weight on his
+    own multiplier, half on identity. n=24 → w=0.75. n=2 → w=0.20.
+    Without shrinkage, a player with 3 games at 1.4× baseline would
+    project a 40% game-script bump — the right Bayesian estimate is
+    closer to 10%. Set `shrink_tau=0` to disable.
     """
+    def _shrink(mult: float, n: int) -> float:
+        if shrink_tau <= 0 or n <= 0:
+            return mult
+        w = float(n) / (float(n) + float(shrink_tau))
+        return w * mult + (1.0 - w) * 1.0
+
     splits = player_game_script_splits(player_id, stat)
     if target_bucket in splits and splits[target_bucket].n >= min_player_n:
         s = splits[target_bucket]
-        return s.multiplier, "player", s.n
+        return _shrink(s.multiplier, s.n), "player", s.n
 
     if fallback_position:
         league = position_game_script_splits(fallback_position, stat)
         if target_bucket in league:
             s = league[target_bucket]
-            return s.multiplier, "position", s.n
+            # Position-level cohort has many more games; lighter shrinkage
+            return _shrink(s.multiplier, s.n), "position", s.n
 
     return 1.0, "none", 0
