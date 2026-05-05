@@ -51,12 +51,84 @@ def american_to_decimal(odds: int | float) -> float:
 
 
 def decimal_to_implied_prob(decimal: float) -> float:
-    """Implied probability of a decimal-odds price (no juice removed)."""
+    """RAW implied probability of a decimal-odds price (vig included).
+
+    NOTE: this is the price-implied probability — it does NOT remove the
+    bookmaker's juice. For a -110/-110 prop both sides return 52.4% here,
+    which sums to 104.8% (the vig). To compute the book's TRUE estimate,
+    use `vig_free_implied()` with both sides' odds.
+
+    Use this function only when you specifically want the price-implied
+    figure (e.g., for EV calculation, which uses the offered price
+    directly). For "how sharp is my model vs the book?" comparisons,
+    use vig_free_implied().
+    """
     return 1.0 / decimal if decimal > 0 else float("nan")
 
 
+# Industry-standard prop-market vig when we only see one side of the
+# market. Books typically run 4-5% vig on player props (-110/-110 ≈
+# 4.8%; -115/-105 ≈ 4.5%). 4.5% is a defensible default.
+DEFAULT_PROP_VIG = 0.045
+
+
+def vig_free_implied(american_over: int | float | None,
+                       american_under: int | float | None = None,
+                       *, default_vig: float = DEFAULT_PROP_VIG,
+                       ) -> tuple[float, float]:
+    """Return the vig-removed (fair) probabilities for both sides of a
+    two-way market. THIS is the book's true estimate of probability.
+
+    Two paths:
+
+    1. **Both sides known** — devig by dividing each raw implied by
+       the sum (the standard "proportional devig" method, equivalent
+       to assuming the book sets each side proportional to its true
+       probability and then marks both up by the same multiplicative
+       factor).
+
+    2. **Only one side known** — deduct `default_vig / 2` from the raw
+       implied probability of the known side. Less accurate than
+       (1) but workable when callers only have one quote.
+
+    Returns (p_over_fair, p_under_fair). When only one side is
+    provided, the unknown side is computed as 1 - p_known_fair.
+    """
+    if american_over is None and american_under is None:
+        return float("nan"), float("nan")
+
+    if american_over is not None and american_under is not None:
+        # Both sides — proportional devig
+        dec_o = american_to_decimal(american_over)
+        dec_u = american_to_decimal(american_under)
+        p_o_raw = 1.0 / dec_o
+        p_u_raw = 1.0 / dec_u
+        total = p_o_raw + p_u_raw
+        if total <= 0:
+            return float("nan"), float("nan")
+        return p_o_raw / total, p_u_raw / total
+
+    # Only one side — single-side approximation
+    side, opposite_label = (
+        (american_over, "under") if american_over is not None
+        else (american_under, "over")
+    )
+    dec = american_to_decimal(side)
+    p_raw = 1.0 / dec
+    p_fair = max(0.0, min(1.0, p_raw - default_vig / 2.0))
+    p_other_fair = 1.0 - p_fair
+    if american_over is not None:
+        return p_fair, p_other_fair
+    return p_other_fair, p_fair
+
+
 def expected_value(p_win: float, decimal_odds: float) -> float:
-    """EV per 1 unit risked. Positive = +EV bet."""
+    """EV per 1 unit risked. Positive = +EV bet.
+
+    Note: EV uses the OFFERED decimal odds (not the fair / vig-free
+    odds). The user is betting the offered price, so the offered price
+    is what determines the payout. EV is correctly computed without
+    vig adjustment — vig is already baked into the decimal odds."""
     return p_win * decimal_odds - 1.0
 
 
@@ -95,8 +167,10 @@ class RungEV:
     p_model: float
     p_model_ci_low: float    # Wilson 95% CI lower bound
     p_model_ci_high: float   # Wilson 95% CI upper bound
-    p_implied: float
-    edge: float         # p_model - p_implied
+    p_implied: float        # RAW (vig-included) implied — for reference
+    p_implied_fair: float   # vig-removed implied — book's TRUE estimate
+    edge: float             # p_model - p_implied_fair (the real edge)
+    edge_raw: float         # p_model - p_implied (legacy, biased toward 0)
     ev: float           # EV per unit risked at p_model
     ev_low: float       # EV at lower CI bound (conservative)
     n_games: int
@@ -130,20 +204,32 @@ def p_over_threshold(player_id: str, stat: str, threshold: float,
 
 
 def rank_ladder(player_id: str, stat: str,
-                ladder_rungs: list[tuple[float, str, int]],
+                ladder_rungs,
                 lookback_games: int | None = None
                 ) -> pd.DataFrame:
     """Score each rung in a ladder and sort by EV.
 
-    ladder_rungs: list of (threshold, "over"|"under", american_odds).
+    ladder_rungs: each rung is one of:
+      • (threshold, "over"|"under", american_odds)
+      • (threshold, "over"|"under", american_odds, paired_other_side_odds)
+        — preferred: lets us compute true vig-free fair value
+
+    `edge` is reported in two flavors:
+      • `edge` = p_model − p_implied_fair (vig-removed, the real edge)
+      • `edge_raw` = p_model − p_implied_raw (legacy, biased toward 0)
 
     Each row also carries a Wilson 95% CI on the model probability and
-    a conservative `ev_low` computed at the lower CI bound — so callers
-    can see "the bet might still be -EV at the lower bound" rather than
-    treating the point estimate as deterministic.
+    a conservative `ev_low` computed at the lower CI bound.
     """
     rows: list[RungEV] = []
-    for threshold, side, odds in ladder_rungs:
+    for rung in ladder_rungs:
+        # Backward-compatible 3-tuple; new 4-tuple includes other side
+        if len(rung) == 4:
+            threshold, side, odds, other_side_odds = rung
+        else:
+            threshold, side, odds = rung
+            other_side_odds = None
+
         p_over, k_over, n = p_over_threshold(player_id, stat, threshold,
                                                lookback_games)
         if np.isnan(p_over):
@@ -156,7 +242,16 @@ def rank_ladder(player_id: str, stat: str,
             # For "under," successes are n - k_over
             ci_lo, ci_hi = wilson_interval(n - k_over, n)
         decimal = american_to_decimal(odds)
-        p_imp = decimal_to_implied_prob(decimal)
+        p_imp_raw = decimal_to_implied_prob(decimal)
+
+        # Vig-free fair implied — the book's TRUE estimate
+        if side.lower() == "over":
+            p_o_fair, p_u_fair = vig_free_implied(odds, other_side_odds)
+            p_imp_fair = p_o_fair
+        else:
+            p_o_fair, p_u_fair = vig_free_implied(other_side_odds, odds)
+            p_imp_fair = p_u_fair
+
         ev = expected_value(p_model, decimal)
         ev_low = expected_value(ci_lo, decimal)
         rows.append(RungEV(
@@ -167,8 +262,10 @@ def rank_ladder(player_id: str, stat: str,
             p_model=p_model,
             p_model_ci_low=ci_lo,
             p_model_ci_high=ci_hi,
-            p_implied=p_imp,
-            edge=p_model - p_imp,
+            p_implied=p_imp_raw,
+            p_implied_fair=p_imp_fair,
+            edge=p_model - p_imp_fair,
+            edge_raw=p_model - p_imp_raw,
             ev=ev,
             ev_low=ev_low,
             n_games=n,

@@ -32,6 +32,7 @@ from lib_alt_line_ev import (
     american_to_decimal,
     decimal_to_implied_prob,
     p_over_threshold,
+    vig_free_implied,
     wilson_interval,
 )
 
@@ -85,7 +86,8 @@ def _decimal_to_american(decimal: float) -> int:
 
 def sgp_price(legs: list[Leg],
                lookback_games: int | None = None,
-               book_american_odds: int | None = None
+               book_american_odds: int | None = None,
+               book_other_side_odds: int | None = None,
                ) -> SGPPriceResult:
     """Price a multi-leg same-game parlay using empirical joint
     distribution. Returns the comparison vs. independent assumption."""
@@ -178,8 +180,13 @@ def sgp_price(legs: list[Leg],
         book_american = int(book_american_odds)
         book_decimal = american_to_decimal(book_american_odds)
         if not (np.isnan(p_correlated)) and book_decimal is not None:
-            book_implied = decimal_to_implied_prob(book_decimal)
-            edge = float(p_correlated - book_implied)
+            # Vig-removed fair implied — book's TRUE estimate of the
+            # parlay's joint probability. If `book_other_side_odds` is
+            # supplied, devig proportionally; otherwise deduct half of
+            # the standard prop vig (~2.25%) from raw implied.
+            p_book_fair, _ = vig_free_implied(
+                book_american_odds, book_other_side_odds)
+            edge = float(p_correlated - p_book_fair)
             ev = float(p_correlated * book_decimal - 1.0)
             # Conservative EV at lower CI bound — if this is still
             # positive, the bet is +EV with high confidence
