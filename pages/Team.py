@@ -393,10 +393,12 @@ def _team_roster_top(team: str, season: int) -> dict:
 # ════════════════════════════════════════════════════════════════
 
 st.markdown("---")
-tab_stats, tab_schedule, tab_tendencies, tab_roster = st.tabs([
+(tab_stats, tab_schedule, tab_tendencies, tab_evolution,
+ tab_roster) = st.tabs([
     "📊 Stats & Identity",
     "📅 Schedule & Games",
     "🎯 Tendencies",
+    "🧪 Evolution",
     "🦌 Roster",
 ])
 
@@ -757,6 +759,277 @@ with tab_tendencies:
                         scenario=_scenario_kwargs,
                         scenario_label=_scenario_label,
                     )
+
+
+# ─── 🧪 EVOLUTION ──────────────────────────────────────────
+with tab_evolution:
+    import plotly.graph_objects as _evo_go
+    from pathlib import Path as _EvoPath
+
+    _evo_repo = _EvoPath(__file__).resolve().parent.parent
+    _DRIFT_PATH = _evo_repo / "data" / "scheme" / "scheme_shift_team_drift.parquet"
+    _CHANGE_PATH = _evo_repo / "data" / "scheme" / "scheme_shift_route_change.parquet"
+    _FIT_PATH = _evo_repo / "data" / "scheme" / "scheme_shift_receiver_fit.parquet"
+    _FP_PATH = _evo_repo / "data" / "scheme" / "team_passing_fingerprint.parquet"
+
+    _evo_files_present = all(p.exists() for p in [
+        _DRIFT_PATH, _CHANGE_PATH, _FIT_PATH, _FP_PATH])
+
+    if not _evo_files_present:
+        st.info(
+            "Scheme Evolution data not built yet. Run:\n"
+            "```\npython tools/build_scheme_shift.py\n```"
+        )
+    else:
+        _drift = pd.read_parquet(_DRIFT_PATH)
+        _change = pd.read_parquet(_CHANGE_PATH)
+        _fit = pd.read_parquet(_FIT_PATH)
+        _fp = pd.read_parquet(_FP_PATH)
+
+        # ── HERO BANNER — JSD verdict + headline narrative ────
+        team_drift = _drift[
+            (_drift["team"] == team)
+            & (_drift["to_season"] == 2025)
+        ]
+        if team_drift.empty:
+            jsd = 0.0
+        else:
+            jsd = float(team_drift.iloc[0]["jsd"])
+
+        # League-relative: rank this team's drift among all 32
+        league_2025 = _drift[_drift["to_season"] == 2025]
+        if not league_2025.empty:
+            jsd_rank = int((league_2025["jsd"] > jsd).sum()) + 1
+            jsd_pctl = 1.0 - (jsd_rank - 1) / max(len(league_2025), 1)
+        else:
+            jsd_rank = None
+            jsd_pctl = 0.5
+
+        if jsd >= 0.030:
+            verdict_label = "🌪️ EVOLVING RAPIDLY"
+            verdict_color = "#dc2626"
+        elif jsd >= 0.020:
+            verdict_label = "📈 SHIFTING NOTICEABLY"
+            verdict_color = "#ea580c"
+        elif jsd >= 0.012:
+            verdict_label = "↔️ MODEST SHIFT"
+            verdict_color = "#ca8a04"
+        else:
+            verdict_label = "🪨 MOSTLY STABLE"
+            verdict_color = "#16a34a"
+
+        # Hero banner using team theme
+        _evo_hero = (
+            f'<div style="background:linear-gradient(135deg,{primary} 0%,'
+            f'{secondary} 100%);border-radius:14px;padding:22px 26px;'
+            f'color:white;box-shadow:0 4px 14px rgba(0,0,0,0.16);'
+            f'margin-bottom:18px;">'
+            f'<div style="display:flex;justify-content:space-between;'
+            f'align-items:flex-end;flex-wrap:wrap;gap:18px;">'
+            f'<div>'
+            f'<div style="font-size:11px;font-weight:700;opacity:0.85;'
+            f'letter-spacing:0.6px;">SCHEME EVOLUTION · 2024→2025</div>'
+            f'<div style="font-size:30px;font-weight:900;line-height:1;'
+            f'letter-spacing:-1px;margin-top:8px;">{verdict_label}</div>'
+            f'<div style="font-size:13px;opacity:0.95;margin-top:6px;'
+            f'font-weight:500;">'
+            f'JSD = {jsd:.3f}'
+            f'{f" — rank {jsd_rank}/32" if jsd_rank else ""}'
+            f'</div>'
+            f'</div>'
+            f'<div style="font-size:11px;opacity:0.85;text-align:right;'
+            f'max-width:340px;line-height:1.5;">'
+            f'JSD measures how much this team\'s route distribution '
+            f'shifted year-over-year. Higher = more change. ¹/³² of teams '
+            f'are above 0.030; that\'s the line for "rapidly evolving."'
+            f'</div>'
+            f'</div></div>'
+        )
+        st.markdown(_evo_hero, unsafe_allow_html=True)
+
+        # ── TWO COLUMNS — chart + top gainers/losers ──────────
+        _ec1, _ec2 = st.columns([3, 2])
+
+        # Multi-year route-share chart (2023+ for taxonomy stability)
+        with _ec1:
+            st.markdown("##### 📈  Route share over time")
+            team_fp = _fp[
+                (_fp["team"] == team)
+                & (_fp["dimension"] == "route")
+                & (_fp["season"] >= 2023)
+            ].copy()
+            if team_fp.empty:
+                st.info("No route distribution history for this team.")
+            else:
+                # Pick the top routes by 2025 share to keep chart readable
+                latest = (team_fp[team_fp["season"] == 2025]
+                          .sort_values("share", ascending=False))
+                top_routes = latest["category"].head(8).tolist()
+                fig_e = _evo_go.Figure()
+                _evo_palette = [
+                    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
+                    "#9467bd", "#8c564b", "#e377c2", "#17becf",
+                ]
+                for color, route in zip(_evo_palette, top_routes):
+                    sub = (team_fp[team_fp["category"] == route]
+                           .sort_values("season"))
+                    if sub.empty:
+                        continue
+                    fig_e.add_trace(_evo_go.Scatter(
+                        x=sub["season"].astype(int),
+                        y=sub["share"] * 100,
+                        mode="lines+markers",
+                        name=route,
+                        line=dict(width=2.5, color=color),
+                        marker=dict(size=8),
+                        hovertemplate=(
+                            f"<b>{route}</b><br>%{{x}}: %{{y:.1f}}%"
+                            "<extra></extra>"),
+                    ))
+                fig_e.update_layout(
+                    xaxis=dict(
+                        title="Season",
+                        dtick=1, gridcolor="#eee"),
+                    yaxis=dict(title="Share %", gridcolor="#eee"),
+                    height=360,
+                    margin=dict(l=50, r=20, t=10, b=40),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(250,250,252,0.6)",
+                    legend=dict(
+                        orientation="h", yanchor="bottom",
+                        y=-0.32, xanchor="left", x=0,
+                        font=dict(size=10)),
+                )
+                st.plotly_chart(fig_e, use_container_width=True,
+                                  key=f"team_evo_chart_{team}")
+                st.caption("_Top 8 routes by 2025 share. 2023+ "
+                           "filter excludes pre-taxonomy-change "
+                           "comparisons._")
+
+        # Top gainers / losers — what's actually changing
+        with _ec2:
+            st.markdown("##### 🎯  Routes UP / DOWN  (2024→2025)")
+            tc = _change[_change["team"] == team].copy()
+            if tc.empty:
+                st.caption("No change data.")
+            else:
+                tc["delta_pp"] = (tc["delta"] * 100).round(2)
+                up = tc.sort_values("delta_pp", ascending=False).head(4)
+                down = tc.sort_values("delta_pp").head(4)
+                lines = ["**Running MORE of:**"]
+                for _, row in up.iterrows():
+                    if row["delta_pp"] <= 0.05:
+                        break
+                    lines.append(
+                        f"• **{row['route']}**  +{row['delta_pp']:.1f} pp "
+                        f"({row['share_2024']*100:.1f}% → "
+                        f"{row['share_2025']*100:.1f}%)")
+                lines.append("")
+                lines.append("**Running LESS of:**")
+                for _, row in down.iterrows():
+                    if row["delta_pp"] >= -0.05:
+                        break
+                    lines.append(
+                        f"• **{row['route']}**  {row['delta_pp']:.1f} pp "
+                        f"({row['share_2024']*100:.1f}% → "
+                        f"{row['share_2025']*100:.1f}%)")
+                st.markdown("\n".join(lines))
+
+        # ── ROSTER SCHEME FIT ─────────────────────────────────
+        st.markdown("---")
+        st.markdown("##### 🧬  Who's winning the scheme shift")
+        st.caption(
+            "Each receiver's career route-profile fit against the team's "
+            "current (2025) distribution. **Δ vs '24** > 0 means the "
+            "offense moved toward this player's strengths."
+        )
+        team_fit = _fit[_fit["team"] == team].copy()
+        if team_fit.empty:
+            st.info("No receivers with sufficient career data on this team.")
+        else:
+            team_fit["fit_2024"] = team_fit["fit_2024"].round(3)
+            team_fit["fit_2025"] = team_fit["fit_2025"].round(3)
+            team_fit["fit_delta"] = team_fit["fit_delta"].round(3)
+            team_fit["Verdict"] = team_fit["fit_delta"].apply(
+                lambda d: ("🚀 SCHEME WINNER" if d >= 0.05
+                           else "⬆️ small lift" if d > 0
+                           else "⬇️ small headwind" if d > -0.05
+                           else "⚠️ SCHEME LOSER")
+                if pd.notna(d) else "—")
+            team_fit_sorted = team_fit.sort_values(
+                "fit_delta", ascending=False, na_position="last")
+            display = team_fit_sorted[[
+                "player_display_name", "position", "Verdict",
+                "fit_2024", "fit_2025", "fit_delta",
+            ]].rename(columns={
+                "player_display_name": "Player",
+                "position": "Pos",
+                "fit_2024": "Fit '24",
+                "fit_2025": "Fit '25",
+                "fit_delta": "Δ Fit",
+            })
+            st.dataframe(display, use_container_width=True,
+                            hide_index=True, height=380)
+
+        # ── AUTO-NARRATIVE ────────────────────────────────────
+        st.markdown("---")
+        st.markdown("##### 📖  The one-paragraph story")
+        # Compose a data-driven sentence from the most distinctive bits
+        if not _change[_change["team"] == team].empty:
+            tc = _change[_change["team"] == team]
+            top_up = tc.nlargest(1, "delta")
+            top_down = tc.nsmallest(1, "delta")
+            up_route = top_up.iloc[0]["route"] if len(top_up) else None
+            up_pp = top_up.iloc[0]["delta"] * 100 if len(top_up) else 0
+            down_route = top_down.iloc[0]["route"] if len(top_down) else None
+            down_pp = top_down.iloc[0]["delta"] * 100 if len(top_down) else 0
+        else:
+            up_route = down_route = None
+            up_pp = down_pp = 0
+
+        winner = loser = None
+        if not team_fit.empty:
+            tw = team_fit.dropna(subset=["fit_delta"]).sort_values(
+                "fit_delta", ascending=False)
+            if len(tw) > 0 and tw.iloc[0]["fit_delta"] > 0:
+                winner = tw.iloc[0]["player_display_name"]
+            tl = team_fit.dropna(subset=["fit_delta"]).sort_values(
+                "fit_delta")
+            if len(tl) > 0 and tl.iloc[0]["fit_delta"] < 0:
+                loser = tl.iloc[0]["player_display_name"]
+
+        magnitude_word = (
+            "evolved sharply" if jsd >= 0.030 else
+            "shifted noticeably" if jsd >= 0.020 else
+            "shifted modestly" if jsd >= 0.012 else
+            "stayed largely consistent"
+        )
+        narrative = (
+            f"**{team_name}'s offense has {magnitude_word}** between "
+            f"2024 and 2025"
+        )
+        if up_route and up_pp > 0.5:
+            narrative += (
+                f" — running **{up_route}** "
+                f"{up_pp:+.1f} percentage points more"
+            )
+            if down_route and down_pp < -0.5:
+                narrative += (
+                    f" while cutting **{down_route}** "
+                    f"{down_pp:+.1f} pp"
+                )
+        narrative += "."
+        if winner:
+            narrative += f" **{winner}**'s career profile fits the new look best."
+        if loser:
+            narrative += f" **{loser}**'s usage projects to shrink as the offense moves away."
+        narrative += (
+            "  \n_⚠️ OC continuity for 2026 not yet tracked — "
+            "this story projects 2025-style scheme to continue. "
+            "If the OC changes, expect different numbers; flag via "
+            "Camp Battles when ready._"
+        )
+        st.markdown(narrative)
 
 
 # ─── 🦌 ROSTER ─────────────────────────────────────────────
