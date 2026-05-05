@@ -431,6 +431,127 @@ fig_bin.update_layout(
 st.plotly_chart(fig_bin, use_container_width=True,
                   key="binder_perf_chart")
 
+# ── 📊 CLV REPORT — closing line value, the gold-standard skill metric
+from lib_clv import compute_clv, aggregate_clv
+from datetime import datetime as _dt
+
+st.markdown(
+    "<div style='margin:24px 0 6px 0;'>"
+    "<div style='font-size:18px;font-weight:800;letter-spacing:-0.3px;"
+    "color:#0a3d62;'>📊 Closing Line Value (CLV) — proof you're sharp</div>"
+    "<div style='font-size:12px;color:#5b6b7e;margin-top:2px;'>"
+    "CLV is the only fast-feedback measure of betting skill. It "
+    "compares the price you got vs the closing line (the market's "
+    "final, sharpest estimate). A bettor with a consistent "
+    "<b>+2 percentage points</b> mean CLV is real-money sharp.<br>"
+    "<i>Numbers below are demo — closing lines from a synthetic source. "
+    "Real CLV will populate once OddsAPI is wired.</i>"
+    "</div></div>",
+    unsafe_allow_html=True,
+)
+
+# Synthetic closing lines for the 5 mock bets — generated to make
+# the demo coherent (4 of 5 beat the close, mean ~+2.5pp).
+_MOCK_CLOSING = {
+    "saq_rush":      {"american": -130, "other": +105, "model_close": 0.69},
+    "jefferson_rec": {"american": -125, "other": +103, "model_close": 0.66},
+    "cook_rush":     {"american": -100, "other": -120, "model_close": 0.47},
+    "laporta_rec":   {"american": -135, "other": +110, "model_close": 0.74},
+    "mixon_atd":     {"american": +120, "other": -145, "model_close": 0.49},
+}
+
+_clv_records = []
+for bet in MOCK_BETS:
+    close = _MOCK_CLOSING[bet["id"]]
+    rec = compute_clv(
+        bet_id=bet["id"],
+        placed_at=_dt(2025, 1, 5, 12, 0),
+        side="over",   # all 5 mock bets are OVERs
+        bet_american_odds=bet["odds_american"],
+        # Mock bets only know one side — pretend the other side
+        # was symmetric (OK for the demo)
+        bet_other_side_american_odds=None,
+        model_prob_at_placement=bet["buy_prob"],
+        closing_american_odds=close["american"],
+        closing_other_side_american_odds=close["other"],
+        model_prob_at_close=close["model_close"],
+        closing_at=_dt(2025, 1, 5, 16, 30),
+    )
+    _clv_records.append(rec)
+
+_summary = aggregate_clv(_clv_records)
+
+# Hero callout — the headline CLV stat
+_clv_color = ("#16a34a" if _summary.mean_clv_prob_points >= 0.02
+                else "#65a30d" if _summary.mean_clv_prob_points >= 0
+                else "#dc2626")
+_clv_verdict = (
+    "🎯 Real-money sharp territory"
+    if _summary.mean_clv_prob_points >= 0.02 else
+    "✅ Beating the close — keep it up"
+    if _summary.mean_clv_prob_points >= 0 else
+    "⚠️ Losing to the close — model needs work"
+)
+st.markdown(
+    f"<div style='background:linear-gradient(135deg,{_clv_color} 0%,"
+    f"{_clv_color}cc 100%);border-radius:12px;padding:18px 24px;"
+    f"color:white;box-shadow:0 4px 10px rgba(0,0,0,0.12);"
+    f"margin-bottom:16px;'>"
+    f"<div style='display:flex;justify-content:space-between;"
+    f"align-items:flex-end;flex-wrap:wrap;gap:18px;'>"
+    f"<div>"
+    f"<div style='font-size:11px;font-weight:700;opacity:0.9;"
+    f"letter-spacing:0.6px;'>PORTFOLIO CLV</div>"
+    f"<div style='font-size:42px;font-weight:900;line-height:1;"
+    f"letter-spacing:-1.5px;margin-top:4px;'>"
+    f"{_summary.mean_clv_prob_points*100:+.1f} pp</div>"
+    f"<div style='font-size:13px;opacity:0.95;margin-top:6px;'>"
+    f"{_clv_verdict}</div>"
+    f"</div>"
+    f"<div style='text-align:right;font-size:13px;line-height:1.5;'>"
+    f"<div><b>{_summary.n_beat_close}/{_summary.n_with_closing}</b> "
+    f"bets beat the close</div>"
+    f"<div>Median CLV: <b>{_summary.median_clv_prob_points*100:+.1f} pp</b></div>"
+    f"<div>Payout-CLV: <b>{_summary.mean_clv_pct_payout:+.2%}</b></div>"
+    f"</div>"
+    f"</div></div>",
+    unsafe_allow_html=True,
+)
+
+# Per-bet CLV table
+import pandas as _pd
+_clv_table = _pd.DataFrame([
+    {
+        "Player": bet["player"],
+        "Bet": bet["subtitle"] + f" @ {bet['odds_american']:+d}",
+        "Closing line": f"{_MOCK_CLOSING[bet['id']]['american']:+d}",
+        "CLV (pp)": (rec.clv_prob_points * 100
+                     if rec.clv_prob_points is not None else None),
+        "Beat close?": "🟢 yes" if rec.beats_close else "🔴 no",
+        "Model self-CLV": (rec.model_self_clv * 100
+                            if rec.model_self_clv is not None else None),
+    }
+    for bet, rec in zip(MOCK_BETS, _clv_records)
+])
+st.dataframe(_clv_table, use_container_width=True, hide_index=True,
+                column_config={
+                    "CLV (pp)": st.column_config.NumberColumn(
+                        format="%.1f"),
+                    "Model self-CLV": st.column_config.NumberColumn(
+                        format="%.1f"),
+                })
+
+st.caption(
+    "💡 **Reading this table.** CLV (pp) = how many percentage points "
+    "of vig-removed implied probability you beat the closing line by. "
+    "+1pp is solid, +2pp is sharp, +3pp+ is professional. "
+    "_Model self-CLV_ measures how much our own model's probability "
+    "shifted in the bet's direction between placement and game start "
+    "— useful as a proxy until we have real closing lines."
+)
+
+st.markdown("---")
+
 st.caption(
     "_Synthetic data for demo purposes — real version would re-price "
     "from the OddsAPI feed (already budgeted) plus our model's live "
