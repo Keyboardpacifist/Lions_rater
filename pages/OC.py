@@ -239,6 +239,30 @@ CURATION_PATH = Path(__file__).resolve().parent.parent / "data" / "scheme" / "cu
 OC_PROFILE_PATH = Path(__file__).resolve().parent.parent / "data" / "scheme" / "oc_career_profile.parquet"
 OC_PHILOSOPHY_PATH = Path(__file__).resolve().parent.parent / "data" / "scheme" / "oc_career_philosophy.parquet"
 OC_FULCRUM_PATH = Path(__file__).resolve().parent.parent / "data" / "scheme" / "oc_fulcrum_profile.parquet"
+OC_PLAYER_LIFT_PATH = Path(__file__).resolve().parent.parent / "data" / "oc_player_lift.parquet"
+OC_GAMESCRIPT_PATH = Path(__file__).resolve().parent.parent / "data" / "oc_gamescript.parquet"
+OC_QB_ARCHETYPE_LIFT_PATH = Path(__file__).resolve().parent.parent / "data" / "oc_qb_archetype_lift.parquet"
+
+
+@st.cache_data
+def load_oc_player_lift():
+    if not OC_PLAYER_LIFT_PATH.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(OC_PLAYER_LIFT_PATH)
+
+
+@st.cache_data
+def load_oc_gamescript():
+    if not OC_GAMESCRIPT_PATH.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(OC_GAMESCRIPT_PATH)
+
+
+@st.cache_data
+def load_oc_qb_archetype_lift():
+    if not OC_QB_ARCHETYPE_LIFT_PATH.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(OC_QB_ARCHETYPE_LIFT_PATH)
 
 @st.cache_data
 def load_oc_curation():
@@ -797,6 +821,311 @@ def _render_oc_scheme_panels(curation_row: pd.Series) -> None:
                 paper_bgcolor="rgba(0,0,0,0)",
             )
             st.plotly_chart(fig, use_container_width=True)
+
+    # ── 9. Player Lift (Feature A) — boost/drag of skill players under this OC ─
+    _render_oc_player_lift_panel(matched)
+
+    # ── 10. Game-script splits (Feature B) — leading/tied/trailing identity ───
+    _render_oc_gamescript_panel(matched)
+
+    # ── 11. Career drift (Feature C) — year-over-year fingerprint evolution ──
+    _render_oc_drift_panel(matched)
+
+
+# ─────────────────────────────────────────────────────────────
+# Feature A: Player before/after lift panel
+# ─────────────────────────────────────────────────────────────
+
+def _render_oc_player_lift_panel(oc_name: str) -> None:
+    lift = load_oc_player_lift()
+    if lift.empty:
+        return
+    sub = lift[lift["oc_name"] == oc_name]
+    if sub.empty:
+        return
+
+    st.markdown('<div class="section-divider" style="margin-top:8px"></div>',
+                unsafe_allow_html=True)
+    st.markdown("### 🚀 Player lift — before / after this OC")
+    st.caption(
+        "For every skill-position player who's played both **with** and **without** this OC, "
+        "we compute the delta of their SOS-adjusted z-score. Player-as-control isolates "
+        "the OC's value-add. Bayesian-shrunk for small samples."
+    )
+
+    # Per-position summary metric strip
+    pos_order = ["QB", "WR", "TE", "RB"]
+    cols = st.columns(len(pos_order))
+    for col, pos in zip(cols, pos_order):
+        pos_sub = sub[sub["position"] == pos]
+        with col:
+            if pos_sub.empty:
+                st.metric(f"{pos} lift", "—", help="No qualifying players.")
+            else:
+                pos_sub = pos_sub.copy()
+                pos_sub["weight"] = pos_sub[["n_with", "n_without"]].min(axis=1)
+                w = pos_sub["weight"].sum()
+                lift_score = ((pos_sub["shrunk_delta"] * pos_sub["weight"]).sum() / w
+                              if w > 0 else float("nan"))
+                arrow = "↑" if lift_score > 0 else ("↓" if lift_score < 0 else "→")
+                st.metric(
+                    f"{pos} lift",
+                    f"{arrow} {lift_score:+.2f}σ",
+                    delta=f"n = {len(pos_sub)}",
+                    delta_color="off",
+                )
+
+    # Top boost / drag tables
+    bd_l, bd_r = st.columns(2)
+    show_cols = ["position", "player_name", "with_oc_z", "without_oc_z",
+                 "shrunk_delta", "n_with", "n_without"]
+    pretty = {"position": "Pos", "player_name": "Player",
+              "with_oc_z": "z (with)", "without_oc_z": "z (without)",
+              "shrunk_delta": "Δ (shrunk)", "n_with": "n_with",
+              "n_without": "n_without"}
+
+    with bd_l:
+        st.markdown("**🔺 Top boosted players**")
+        boosted = sub.nlargest(8, "shrunk_delta")[show_cols].rename(columns=pretty)
+        if not boosted.empty:
+            st.dataframe(boosted, use_container_width=True, hide_index=True,
+                         column_config={
+                             "z (with)": st.column_config.NumberColumn(format="%+.2f"),
+                             "z (without)": st.column_config.NumberColumn(format="%+.2f"),
+                             "Δ (shrunk)": st.column_config.ProgressColumn(
+                                 format="%+.2f", min_value=-3.0, max_value=3.0,
+                                 help="OC's shrunk lift (z-units) on this player."),
+                         })
+        else:
+            st.caption("_None._")
+    with bd_r:
+        st.markdown("**🔻 Top dragged players**")
+        dragged = sub.nsmallest(8, "shrunk_delta")[show_cols].rename(columns=pretty)
+        if not dragged.empty:
+            st.dataframe(dragged, use_container_width=True, hide_index=True,
+                         column_config={
+                             "z (with)": st.column_config.NumberColumn(format="%+.2f"),
+                             "z (without)": st.column_config.NumberColumn(format="%+.2f"),
+                             "Δ (shrunk)": st.column_config.ProgressColumn(
+                                 format="%+.2f", min_value=-3.0, max_value=3.0,
+                                 help="OC's shrunk lift (z-units) on this player."),
+                         })
+        else:
+            st.caption("_None._")
+
+    # ── Feature D — OC × QB archetype interaction matrix ──────
+    qb_lift = load_oc_qb_archetype_lift()
+    if not qb_lift.empty:
+        m_sub = qb_lift[qb_lift["oc_name"] == oc_name]
+        if not m_sub.empty:
+            st.markdown("---")
+            st.markdown("**🎮 QB-archetype interaction**")
+            st.caption(
+                "Same OC, different QBs. Each row = QB archetype on the team that "
+                "season; each cell = the OC's mean lift on that target position vs "
+                "those players' without-this-OC baseline. Reveals whether the OC's "
+                "value-add depends on QB type."
+            )
+
+            arch_order = ["Mobile dual-threat", "Pocket-mobile", "Pocket passer"]
+            pos_order = ["WR", "TE", "RB"]
+            piv = (m_sub.pivot_table(index="qb_archetype", columns="position",
+                                       values="mean_lift_z", aggfunc="first")
+                          .reindex(index=arch_order, columns=pos_order))
+            piv_n = (m_sub.pivot_table(index="qb_archetype", columns="position",
+                                        values="n_player_seasons", aggfunc="first")
+                          .reindex(index=arch_order, columns=pos_order))
+
+            # Heatmap-as-table
+            z_vals = piv.values.astype(float)
+            text_vals = []
+            for i in range(piv.shape[0]):
+                row = []
+                for j in range(piv.shape[1]):
+                    v = piv.iloc[i, j]
+                    n = piv_n.iloc[i, j]
+                    if pd.isna(v):
+                        row.append("—")
+                    else:
+                        row.append(f"{v:+.2f}σ<br><span style='font-size:0.7rem;opacity:0.7;'>n={int(n)}</span>")
+                text_vals.append(row)
+
+            fig = go.Figure(data=go.Heatmap(
+                z=z_vals,
+                x=pos_order,
+                y=arch_order,
+                colorscale=[
+                    [0.0, "#aa3a2a"], [0.25, "#cc6651"], [0.5, "#f0f0f0"],
+                    [0.75, "#52a370"], [1.0, "#1f7a3a"],
+                ],
+                zmid=0, zmin=-1.5, zmax=1.5,
+                text=text_vals, texttemplate="%{text}",
+                textfont=dict(size=14),
+                hovertemplate="<b>%{y}</b> QB<br>Lift on <b>%{x}</b>: %{z:+.2f}σ<extra></extra>",
+                showscale=True,
+                colorbar=dict(title=dict(text="Mean<br>lift (σ)"), thickness=12),
+            ))
+            fig.update_layout(
+                height=240,
+                margin=dict(l=10, r=10, t=10, b=10),
+                xaxis=dict(side="top", title=""),
+                yaxis=dict(title=""),
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            st.caption(
+                "_Cells with `n=` show qualifying player-seasons in that cell. "
+                "Empty cells = OC never had that QB archetype on the team in our window._"
+            )
+
+
+# ─────────────────────────────────────────────────────────────
+# Feature B: Game-script splits panel
+# ─────────────────────────────────────────────────────────────
+
+def _render_oc_gamescript_panel(oc_name: str) -> None:
+    gs = load_oc_gamescript()
+    if gs.empty:
+        return
+    sub = gs[gs["oc_name"] == oc_name]
+    if sub.empty:
+        return
+
+    st.markdown('<div class="section-divider" style="margin-top:8px"></div>',
+                unsafe_allow_html=True)
+    st.markdown("### ⏱️ Game-script identity — leading / tied / trailing")
+    st.caption(
+        "Same OC, three game states. Reveals presses-gas vs folds tendencies. "
+        "Bucket: Leading by 8+ · Tied/one-score (within 7) · Trailing by 8+. "
+        "Z-scores within each bucket, vs all OCs in our pool."
+    )
+
+    bucket_order = ["leading", "tied", "trailing"]
+    bucket_label = {"leading": "🟢 Leading by 8+", "tied": "⚖️ Tied / one-score",
+                    "trailing": "🔴 Trailing by 8+"}
+
+    # Three columns, one per bucket
+    cols = st.columns(3)
+    for col, bucket in zip(cols, bucket_order):
+        b_row = sub[sub["gamescript"] == bucket]
+        with col:
+            st.markdown(f"**{bucket_label[bucket]}**")
+            if b_row.empty:
+                st.caption("_No data._")
+                continue
+            r = b_row.iloc[0]
+            n = int(r["n_plays"])
+            epa = float(r["epa_per_play"])
+            epa_z = float(r["epa_per_play_z"])
+            pass_rate = float(r["pass_rate"])
+            pass_rate_z = float(r["pass_rate_z"])
+            no_huddle = float(r["no_huddle_rate"])
+            verb = ("🔥 grinds" if epa_z >= 1.0 else
+                    "✅ holds" if epa_z >= 0.0 else
+                    "⚠️ slips" if epa_z >= -1.0 else
+                    "❌ folds")
+            st.markdown(
+                f"<div style='font-size:1.4rem;font-weight:700;color:"
+                f"{'#1f7a3a' if epa_z >= 0.5 else '#aa3a2a' if epa_z <= -0.5 else '#666'};'>"
+                f"{verb}</div>",
+                unsafe_allow_html=True)
+            st.metric("EPA/play", f"{epa:+.3f}", delta=f"{epa_z:+.2f}σ")
+            st.caption(
+                f"Pass rate: **{pass_rate:.0%}** ({pass_rate_z:+.1f}σ) · "
+                f"No-huddle: **{no_huddle:.1%}** · "
+                f"n = {n:,} plays"
+            )
+
+
+# ─────────────────────────────────────────────────────────────
+# Feature C: Career drift visualization
+# ─────────────────────────────────────────────────────────────
+
+def _render_oc_drift_panel(oc_name: str) -> None:
+    """Year-by-year fingerprint evolution for the play-caller."""
+    per_season = load_oc_per_season()
+    if per_season.empty:
+        return
+    sub = per_season[per_season["coordinator"] == oc_name].copy()
+    if len(sub) < 2:
+        return  # need 2+ seasons to show drift
+    sub = sub.sort_values("season")
+
+    st.markdown('<div class="section-divider" style="margin-top:8px"></div>',
+                unsafe_allow_html=True)
+    st.markdown("### 📈 Career drift — year-over-year fingerprint")
+    st.caption(
+        "How this OC's offensive identity evolved season-to-season. "
+        "Each line is a z-score within that season's play-caller pool. "
+        "Above 0 = above league of OCs."
+    )
+
+    drift_metrics = [
+        ("epa_per_play_z", "EPA/play"),
+        ("pass_epa_per_play_z", "Pass EPA"),
+        ("rush_epa_per_play_z", "Rush EPA"),
+        ("success_rate_z", "Success rate"),
+        ("explosive_pass_rate_z", "Explosive pass"),
+        ("third_down_rate_z", "3rd down conv"),
+        ("red_zone_td_rate_z", "RZ TD%"),
+        ("win_pct_z", "Win %"),
+    ]
+    have = [(c, l) for c, l in drift_metrics if c in sub.columns]
+    if not have:
+        st.caption("_No drift data available for this OC._"); return
+
+    fig = go.Figure()
+    palette = ["#0076B6", "#1f7a3a", "#cc6651", "#9467bd", "#aa3a2a",
+               "#ff7f0e", "#52a370", "#888888"]
+    for i, (col, lbl) in enumerate(have):
+        fig.add_trace(go.Scatter(
+            x=sub["season"].astype(int).tolist(),
+            y=sub[col].astype(float).tolist(),
+            mode="lines+markers",
+            name=lbl,
+            line=dict(color=palette[i % len(palette)], width=2),
+            marker=dict(size=7),
+            hovertemplate=f"<b>{lbl}</b><br>%{{x}}: %{{y:+.2f}}σ<extra></extra>",
+        ))
+    # Reference line at z=0
+    fig.add_hline(y=0, line=dict(color="rgba(0,0,0,0.4)", width=1, dash="dot"))
+
+    fig.update_layout(
+        height=380, margin=dict(l=10, r=10, t=20, b=20),
+        xaxis=dict(title="Season",
+                   tickmode="array",
+                   tickvals=sub["season"].astype(int).tolist(),
+                   tickformat="d"),
+        yaxis=dict(title="z-score (within season pool)",
+                   zeroline=True, zerolinecolor="rgba(0,0,0,0.4)"),
+        legend=dict(orientation="h", y=-0.2, x=0),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Notable drift events: |Δz| > 1.0 between adjacent seasons
+    drifts = []
+    seasons_list = sub["season"].astype(int).tolist()
+    for col, lbl in have:
+        vals = sub[col].astype(float).tolist()
+        for j in range(1, len(vals)):
+            if pd.notna(vals[j]) and pd.notna(vals[j-1]):
+                d = vals[j] - vals[j-1]
+                if abs(d) >= 1.0:
+                    drifts.append({
+                        "Year": f"{seasons_list[j-1]} → {seasons_list[j]}",
+                        "Metric": lbl,
+                        "From": f"{vals[j-1]:+.2f}σ",
+                        "To": f"{vals[j]:+.2f}σ",
+                        "Δ": f"{d:+.2f}σ",
+                    })
+    if drifts:
+        with st.expander(f"📍 Notable year-over-year drifts ({len(drifts)})"):
+            st.dataframe(pd.DataFrame(drifts),
+                         use_container_width=True, hide_index=True)
+
 
 NFL_TEAM_NAMES = {
     "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
