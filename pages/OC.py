@@ -264,6 +264,16 @@ def load_oc_qb_archetype_lift():
         return pd.DataFrame()
     return pd.read_parquet(OC_QB_ARCHETYPE_LIFT_PATH)
 
+
+OC_PLAY_DISTRIBUTION_PATH = Path(__file__).resolve().parent.parent / "data" / "oc_play_distribution.parquet"
+
+
+@st.cache_data
+def load_oc_play_distribution():
+    if not OC_PLAY_DISTRIBUTION_PATH.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(OC_PLAY_DISTRIBUTION_PATH)
+
 @st.cache_data
 def load_oc_curation():
     if not CURATION_PATH.exists():
@@ -392,6 +402,18 @@ def _render_oc_coord_detail(curation_row: pd.Series) -> None:
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     st.markdown("### 📋 Coordinator detail")
+    st.markdown(
+        "**What this is:** A snapshot of how this OC's offense has performed across "
+        "their career — or any single season. The radar chart shows nine key stats "
+        "as percentiles vs the league of OCs.\n\n"
+        "**How to read the radar:** The **dotted black ring** is league-average "
+        "(50th percentile). Anything **outside** the ring is above average; **inside** "
+        "is below. The blue polygon is this OC. Bigger and more outside the ring = "
+        "better. Hover any point for the exact percentile and what we're measuring.\n\n"
+        "**Why we believe this matters:** Most stat sheets dump numbers and let you "
+        "do the math. The radar lets you see strengths and weaknesses at a glance — "
+        "so you can spot, say, a great scoring offense with a brutal turnover problem."
+    )
 
     if not matched:
         names_tried = " or ".join(f"_{n}_" for n in candidates) or "this play-caller"
@@ -557,6 +579,20 @@ def _render_oc_clutch_panel(oc_name: str) -> None:
     st.markdown('<div class="section-divider" style="margin-top:8px"></div>',
                 unsafe_allow_html=True)
     st.markdown("### 🎯 Clutch profile — fulcrum performance")
+    st.markdown(
+        "**What this is:** How does this OC's offense perform in **the moments that "
+        "decide games** — vs how it performs in low-leverage moments? Pick a "
+        "leverage definition below to set what \"clutch\" means.\n\n"
+        "**How to read the three columns:**\n"
+        "- **Raw fulcrum** = actual EPA / success in clutch plays (color-coded vs the league of OCs)\n"
+        "- **Roster-adjusted** = same number, after subtracting how much credit the roster deserves\n"
+        "- **🎯 Elevation index (the headline)** = `clutch − non-clutch` for the same OC. "
+        "Tells you whether they **step up or fade** when the game's on the line. "
+        "Same roster on both sides cancels most confounds — this is the cleanest \"is this guy clutch?\" cut.\n\n"
+        "**Why we believe this matters:** Average-output OCs who light it up in clutch "
+        "deserve credit. Star OCs who fold in big moments deserve scrutiny. The raw stats "
+        "lump both together; the leverage filter separates them."
+    )
 
     # Leverage definition dropdown
     available_defs = [d for d in LEVERAGE_DEF_LABELS.keys()
@@ -678,6 +714,20 @@ def _render_oc_scheme_panels(curation_row: pd.Series) -> None:
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     st.markdown("### 📈 Scheme fingerprint")
+    st.markdown(
+        "**What this is:** How this OC actually calls plays. Eight different views — "
+        "down-and-distance pass rate, run gap split, shotgun usage, coverage-reactive "
+        "passing, tempo, pressure faced, field position, and philosophy fit.\n\n"
+        "**How to read every chart below:** Each colored bar = **this OC**. The "
+        "dashed grey line = **league average**. Above the line = they do it MORE than "
+        "league. Below = LESS. The **σ badge** above each bar shows how unusual the "
+        "number is. Anything past **±1σ** is meaningfully different from average; "
+        "past **±2σ** is extreme.\n\n"
+        "**Why we believe this matters:** The fingerprint reveals identity. A "
+        "tackle-heavy run gap split + low shotgun rate = classic Shanahan-tree zone "
+        "blocking. A high guard-gap share + heavy formations = power-run team. "
+        "Two OCs can have the same EPA but get there completely differently."
+    )
 
     if not matched:
         names_tried = " or ".join(f"_{n}_" for n in candidates) or "the play-caller"
@@ -822,6 +872,9 @@ def _render_oc_scheme_panels(curation_row: pd.Series) -> None:
             )
             st.plotly_chart(fig, use_container_width=True)
 
+    # ── 8.5. Play-call distribution explorer — granular cross-filtered view ─
+    _render_oc_play_distribution_panel(matched)
+
     # ── 9. Player Lift (Feature A) — boost/drag of skill players under this OC ─
     _render_oc_player_lift_panel(matched)
 
@@ -830,6 +883,275 @@ def _render_oc_scheme_panels(curation_row: pd.Series) -> None:
 
     # ── 11. Career drift (Feature C) — year-over-year fingerprint evolution ──
     _render_oc_drift_panel(matched)
+
+
+# ─────────────────────────────────────────────────────────────
+# Play-call distribution explorer (granular cross-filtered view)
+# ─────────────────────────────────────────────────────────────
+
+def _render_oc_play_distribution_panel(oc_name: str) -> None:
+    """Cross-filterable play-distribution view: pick season + filters →
+    see route / gap / field-area distributions for this OC."""
+    df = load_oc_play_distribution()
+    if df.empty:
+        return
+    sub_full = df[df["oc_name"] == oc_name].copy()
+    if sub_full.empty:
+        return
+
+    st.markdown('<div class="section-divider" style="margin-top:8px"></div>',
+                unsafe_allow_html=True)
+    st.markdown("### 🗺️ Play-call distribution explorer")
+    st.markdown(
+        "**What this is:** The deep-dive view into this OC's actual play-calling. "
+        "Pick a season (or career), apply any combination of filters — down, "
+        "distance, pressure, coverage, quarter, personnel, formation — and the "
+        "three charts below show **what this OC actually called** in that exact slice.\n\n"
+        "**The three charts:**\n"
+        "- **🎯 Pass routes** — top routes the receivers ran on pass plays\n"
+        "- **🏃 Run gaps** — where the running backs attacked (end / tackle / guard)\n"
+        "- **📡 Field area thrown to** — heatmap of where receivers caught balls "
+        "(left / middle / right × short / intermediate / deep)\n\n"
+        "**Why we believe this matters:** The fingerprint up top tells you the "
+        "OC's overall identity. This view lets you ask **specific** scouting "
+        "questions like *\"On 3rd-and-7 against zone coverage when trailing, "
+        "what does this OC actually call?\"* That's where real coordinator "
+        "intelligence lives."
+    )
+
+    # ── Season selector ────────────────────────────────────────
+    seasons_avail = sorted(sub_full["season"].unique().tolist())
+    sel_year = st.selectbox(
+        "Season",
+        options=["Career"] + [str(int(s)) for s in seasons_avail],
+        index=0,
+        key=f"play_dist_season_{oc_name}",
+    )
+    if sel_year != "Career":
+        sub = sub_full[sub_full["season"] == int(sel_year)].copy()
+    else:
+        sub = sub_full.copy()
+
+    if sub.empty:
+        st.info("No plays for this season."); return
+
+    # ── Filter row 1 (always visible) ──────────────────────────
+    f1, f2, f3, f4 = st.columns(4)
+    with f1:
+        downs = st.multiselect(
+            "Down", options=[1, 2, 3, 4], default=[1, 2, 3, 4],
+            key=f"pd_downs_{oc_name}",
+            help="Filter to specific downs."
+        )
+    with f2:
+        distance_opts = ["Short (≤3)", "Medium (4-7)", "Long (8+)"]
+        distances = st.multiselect(
+            "Yards to go", options=distance_opts, default=distance_opts,
+            key=f"pd_dist_{oc_name}",
+            help="Bucketed distance to first down."
+        )
+    with f3:
+        pressure = st.radio(
+            "Pressure", options=["All", "Pressured", "Clean"],
+            horizontal=True, index=0,
+            key=f"pd_press_{oc_name}",
+            help="Pressured = QB faced rush pressure on the play (PFF/NGS-derived). "
+                 "Clean = no pressure. 2018+ data only.",
+        )
+    with f4:
+        cov_opts = sorted(sub["coverage_simple"].dropna().unique().tolist())
+        covs = st.multiselect(
+            "Coverage faced", options=cov_opts, default=[],
+            key=f"pd_cov_{oc_name}",
+            help="Defensive coverage shown to the offense (man/zone × Cover-1/2/3/4/6). "
+                 "Empty = all coverages. 2018+ data only.",
+        )
+
+    # ── Filter row 2 (in expander) ─────────────────────────────
+    with st.expander("More filters: game state · quarter · personnel · formation",
+                       expanded=False):
+        f5, f6, f7, f8 = st.columns(4)
+        with f5:
+            gs_opts = ["Leading by 8+", "Tied / one-score", "Trailing by 8+"]
+            gs_pick = st.multiselect(
+                "Game state", options=gs_opts, default=[],
+                key=f"pd_gs_{oc_name}")
+        with f6:
+            qtrs = st.multiselect(
+                "Quarter", options=[1, 2, 3, 4, 5], default=[],
+                key=f"pd_qtr_{oc_name}",
+                help="5 = OT.")
+        with f7:
+            pers_opts = sorted([p for p in sub["personnel_simple"].dropna().unique()
+                                if p != "Other"])
+            pers = st.multiselect(
+                "Personnel", options=pers_opts + ["Other"], default=[],
+                key=f"pd_pers_{oc_name}",
+                help="Offensive personnel: 11 = 1 RB + 1 TE + 3 WR; "
+                     "12 = 1 RB + 2 TE + 2 WR; 21 = 2 RB + 1 TE + 2 WR; etc.")
+        with f8:
+            form_opts = sorted([f for f in sub["formation_simple"].dropna().unique()])
+            forms = st.multiselect(
+                "Formation", options=form_opts, default=[],
+                key=f"pd_form_{oc_name}")
+
+    # ── Apply filters ───────────────────────────────────────────
+    if downs:
+        sub = sub[sub["down"].fillna(0).astype(int).isin(downs)]
+    if distances:
+        sub = sub[sub["distance_bucket"].isin(distances)]
+    if pressure == "Pressured":
+        sub = sub[sub["pressure_cat"] == "Pressured"]
+    elif pressure == "Clean":
+        sub = sub[sub["pressure_cat"] == "Clean"]
+    if covs:
+        sub = sub[sub["coverage_simple"].isin(covs)]
+    if gs_pick:
+        sub = sub[sub["gamestate"].isin(gs_pick)]
+    if qtrs:
+        sub = sub[sub["qtr"].fillna(0).astype(int).isin(qtrs)]
+    if pers:
+        sub = sub[sub["personnel_simple"].isin(pers)]
+    if forms:
+        sub = sub[sub["formation_simple"].isin(forms)]
+
+    # ── Filter summary ──────────────────────────────────────────
+    n_total = len(sub)
+    n_pass = int((sub["play_type"] == "pass").sum())
+    n_run = int((sub["play_type"] == "run").sum())
+    pass_rate = (n_pass / n_total) if n_total > 0 else 0.0
+    avg_epa = sub["epa"].mean() if n_total > 0 else float("nan")
+    succ_rate = sub["success"].mean() if n_total > 0 else float("nan")
+
+    sm1, sm2, sm3, sm4 = st.columns(4)
+    sm1.metric("Plays in slice", f"{n_total:,}")
+    sm2.metric("Pass rate", f"{pass_rate:.0%}",
+               help=f"{n_pass:,} pass · {n_run:,} run")
+    sm3.metric("EPA / play",
+               f"{avg_epa:+.3f}" if pd.notna(avg_epa) else "—",
+               help="Average EPA per play in this filter slice.")
+    sm4.metric("Success rate",
+               f"{succ_rate:.1%}" if pd.notna(succ_rate) else "—",
+               help="% of plays that gained enough yards for the situation.")
+
+    if n_total < 10:
+        st.warning("Too few plays in this slice (need ≥10) — loosen filters.")
+        return
+
+    # ── Three charts ────────────────────────────────────────────
+    c1, c2, c3 = st.columns(3)
+
+    # 1) Pass routes
+    with c1:
+        st.markdown("**🎯 Pass routes** (top 12)")
+        pass_only = sub[sub["play_type"] == "pass"]
+        routes = pass_only["route"].dropna()
+        if len(routes) >= 5:
+            counts = routes.value_counts().head(12)
+            shares = counts / len(routes) * 100
+            fig = go.Figure(go.Bar(
+                x=counts.values, y=counts.index,
+                orientation="h",
+                marker=dict(color="#0076B6"),
+                text=[f"{int(c)} ({s:.0f}%)" for c, s in zip(counts.values, shares.values)],
+                textposition="outside",
+                hovertemplate="<b>%{y}</b><br>%{x} plays<extra></extra>",
+            ))
+            fig.update_layout(
+                height=440, margin=dict(l=10, r=70, t=10, b=20),
+                yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
+                xaxis=dict(title="# plays"),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("_Not enough pass plays with route data in this slice._")
+
+    # 2) Run gaps
+    with c2:
+        st.markdown("**🏃 Run gaps**")
+        run_only = sub[sub["play_type"] == "run"]
+        gap_data = run_only.dropna(subset=["run_gap"])
+        if len(gap_data) >= 5:
+            order = ["end", "tackle", "guard"]
+            counts = gap_data["run_gap"].value_counts().reindex(order, fill_value=0)
+            shares = counts / counts.sum() * 100
+            colors = {"end": "#52a370", "tackle": "#0076B6", "guard": "#aa3a2a"}
+            fig = go.Figure(go.Bar(
+                x=[f"{c.title()}<br>(outside)" if c == "end" else
+                    f"{c.title()}<br>(power)" if c == "guard" else
+                    f"{c.title()}<br>(zone)" for c in counts.index],
+                y=counts.values,
+                marker=dict(color=[colors.get(c, "#888") for c in counts.index]),
+                text=[f"{int(v)}<br>({s:.0f}%)" for v, s in zip(counts.values, shares.values)],
+                textposition="outside",
+                hovertemplate="<b>%{x}</b><br>%{y} runs<extra></extra>",
+            ))
+            fig.update_layout(
+                height=440, margin=dict(l=10, r=10, t=10, b=20),
+                yaxis=dict(title="# runs"),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                showlegend=False,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            # Run location split
+            loc_data = run_only.dropna(subset=["run_location"])
+            if len(loc_data) >= 5:
+                loc_counts = loc_data["run_location"].value_counts()
+                loc_shares = loc_counts / loc_counts.sum() * 100
+                st.caption(
+                    "**Direction:** "
+                    + " · ".join(f"{loc.title()} {sh:.0f}%"
+                                  for loc, sh in loc_shares.items())
+                )
+        else:
+            st.caption("_Not enough run plays with gap data in this slice._")
+
+    # 3) Field area thrown to (3x4 heatmap: pass_location × pass_depth)
+    with c3:
+        st.markdown("**📡 Field area thrown to**")
+        pass_only = sub[sub["play_type"] == "pass"]
+        loc_depth = pass_only.dropna(subset=["pass_location", "pass_depth_bucket"])
+        if len(loc_depth) >= 5:
+            depth_order = ["Deep (20+)", "Intermediate (10-19)",
+                           "Short (0-9)", "Behind LOS"]
+            loc_order = ["left", "middle", "right"]
+            heat = (loc_depth.groupby(["pass_depth_bucket", "pass_location"])
+                            .size().unstack(fill_value=0)
+                            .reindex(index=depth_order, columns=loc_order, fill_value=0))
+            heat_pct = heat / heat.values.sum() * 100 if heat.values.sum() > 0 else heat
+            text_vals = [[f"{int(heat.iloc[i, j])}<br>{heat_pct.iloc[i, j]:.0f}%"
+                          for j in range(heat.shape[1])]
+                          for i in range(heat.shape[0])]
+            fig = go.Figure(go.Heatmap(
+                z=heat_pct.values,
+                x=[c.title() for c in loc_order],
+                y=depth_order,
+                colorscale=[
+                    [0, "#f4f4f4"], [0.3, "#9ec5db"],
+                    [0.6, "#0076B6"], [1, "#003e63"],
+                ],
+                text=text_vals, texttemplate="%{text}",
+                textfont=dict(size=12, color="black"),
+                hovertemplate="%{x} · %{y}<br>%{z:.1f}% of throws<extra></extra>",
+                showscale=True,
+                colorbar=dict(title=dict(text="% of<br>throws"), thickness=10),
+            ))
+            fig.update_layout(
+                height=440, margin=dict(l=10, r=10, t=10, b=10),
+                xaxis=dict(side="top", title=""),
+                yaxis=dict(title=""),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("_Not enough pass plays with location data in this slice._")
+
+    st.caption(
+        "_Tip: layer filters together to scout specific tendencies — e.g. "
+        "select **Down: 3rd**, **Pressure: Clean**, **Coverage: Zone · COVER 3** "
+        "to see what this OC dials up on a clean 3rd-and-medium against off-zone._"
+    )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -847,10 +1169,22 @@ def _render_oc_player_lift_panel(oc_name: str) -> None:
     st.markdown('<div class="section-divider" style="margin-top:8px"></div>',
                 unsafe_allow_html=True)
     st.markdown("### 🚀 Player lift — before / after this OC")
-    st.caption(
-        "For every skill-position player who's played both **with** and **without** this OC, "
-        "we compute the delta of their SOS-adjusted z-score. Player-as-control isolates "
-        "the OC's value-add. Bayesian-shrunk for small samples."
+    st.markdown(
+        "**What this is:** When a skill-position player has played under **this OC AND "
+        "elsewhere** in their career, we compare their **opponent-adjusted z-score** in "
+        "each chunk. The same player serves as their own control — same skill, "
+        "different scheme.\n\n"
+        "**How to read the rows:**\n"
+        "- **z (with)** = the player's adjusted z-score during their seasons under this OC\n"
+        "- **z (without)** = the same player's adjusted z-score during all *other* career seasons\n"
+        "- **Δ (shrunk)** = `with − without`, with Bayesian shrinkage for small samples (low samples get pulled toward 0 so we don't over-interpret one good year)\n"
+        "- **n_with / n_without** = sample sizes (targets / carries / dropbacks on each side)\n\n"
+        "**Per-position lift strip below:** the OC's mean delta across all qualifying "
+        "players at QB / WR / TE / RB. Shows where this OC's value-add concentrates.\n\n"
+        "**Why we believe this matters:** EPA stats can't tell you if a great offense "
+        "comes from the OC or the talent. This metric controls for the player — so a "
+        "boost almost has to come from the OC. It's the closest thing to a controlled "
+        "experiment we can run with NFL data."
     )
 
     # Per-position summary metric strip
@@ -920,11 +1254,21 @@ def _render_oc_player_lift_panel(oc_name: str) -> None:
         if not m_sub.empty:
             st.markdown("---")
             st.markdown("**🎮 QB-archetype interaction**")
-            st.caption(
-                "Same OC, different QBs. Each row = QB archetype on the team that "
-                "season; each cell = the OC's mean lift on that target position vs "
-                "those players' without-this-OC baseline. Reveals whether the OC's "
-                "value-add depends on QB type."
+            st.markdown(
+                "**What this is:** Same OC, different QBs. We categorize each QB on "
+                "the team by their **carries-per-pass-attempt ratio**:\n"
+                "- **Mobile dual-threat (≥18%)** — Lamar, Hurts, Allen, Kyler, Daniels\n"
+                "- **Pocket-mobile (10-18%)** — Mahomes, Burrow, Stroud, modern hybrids\n"
+                "- **Pocket passer (<10%)** — Goff, Cousins, Brady, Stafford\n\n"
+                "**How to read the heatmap:** Rows = QB archetype on the team that "
+                "season. Columns = target position (WR / TE / RB). Each cell = the "
+                "OC's mean lift on that position when paired with that QB type. "
+                "**Green = lift, red = drag, gray = no effect.** Empty cell = the OC "
+                "never had that QB type on the team in our data window.\n\n"
+                "**Why we believe this matters:** Some OCs need a mobile QB to make "
+                "their offense work; others lift WRs regardless. This is the cross-tab "
+                "that exposes those dependencies. *\"Does Reid lift WRs more under "
+                "Mahomes than Alex Smith?\"* — read it off the chart."
             )
 
             arch_order = ["Mobile dual-threat", "Pocket-mobile", "Pocket passer"]
@@ -995,10 +1339,19 @@ def _render_oc_gamescript_panel(oc_name: str) -> None:
     st.markdown('<div class="section-divider" style="margin-top:8px"></div>',
                 unsafe_allow_html=True)
     st.markdown("### ⏱️ Game-script identity — leading / tied / trailing")
-    st.caption(
-        "Same OC, three game states. Reveals presses-gas vs folds tendencies. "
-        "Bucket: Leading by 8+ · Tied/one-score (within 7) · Trailing by 8+. "
-        "Z-scores within each bucket, vs all OCs in our pool."
+    st.markdown(
+        "**What this is:** Same OC, three game states — **Leading by 8+**, "
+        "**Tied or within 7**, **Trailing by 8+**. We measure their EPA, success "
+        "rate, pass rate, and no-huddle tempo within each state, then z-score within "
+        "the bucket (vs all OCs in our pool when their team was in that same state).\n\n"
+        "**How to read the verbs:** the big colored word at the top of each column "
+        "is your at-a-glance answer:\n"
+        "- **🔥 grinds** (z ≥ +1.0) = elite in this state\n"
+        "- **✅ holds** (z ≥ 0) = above average\n"
+        "- **⚠️ slips** (z ≥ −1.0) = below average\n"
+        "- **❌ folds** (z < −1.0) = significantly hurt\n\n"
+        "**Why we believe this matters:** OCs that grind when leading are sustainable "
+        "winners; OCs that fold when trailing have a comeback problem. Identity matters."
     )
 
     bucket_order = ["leading", "tied", "trailing"]
@@ -1055,10 +1408,20 @@ def _render_oc_drift_panel(oc_name: str) -> None:
     st.markdown('<div class="section-divider" style="margin-top:8px"></div>',
                 unsafe_allow_html=True)
     st.markdown("### 📈 Career drift — year-over-year fingerprint")
-    st.caption(
-        "How this OC's offensive identity evolved season-to-season. "
-        "Each line is a z-score within that season's play-caller pool. "
-        "Above 0 = above league of OCs."
+    st.markdown(
+        "**What this is:** Eight key z-scores plotted over this OC's tenured seasons. "
+        "Each line is one stat. Each year is a single point. The dotted black line "
+        "at z=0 is league-average.\n\n"
+        "**How to read it:**\n"
+        "- Lines **above the zero line** = above-average that season\n"
+        "- Lines **below** = below-average\n"
+        "- Lines **trending up over time** = improving relative to peers\n"
+        "- Lines **trending down** = regressing\n\n"
+        "**Why we believe this matters:** Most OCs don't stand still. They evolve. "
+        "Some peak in year 2-3 and decline. Some keep getting better. Some flip styles "
+        "after a QB change. The drift chart tells the story; the **Notable drifts** "
+        "expander below flags any year-over-year change of |1σ| or more — those are "
+        "usually real events (QB swap, scheme overhaul, coordinator shake-up)."
     )
 
     drift_metrics = [
@@ -1211,8 +1574,25 @@ def _render_oc_detail(row: pd.Series) -> None:
     )
     st.markdown(header_html, unsafe_allow_html=True)
 
+    # GAS Score explainer (only show if a GAS badge is rendered in the header)
+    if "GAS Score" in (gas_html or ""):
+        st.caption(
+            "**GAS Score** (top-right) = our 0-100 grade for the OC, like PFF. "
+            "**50 = league average. 80+ = elite. 30-40 = below average.** "
+            "It blends four things: Efficiency (45%), Explosiveness (15%), "
+            "Situational execution (20%), and Clutch performance (20%). "
+            "Confidence (HIGH/MEDIUM/LOW) reflects how many seasons we have on them."
+        )
+
     if row.get("one_liner_identity"):
         st.markdown(f"> _{row['one_liner_identity']}_")
+
+    # Curation grid plain-English intro
+    st.markdown(
+        "**The card below** is curated football intel — the OC's identity "
+        "in plain football terms (system, mentor, what kind of QB they need, etc.). "
+        "Then the data layers below back up (or contradict) the human read."
+    )
 
     grid_specs = [
         ("🎯 Passing system", "passing_system"),
@@ -1245,6 +1625,181 @@ def _render_oc_detail(row: pd.Series) -> None:
     # tempo, pressure, philosophy fit). Renders empty state when the
     # play-caller has no historical OC tenure in our seed mapping yet.
     _render_oc_scheme_panels(row)
+
+
+def _render_oc_stat_glossary_DEAD() -> None:
+    """Standalone glossary — replaced by inline explainers at each panel.
+    Kept here as dead code for reference; not called anywhere."""
+    with st.expander("❓ **Stat glossary — what every number on this page means**", expanded=False):
+        st.markdown("""
+*Click any section to learn what we're measuring and what we believe it tells us.*
+
+---
+
+### 🎯 The basics (used everywhere)
+
+**EPA / play (Expected Points Added)** — Football has a number for every play that says *"how much did this play help us score?"* Gain 5 yards on 1st-and-10? +0.10 EPA. Lose 3? −0.20. Add up every play and you see whether the offense actually moves the ball or just spins its wheels. Higher is always better.
+
+**Success rate** — What percent of plays were "successful" — meaning they gained enough yards for the situation. (50% on 1st down. 70% of remaining yards on 2nd. 100% on 3rd/4th.) Higher = a more *consistent* offense (lots of small wins). EPA can be inflated by a few huge plays; success rate can't.
+
+**z-score (those σ symbols)** — A z-score tells you how unusual a number is.
+- **0** = league-average
+- **+1σ** = above average (better than ~84% of teams)
+- **+2σ** = top 2%
+- **−1σ** = below average
+Think of it as a *"how surprising is this number?"* meter.
+
+**Percentile (the radar chart)** — If a player ranks at the **90th percentile**, they're better than 90 out of every 100 OCs. The **dotted black ring on the radar = 50th percentile = league average.** Anywhere outside the ring is good; anywhere inside is bad.
+
+**Adjusted (SOS-adjusted)** — The opponent matters. A QB throwing against bad defenses looks better than the same QB facing great ones. *SOS-adjusted* means we accounted for who they faced. Bigger number on a hard schedule beats a bigger number on a cupcake schedule.
+
+**Roster-adjusted** — Some OCs have Mahomes. Some have a backup. *Roster-adjusted* tries to subtract how much credit goes to the roster vs the OC. (We use team-rating as the proxy — it's imperfect but it's honest.)
+
+---
+
+### 🏈 GAS Score (the headline grade)
+
+**GAS Score (0-100)** — One simple grade for the OC, like PFF gives players. **50 = league-average. 80+ = elite. 30-40 = below average.** It's a weighted blend of four things:
+
+| Bundle | Weight | What it measures |
+|---|---|---|
+| **Efficiency** | 45% | EPA, success rate, pass/rush EPA — how productive is the offense? |
+| **Explosiveness** | 15% | Big-play rates (20+ yard passes, 10+ yard runs) |
+| **Situational** | 20% | 3rd-down conversion, red-zone TD%, win% |
+| **Clutch** | 20% | How they performed in game-on-the-line moments |
+
+**Confidence (HIGH / MEDIUM / LOW)** — How much sample we have to grade them. 4+ seasons = HIGH. 1 season = LOW.
+
+---
+
+### 📋 Coordinator detail (the radar)
+
+**Year selector** — *"Career"* averages all of their OC seasons together. Click a single year to see just that season — radar redraws, year-by-year table stays.
+
+**Year-by-year table** — Every season they coached, sorted newest-first. **Plays** = total scrimmage plays. **EPA / Succ% / 3rd% / RZ TD% / Win%** = the season's actual numbers (not z-scores).
+
+---
+
+### 📈 Scheme fingerprint (how they actually call plays)
+
+**Pass rate by D&D (down-and-distance)** — On 1st-and-10, do they throw or run? On 3rd-and-7? Different OCs have very different fingerprints — a Shanahan-tree OC like Ben Johnson runs a *lot* on 1st-and-10. The bars show this OC; the **dotted grey line = league average**.
+
+**Run gap distribution** — When a team runs the ball, the back aims for a specific gap.
+- **End** = outside (zone runs / sweeps) — the Shanahan signature
+- **Tackle** = mid (mid-zone, off-tackle) — outside-zone teams hit this a lot
+- **Guard** = interior (power runs between center and guard) — Greg-Roman-style power offenses
+
+A tackle-heavy OC is a zone-blocking team. A guard-heavy OC is a power team.
+
+**Shotgun rate by D&D** — How often the QB lines up in shotgun (vs. under center). **Low shotgun = under-center, play-action-heavy** (classic Shanahan). **High shotgun = spread-style, faster reads** (Reid / Spread-RPO).
+
+**Coverage-reactive attack** — Defenses run **MAN** coverage (one defender per receiver) or **ZONE** (each defender covers an area). When this OC sees man, what do they call? When they see zone? **Avg AY = average air yards** = how far downfield throws go. Some OCs throw deep against man (single-high beats one-on-one); some dump-off (quick game vs press).
+
+**Tempo & pressure**
+- **Overall no-huddle** = how often they go fast between plays (no huddle)
+- **2-min no-huddle** = same, but only in end-of-half drills
+- **Pressure faced (5+ rushers)** = how often defenses bring extra rushers (a blitz). High = defenses don't trust this OC's quick-game
+
+**Pass rate by field position**
+- **Backed-up** = own 10-yard line or worse
+- **Red zone (RZ)** = inside the opponent's 20
+- **Goal line (GL)** = inside the 5
+
+Reveals philosophy: pass-happy in the RZ vs grind-it-out run game.
+
+---
+
+### 🎯 Clutch profile
+
+**Leverage definition** — *Which plays count as "clutch"?* Five options:
+1. **WP volatility** — only plays that swung the win-probability by 5%+ (the strict definition)
+2. **High-stakes situations** — 4Q close games + RZ + 3rd-and-medium+ + 2-min drill (rule-based)
+3. **EPA × leverage** — every play counted, but weighted by how much it mattered (continuous)
+4. **Hybrid** — leverage × situation multiplier (a smart blend)
+5. **All plays** — baseline (no filter, sanity check)
+
+**Three lenses (per metric):**
+- **Raw fulcrum** = actual EPA in clutch plays (color-coded vs league of OCs)
+- **Roster-adjusted** = same, but accounting for roster quality
+- **🎯 Elevation index (the headline)** = `clutch EPA − non-clutch EPA` for the same OC. Tells you *does this OC step up or fade when the game's on the line?* Roster effect mostly cancels (same roster either way). Plain-English verb tells you the answer.
+
+---
+
+### 🌳 Philosophy archetype fit
+
+We score how much each OC's actual route distribution looks like one of 5 historical schools:
+- **WCO (West Coast Offense)** — Bill Walsh's timing-based passing. Modern Shanahan-tree adopted it heavily.
+- **Air Coryell** — Don Coryell's vertical attack. Push the ball downfield.
+- **Erhardt-Perkins** — Belichick's concept-based system. Same play, multiple looks.
+- **Spread / RPO** — College-imported quick-game with run-pass options.
+- **Power Run / Vertical** — Greg Roman style. Run-heavy with vertical play-action.
+
+The bars show **within-OC z-score**: which archetype pulls hardest on *this OC's* play-calling. Higher = stronger fit.
+
+---
+
+### 🚀 Player lift (the causal cut)
+
+**The big idea:** When a player plays under one OC AND elsewhere in their career, the *same player* serves as their own control. We measure how their **SOS-adjusted z-score** changed.
+
+- **z (with)** = the player's adjusted z-score during their seasons under this OC
+- **z (without)** = the same player's adjusted z-score during their *other* career years
+- **Δ (shrunk)** = with − without, with Bayesian shrinkage for small samples (low samples get pulled toward zero so we don't over-interpret)
+- **n_with / n_without** = sample sizes (targets / carries / dropbacks)
+
+**What it tells you:** Did this OC make the player *better* (boost), *worse* (drag), or no change? It's the cleanest causal story we can tell with the data — same player, different scheme.
+
+**Per-position lift strip** — The OC's mean Δ across all qualifying players at QB / WR / TE / RB. Tells you where this OC's value-add concentrates (or doesn't).
+
+---
+
+### 🎮 QB-archetype interaction matrix
+
+Same OC, different QBs. We categorize each QB by their **carries-per-pass-attempt ratio**:
+- **Mobile dual-threat (≥18%)** — Lamar, Hurts, Allen, Kyler, Daniels
+- **Pocket-mobile (10-18%)** — Mahomes, Burrow, Stroud, modern hybrids
+- **Pocket passer (<10%)** — Goff, Cousins, Brady, Stafford
+
+Each cell = the OC's mean lift on that *target position* during seasons with that *QB type*. Reveals questions like *"Does Reid's WR lift drop without Mahomes? Does McDaniel's run game collapse without a mobile QB?"*
+
+Empty cell = the OC never had that QB archetype on the team in our window.
+
+---
+
+### ⏱️ Game-script identity
+
+Same OC, three game states:
+- **Leading by 8+** = comfortably ahead
+- **Tied / one-score** = within 7 points either way
+- **Trailing by 8+** = comfortably behind
+
+The plain-English verb at the top of each column tells you the answer:
+- **🔥 grinds** (z ≥ +1.0) = elite in this state
+- **✅ holds** (z ≥ 0) = above average
+- **⚠️ slips** (z ≥ −1.0) = below average
+- **❌ folds** (z < −1.0) = significantly hurt
+
+Reveals identity: *Andy Reid grinds when ahead. Some OCs fold when trailing.*
+
+---
+
+### 📈 Career drift
+
+Year-over-year line chart of the OC's z-scores across 8 metrics. **z = 0 line is league average.** Lines going up = improving relative to peers. Going down = regressing. **Notable drifts** = year-over-year changes of |1σ| or more — usually corresponds to a real event (QB change, OC philosophy shift, scheme overhaul).
+
+---
+
+### 🦁 The big picture
+
+Every chart and number on this page is trying to answer one of three questions:
+
+1. **What does this OC's offense LOOK like?** (Scheme fingerprint, philosophy fit)
+2. **How GOOD is the offense?** (GAS, leaderboard, EPA, success rate)
+3. **How much of that is the OC vs the roster?** (Player lift, roster-adjusted, elevation, QB matrix)
+
+The whole page is built on one principle: **show how the data answers the question, not just the answer.** Every stat is a clue — your eye does the synthesis.
+        """)
+        st.caption("This glossary is on every OC profile. Bookmark mentally — once it clicks, the rest of the page is a video game.")
 
 
 def _render_oc_grid(df: pd.DataFrame) -> None:
