@@ -1522,6 +1522,22 @@ curation_df = load_oc_curation()
 if "oc_profile_team" not in st.session_state:
     st.session_state.oc_profile_team = None
 
+# URL query param ↔ session state sync — makes individual OC profiles
+# shareable via links like ?team=DET
+_qp_team = st.query_params.get("team")
+if _qp_team:
+    _qp_team_upper = str(_qp_team).upper().strip()
+    # Validate against curation; fall back to grid if invalid
+    if not curation_df.empty and _qp_team_upper in curation_df["team"].values:
+        if st.session_state.oc_profile_team != _qp_team_upper:
+            st.session_state.oc_profile_team = _qp_team_upper
+    else:
+        # Bad team in URL — clear it to avoid loops
+        try:
+            del st.query_params["team"]
+        except Exception:
+            pass
+
 
 def _gas_badge_html(oc_name: str, arch_name: str | None) -> str:
     """Look up the GAS score for an OC (or HC architect) and return an
@@ -1848,19 +1864,38 @@ def _render_oc_grid(df: pd.DataFrame) -> None:
                 st.markdown(tile_html, unsafe_allow_html=True)
                 if st.button("Open profile", key=f"oc_tile_{t}", use_container_width=True):
                     st.session_state.oc_profile_team = t
+                    st.query_params["team"] = t
                     st.rerun()
 
 
 if not curation_df.empty:
     if st.session_state.oc_profile_team is None:
         st.markdown("### 📔 Offensive coordinators — all 32 teams")
-        st.caption("Curated 2026 staff. Click a team to open the full profile.")
+        st.caption(
+            "Curated 2026 staff. Click a team to open the full profile. "
+            "Profile URLs are shareable — copy the address bar after clicking a team."
+        )
         _render_oc_grid(curation_df)
     else:
         sel_team = st.session_state.oc_profile_team
-        if st.button("← Back to all teams", key="oc_back_btn"):
-            st.session_state.oc_profile_team = None
-            st.rerun()
+        # Keep query param in sync (handles cases where session state was set
+        # programmatically without the param being updated)
+        if st.query_params.get("team") != sel_team:
+            st.query_params["team"] = sel_team
+        bcol, lcol = st.columns([1, 4])
+        with bcol:
+            if st.button("← Back to all teams", key="oc_back_btn"):
+                st.session_state.oc_profile_team = None
+                try:
+                    del st.query_params["team"]
+                except Exception:
+                    pass
+                st.rerun()
+        with lcol:
+            st.caption(
+                f"📎 _Shareable link: `?team={sel_team}` is appended to the URL — "
+                "anyone with the link lands directly on this profile._"
+            )
         match = curation_df[curation_df["team"] == sel_team]
         if match.empty:
             st.warning(f"No curation row for {sel_team}.")
