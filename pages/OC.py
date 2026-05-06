@@ -783,6 +783,17 @@ def _render_oc_scheme_panels(curation_row: pd.Series) -> None:
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("**Coverage-reactive attack**")
+        st.caption(
+            "**What this is:** how this OC throws differently when the defense "
+            "shows **MAN** coverage (one defender on every receiver) vs **ZONE** "
+            "(each defender covers an area). **Pass rate** = % of plays they "
+            "passed (vs run) when seeing that look. **Avg AY** = average air "
+            "yards = how far downfield the throw was. **What we believe it shows:** "
+            "scheme philosophy. OCs who throw deep vs man are attacking single-high "
+            "with one-on-ones; OCs who dump off vs zone are taking the underneath "
+            "concession; pass-happy OCs vs both ignore the look entirely. "
+            "_2018+ data only._"
+        )
         cov_pr = sub[sub["dimension"] == "vs_coverage_pass_rate"]
         cov_ay = sub[sub["dimension"] == "vs_coverage_avg_ay"]
         for cat, cat_label in [("vs_man", "vs MAN"), ("vs_zone", "vs ZONE")]:
