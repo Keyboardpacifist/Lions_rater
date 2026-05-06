@@ -214,29 +214,47 @@ if len(ranked) > 0:
     badge = sample_size_badge(seasons_val) if is_career else ""
     st.markdown(f"<div style='background:#0076B6;color:white;padding:14px 20px;border-radius:8px;margin-bottom:8px;font-size:1.1rem;'><span style='font-size:1.4rem;font-weight:bold;'>#1 of {len(ranked)}</span> &nbsp;·&nbsp; <strong>{top_name}</strong> ({top_teams}) {badge} &nbsp;·&nbsp; <span style='font-size:1.4rem;font-weight:bold;'>{sign}{top_score:.2f}</span> <span style='opacity:0.85;'>({format_percentile(zscore_to_percentile(top_score))})</span></div>", unsafe_allow_html=True)
 
+def _fmt_pct(x):
+    return f"{x:.1%}" if pd.notna(x) else "—"
+def _fmt_epa(x):
+    return f"{x:+.3f}" if pd.notna(x) else "—"
+def _fmt_int_comma(x):
+    return f"{int(x):,}" if pd.notna(x) else "—"
+
+# Build display_df row-by-row (iterrows) instead of column-by-column with
+# .get(col, fallback). The fallback Series approach causes pandas to
+# union mismatched indexes (1-based ranked.index vs default 0-based fallback)
+# and crash with "array length 106 does not match index length 107" on
+# Python 3.14 / newer pandas.
 if is_career:
-    display_df = pd.DataFrame({
-        "Rank": ranked.index,
-        "": ranked.get("seasons", pd.Series([1]*len(ranked))).apply(sample_size_badge),
-        "Coordinator": ranked.get("coordinator", ranked.get("player_name", "—")),
-        "Teams": ranked.get("teams", ranked.get("team", "—")),
-        "Seasons": ranked.get("seasons", pd.Series([1]*len(ranked))).fillna(1).astype(int),
-        "W-L": ranked.apply(lambda r: f"{int(r.get('total_wins', 0))}-{int(r.get('total_losses', 0))}", axis=1),
-        "EPA/play": ranked.get("epa_per_play", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:+.3f}" if pd.notna(x) else "—"),
-        "💰 Cap %": ranked.get("off_cap_pct", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—"),
-        "💰 Draft $": ranked.get("off_draft_capital", pd.Series([0]*len(ranked))).apply(lambda x: f"{int(x):,}" if pd.notna(x) else "—"),
-        "Your score": ranked["score"].apply(format_score),
-    })
+    rows = []
+    for rank, (_, r) in enumerate(ranked.iterrows(), start=1):
+        rows.append({
+            "Rank": rank,
+            "": sample_size_badge(r.get("seasons", 1)),
+            "Coordinator": r.get("coordinator", r.get("player_name", "—")),
+            "Teams": r.get("teams", r.get("team", "—")),
+            "Seasons": int(r["seasons"]) if pd.notna(r.get("seasons")) else 1,
+            "W-L": f"{int(r.get('total_wins', 0) or 0)}-{int(r.get('total_losses', 0) or 0)}",
+            "EPA/play": _fmt_epa(r.get("epa_per_play")),
+            "💰 Cap %": _fmt_pct(r.get("off_cap_pct")),
+            "💰 Draft $": _fmt_int_comma(r.get("off_draft_capital")),
+            "Your score": format_score(r["score"]),
+        })
+    display_df = pd.DataFrame(rows)
 else:
-    display_df = pd.DataFrame({
-        "Rank": ranked.index,
-        "Coordinator": ranked.get("coordinator", ranked.get("player_name", "—")),
-        "Team": ranked.get("team", "—"),
-        "EPA/play": ranked.get("epa_per_play", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:+.3f}" if pd.notna(x) else "—"),
-        "3rd down": ranked.get("third_down_rate", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—"),
-        "Red zone": ranked.get("red_zone_td_rate", pd.Series([0]*len(ranked))).apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—"),
-        "Your score": ranked["score"].apply(format_score),
-    })
+    rows = []
+    for rank, (_, r) in enumerate(ranked.iterrows(), start=1):
+        rows.append({
+            "Rank": rank,
+            "Coordinator": r.get("coordinator", r.get("player_name", "—")),
+            "Team": r.get("team", "—"),
+            "EPA/play": _fmt_epa(r.get("epa_per_play")),
+            "3rd down": _fmt_pct(r.get("third_down_rate")),
+            "Red zone": _fmt_pct(r.get("red_zone_td_rate")),
+            "Your score": format_score(r["score"]),
+        })
+    display_df = pd.DataFrame(rows)
 
 st.dataframe(display_df, use_container_width=True, hide_index=True)
 with st.expander("ℹ️ How is the score calculated?"): st.markdown(SCORE_EXPLAINER)
