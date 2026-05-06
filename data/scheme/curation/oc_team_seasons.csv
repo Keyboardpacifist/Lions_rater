@@ -1,0 +1,165 @@
+oc_name,team,season,role,calls_plays,notes
+Ben Johnson,DET,2022,OC,TRUE,Promoted from passing-game coordinator mid-2022.
+Ben Johnson,DET,2023,OC,TRUE,
+Ben Johnson,DET,2024,OC,TRUE,
+Ben Johnson,CHI,2025,HC,TRUE,Hired as Bears HC after 2024 season.
+Sean McVay,LA,2017,HC,TRUE,
+Sean McVay,LA,2018,HC,TRUE,
+Sean McVay,LA,2019,HC,TRUE,
+Sean McVay,LA,2020,HC,TRUE,
+Sean McVay,LA,2021,HC,TRUE,Super Bowl LVI.
+Sean McVay,LA,2022,HC,TRUE,
+Sean McVay,LA,2023,HC,TRUE,
+Sean McVay,LA,2024,HC,TRUE,
+Sean McVay,LA,2025,HC,TRUE,
+Kyle Shanahan,SF,2017,HC,TRUE,
+Kyle Shanahan,SF,2018,HC,TRUE,
+Kyle Shanahan,SF,2019,HC,TRUE,Super Bowl LIV loss.
+Kyle Shanahan,SF,2020,HC,TRUE,
+Kyle Shanahan,SF,2021,HC,TRUE,
+Kyle Shanahan,SF,2022,HC,TRUE,
+Kyle Shanahan,SF,2023,HC,TRUE,Super Bowl LVIII loss.
+Kyle Shanahan,SF,2024,HC,TRUE,
+Kyle Shanahan,SF,2025,HC,TRUE,
+Matt LaFleur,GB,2019,HC,TRUE,
+Matt LaFleur,GB,2020,HC,TRUE,
+Matt LaFleur,GB,2021,HC,TRUE,
+Matt LaFleur,GB,2022,HC,TRUE,
+Matt LaFleur,GB,2023,HC,TRUE,Jordan Love takes over post-Rodgers.
+Matt LaFleur,GB,2024,HC,TRUE,
+Matt LaFleur,GB,2025,HC,TRUE,
+Andy Reid,KC,2016,HC,TRUE,
+Andy Reid,KC,2017,HC,TRUE,Mahomes drafted.
+Andy Reid,KC,2018,HC,TRUE,Mahomes' first starting year.
+Andy Reid,KC,2019,HC,TRUE,Super Bowl LIV win.
+Andy Reid,KC,2020,HC,TRUE,
+Andy Reid,KC,2021,HC,TRUE,
+Andy Reid,KC,2022,HC,TRUE,Super Bowl LVII win (Bieniemy OC of record).
+Andy Reid,KC,2023,HC,TRUE,Super Bowl LVIII win (Matt Nagy returns as OC).
+Andy Reid,KC,2024,HC,TRUE,Super Bowl LIX loss to PHI.
+Andy Reid,KC,2025,HC,TRUE,
+Mike McDaniel,MIA,2022,HC,TRUE,
+Mike McDaniel,MIA,2023,HC,TRUE,
+Mike McDaniel,MIA,2024,HC,TRUE,
+Mike McDaniel,MIA,2025,HC,TRUE,
+Greg Roman,BAL,2019,OC,TRUE,Lamar's MVP year.
+Greg Roman,BAL,2020,OC,TRUE,
+Greg Roman,BAL,2021,OC,TRUE,
+Greg Roman,BAL,2022,OC,TRUE,
+Brian Daboll,NYG,2022,HC,TRUE,Daboll called plays year 1.
+Brian Daboll,NYG,2023,HC,FALSE,Mike Kafka took play-calling reins.
+Brian Daboll,NYG,2024,HC,FALSE,
+Josh McDaniels,LV,2022,HC,TRUE,
+Josh McDaniels,LV,2023,HC,TRUE,Fired mid-season.
+Sean Payton,DEN,2023,HC,TRUE,
+Sean Payton,DEN,2024,HC,TRUE,
+Sean Payton,DEN,2025,HC,TRUE,
+Bobby Slowik,HOU,2023,OC,TRUE,
+Bobby Slowik,HOU,2024,OC,TRUE,Fired after 2024.
+Liam Coen,LA,2018,assistant_qb,FALSE,Under McVay.
+Liam Coen,LA,2022,OC,FALSE,Returned to LA as OC; McVay called plays.
+Liam Coen,TB,2024,OC,TRUE,One-year stint; explosive offense around Mayfield.
+Liam Coen,JAX,2025,HC,TRUE,Hired as Jaguars HC.
+Drew Petzing,ARI,2023,OC,TRUE,
+Drew Petzing,ARI,2024,OC,TRUE,
+Drew Petzing,ARI,2025,OC,TRUE,
+Brian Schottenheimer,DAL,2024,OC,TRUE,
+Brian Schottenheimer,DAL,2025,HC,TRUE,Promoted from OC.
+Kellen Moore,DAL,2019,OC,TRUE,
+Kellen Moore,DAL,2020,OC,TRUE,
+Kellen Moore,DAL,2021,OC,TRUE,
+Kellen Moore,DAL,2022,OC,TRUE,
+Kellen Moore,LAC,2023,OC,TRUE,
+Kellen Moore,PHI,2024,OC,TRUE,Eagles' Super Bowl LIX win.
+Kellen Moore,NO,2025,HC,TRUE,Hired as Saints HC.
+Mike LaFleur,NYJ,2021,OC,TRUE,Under Saleh.
+Mike LaFleur,NYJ,2022,OC,TRUE,
+Mike LaFleur,LA,2023,OC,FALSE,McVay calls plays.
+Mike LaFleur,LA,2024,OC,FALSE,McVay calls plays.
+Kevin Stefanski,MIN,2018,OC,TRUE,
+Kevin Stefanski,MIN,2019,OC,TRUE,
+Kevin Stefanski,CLE,2020,HC,TRUE,Comeback Player of the Year award winner Baker Mayfield.
+Kevin Stefanski,CLE,2021,HC,TRUE,
+Kevin Stefanski,CLE,2022,HC,TRUE,
+Kevin Stefanski,CLE,2023,HC,TRUE,
+Kevin Stefanski,CLE,2024,HC,TRUE,
+Joe Brady,CAR,2020,OC,TRUE,LSU passing-game coordinator hire under Matt Rhule.
+Joe Brady,CAR,2021,OC,TRUE,Fired mid-season.
+Joe Brady,BUF,2023,OC,TRUE,Promoted to interim mid-2023.
+Joe Brady,BUF,2024,OC,TRUE,
+Dave Canales,TB,2023,OC,TRUE,Mayfield career resurrection.
+Dave Canales,CAR,2024,HC,TRUE,
+Zac Taylor,CIN,2019,HC,TRUE,
+Zac Taylor,CIN,2020,HC,TRUE,
+Zac Taylor,CIN,2021,HC,TRUE,Super Bowl LVI loss.
+Zac Taylor,CIN,2022,HC,TRUE,
+Zac Taylor,CIN,2023,HC,TRUE,
+Zac Taylor,CIN,2024,HC,TRUE,
+Todd Monken,BAL,2023,OC,TRUE,Lamar's second MVP year.
+Todd Monken,BAL,2024,OC,TRUE,
+Shane Steichen,PHI,2021,OC,TRUE,
+Shane Steichen,PHI,2022,OC,TRUE,Super Bowl LVII appearance under Sirianni.
+Shane Steichen,IND,2023,HC,TRUE,
+Shane Steichen,IND,2024,HC,TRUE,
+Klint Kubiak,DEN,2022,OC,TRUE,
+Klint Kubiak,NO,2024,OC,TRUE,
+Kevin O'Connell,MIN,2022,HC,TRUE,
+Kevin O'Connell,MIN,2023,HC,TRUE,
+Kevin O'Connell,MIN,2024,HC,TRUE,Sam Darnold renaissance.
+Mike McCarthy,DAL,2023,HC,TRUE,Took over play-calling after Kellen Moore left.
+Mike McCarthy,DAL,2024,HC,TRUE,
+Frank Reich,IND,2018,HC,TRUE,
+Frank Reich,IND,2019,HC,TRUE,
+Frank Reich,IND,2020,HC,TRUE,
+Frank Reich,IND,2021,HC,TRUE,
+Frank Reich,IND,2022,HC,TRUE,Fired mid-season.
+Frank Reich,CAR,2023,HC,TRUE,Fired mid-season.
+Matt Nagy,CHI,2018,HC,TRUE,Coach of the Year (Trubisky era).
+Matt Nagy,CHI,2019,HC,TRUE,
+Matt Nagy,CHI,2020,HC,TRUE,
+Matt Nagy,CHI,2021,HC,TRUE,
+Sean Payton,NO,2016,HC,TRUE,Brees prime years.
+Sean Payton,NO,2017,HC,TRUE,
+Sean Payton,NO,2018,HC,TRUE,NFC Championship loss.
+Sean Payton,NO,2019,HC,TRUE,
+Sean Payton,NO,2020,HC,TRUE,
+Sean Payton,NO,2021,HC,TRUE,Brees retirement; final NO season.
+Mike McCarthy,GB,2016,HC,TRUE,Aaron Rodgers MVP era.
+Mike McCarthy,GB,2017,HC,TRUE,
+Mike McCarthy,GB,2018,HC,TRUE,Fired mid-season.
+Mike McCarthy,DAL,2020,HC,FALSE,Kellen Moore called plays.
+Mike McCarthy,DAL,2021,HC,FALSE,Kellen Moore called plays.
+Mike McCarthy,DAL,2022,HC,FALSE,Kellen Moore called plays.
+Bill O'Brien,HOU,2016,HC,TRUE,
+Bill O'Brien,HOU,2017,HC,TRUE,
+Bill O'Brien,HOU,2018,HC,TRUE,
+Bill O'Brien,HOU,2019,HC,TRUE,
+Bill O'Brien,HOU,2020,HC,TRUE,Fired early in season.
+Doug Pederson,PHI,2016,HC,TRUE,
+Doug Pederson,PHI,2017,HC,TRUE,Super Bowl LII win.
+Doug Pederson,PHI,2018,HC,TRUE,
+Doug Pederson,PHI,2019,HC,TRUE,
+Doug Pederson,PHI,2020,HC,TRUE,
+Doug Pederson,JAX,2022,HC,TRUE,Lawrence breakout year.
+Doug Pederson,JAX,2023,HC,TRUE,
+Kyle Shanahan,ATL,2016,OC,TRUE,Super Bowl LI loss; pre-SF.
+Kliff Kingsbury,ARI,2019,HC,TRUE,
+Kliff Kingsbury,ARI,2020,HC,TRUE,
+Kliff Kingsbury,ARI,2021,HC,TRUE,
+Kliff Kingsbury,ARI,2022,HC,TRUE,Fired after season.
+Adam Gase,MIA,2016,HC,TRUE,
+Adam Gase,MIA,2017,HC,TRUE,
+Adam Gase,MIA,2018,HC,TRUE,
+Adam Gase,NYJ,2019,HC,TRUE,
+Adam Gase,NYJ,2020,HC,TRUE,
+Brian Daboll,BUF,2018,OC,TRUE,
+Brian Daboll,BUF,2019,OC,TRUE,
+Brian Daboll,BUF,2020,OC,TRUE,Allen MVP-level breakout.
+Brian Daboll,BUF,2021,OC,TRUE,
+Josh McDaniels,NE,2016,OC,TRUE,Super Bowl LI win.
+Josh McDaniels,NE,2017,OC,TRUE,
+Josh McDaniels,NE,2018,OC,TRUE,Super Bowl LIII win.
+Josh McDaniels,NE,2019,OC,TRUE,
+Josh McDaniels,NE,2020,OC,TRUE,
+Josh McDaniels,NE,2021,OC,TRUE,Mac Jones rookie year.
+Pete Carmichael,NO,2022,OC,TRUE,Took over play-calling after Payton left.
